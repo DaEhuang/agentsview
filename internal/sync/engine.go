@@ -480,8 +480,8 @@ type EngineConfig struct {
 	// remote sync to namespace IDs by host (e.g. "host~").
 	IDPrefix string
 	// PathRewriter transforms file paths before storage.
-	// Used by remote sync to replace temp paths with
-	// "host:/remote/path" references.
+	// Used by remote sync and archived sources to replace temporary paths
+	// with stable references. Independent of IDPrefix.
 	PathRewriter func(string) string
 	// StoredPathResolver maps a canonical stored source path back to its
 	// physical path under the current mirror. Remote changed-path planning uses
@@ -19445,8 +19445,8 @@ func (e *Engine) applyIDPrefixToSessionIDs(ids []string) []string {
 	return applyIDPrefixToIDs(e.idPrefix, ids)
 }
 
-// applyRemoteRewrites prefixes session IDs and rewrites
-// file paths for remote sync. No-op when idPrefix is empty.
+// applyRemoteRewrites rewrites stored source paths and, when configured,
+// prefixes session IDs for remote sync.
 func (e *Engine) applyRemoteRewrites(
 	s *db.Session, msgs []db.Message,
 ) {
@@ -19459,6 +19459,10 @@ func (e *Engine) applyRemoteRewritesContext(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if e.pathRewriter != nil && s.FilePath != nil {
+		fp := e.pathRewriter(*s.FilePath)
+		s.FilePath = &fp
+	}
 	if e.idPrefix == "" {
 		return nil
 	}
@@ -19470,10 +19474,6 @@ func (e *Engine) applyRemoteRewritesContext(
 	if s.ParserParentSessionID != nil && *s.ParserParentSessionID != "" {
 		p := applyIDPrefixToID(e.idPrefix, *s.ParserParentSessionID)
 		s.ParserParentSessionID = &p
-	}
-	if e.pathRewriter != nil && s.FilePath != nil {
-		fp := e.pathRewriter(*s.FilePath)
-		s.FilePath = &fp
 	}
 	for i := range msgs {
 		if err := ctx.Err(); err != nil {
