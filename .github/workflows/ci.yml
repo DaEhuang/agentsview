@@ -189,8 +189,8 @@ jobs:
             runner: namespace-profile-linux-8cpu
           - os: windows-latest
             runner: namespace-profile-windows-4cpu
-          - os: macos-latest
-            runner: macos-latest
+          - os: macos-26-intel
+            runner: macos-26-intel
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
