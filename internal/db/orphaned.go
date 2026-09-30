@@ -144,7 +144,8 @@ func (d *DB) CopyOrphanedDataFromExcluding(
 	// change main.sessions. Exclude permanently deleted sessions
 	// so they are not resurrected as orphans.
 	//
-	// Also exclude stale Codex rows whose file was reparsed into
+	// Copied trash is not evidence of a new parse. Exclude stale Codex
+	// rows only when their file was reparsed into
 	// the new DB under a different session id: before dataVersion
 	// 40 a forked rollout's replayed parent session_meta overwrote
 	// the fork's id (#643), so the fork file's row was stored under
@@ -167,6 +168,7 @@ func (d *DB) CopyOrphanedDataFromExcluding(
 				ON new_s.file_path = old_s.file_path
 			WHERE old_s.agent = 'codex'
 			  AND new_s.agent = 'codex'
+			  AND new_s.deleted_at IS NULL
 		  )`,
 	); err != nil {
 		return nil, fmt.Errorf(

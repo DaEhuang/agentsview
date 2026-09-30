@@ -65,7 +65,9 @@ vaults, assets, config, and installation identity. It keeps the writer lock
 until copying and read-back verification finish. Restore requires a new
 directory, checks file hashes and SQLite integrity, and verifies every accepted
 manifest and inventoried object. A matching vault ID or a bounded blob sample is
-not sufficient. Native extraction provides access to supplemental files too.
+not sufficient. Restore upgrades an older database through the normal
+preserved-provider rebuild with every live provider disabled. Native extraction
+provides access to supplemental files too.
 
 Docbank [PR #741](https://github.com/kenn-io/docbank/pull/741) and merged Kit
 [PR #132](https://github.com/kenn-io/kit/pull/132) support large supplemental

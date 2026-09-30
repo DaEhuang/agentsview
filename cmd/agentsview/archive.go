@@ -12,7 +12,9 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/agentsview/internal/config"
 	"go.kenn.io/agentsview/internal/db"
+	"go.kenn.io/agentsview/internal/parser"
 	"go.kenn.io/agentsview/internal/rawarchive"
+	syncer "go.kenn.io/agentsview/internal/sync"
 )
 
 func newArchiveCommand() *cobra.Command {
@@ -61,7 +63,8 @@ func newArchiveCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		database, err := openReadOnlyDB(cmd.Context(), cfg)
+		// Source acceptance does not depend on the normalized parser version.
+		database, err := db.OpenReadOnly(cmd.Context(), cfg.DBPath)
 		if err != nil {
 			return err
 		}
@@ -182,5 +185,30 @@ func restoreRawArchive(ctx context.Context, source, target string, progress func
 		return report, err
 	}
 	defer func() { retErr = errors.Join(retErr, archive.Close()) }()
-	return archive.Verify(ctx)
+	report, err = archive.Verify(ctx)
+	if err != nil {
+		return report, err
+	}
+	if database.NeedsResync() {
+		// A restored archive has no live source obligation. Use the ordinary
+		// rebuild's preserved-provider path so older data becomes readable while
+		// archived content and identities carry forward without a provider parse.
+		var disabled []parser.AgentType
+		for _, def := range parser.Registry {
+			disabled = append(disabled, def.Type)
+		}
+		if progress != nil {
+			progress("Upgrading the restored database while preserving archived sessions")
+		}
+		engine := syncer.NewEngine(ctx, database, syncer.EngineConfig{Ephemeral: true, DisabledAgents: disabled, DisableFilesystemProjectDiscovery: true})
+		stats, buildErr := engine.ResyncAllWithOptions(ctx, nil, syncer.RebuildOptions{})
+		if buildErr == nil && !stats.ArchiveRebuilt {
+			buildErr = errors.New("restored archive rebuild was aborted")
+		}
+		engine.Close()
+		if buildErr != nil {
+			return report, buildErr
+		}
+	}
+	return report, nil
 }

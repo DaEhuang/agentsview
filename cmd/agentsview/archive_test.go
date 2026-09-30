@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json/v2"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -66,7 +68,14 @@ func TestArchiveMoveAndReparse(t *testing.T) {
 	for _, change := range initialExport.Changes {
 		wantMessageIDs = append(wantMessageIDs, change.MessageID)
 	}
+	// A recovery point from an older parser generation must become readable
+	// after restore without rediscovering the now-missing original files.
 	require.NoError(t, database.Close())
+	raw, err := sql.Open("sqlite3", filepath.Join(dataDir, "sessions.db"))
+	require.NoError(t, err)
+	_, err = raw.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", db.CurrentDataVersion()-1))
+	require.NoError(t, err)
+	require.NoError(t, raw.Close())
 	installation, err := os.ReadFile(filepath.Join(dataDir, "telemetry-install-id"))
 	if os.IsNotExist(err) {
 		installation = []byte("019eb791cf7d75c184399ed74c122e04")
@@ -114,6 +123,9 @@ func TestArchiveMoveAndReparse(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, report.Sources)
 	require.NoError(t, os.RemoveAll(moved))
+	sourceList, err := executeCommand(newRootCommand(), "archive", "sources")
+	require.NoError(t, err)
+	assert.Contains(t, sourceList, nativeID)
 	backup := filepath.Join(t.TempDir(), "recovery")
 	_, err = run("backup", backup)
 	require.NoError(t, err)
@@ -148,6 +160,7 @@ func TestArchiveMoveAndReparse(t *testing.T) {
 	database, err = db.OpenIsolatedContext(ctx, filepath.Join(restored, "sessions.db"))
 	require.NoError(t, err)
 	defer database.Close()
+	assert.False(t, database.NeedsResync())
 	check := func() {
 		for _, id := range ids {
 			session, e := database.GetSessionFull(ctx, id)
@@ -228,4 +241,46 @@ func TestArchiveMoveAndReparse(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, failures)
+}
+
+func TestArchiveRestorePreservesCodexSharedPath(t *testing.T) {
+	ctx := t.Context()
+	data := t.TempDir()
+	path := filepath.Join(data, "sessions.db")
+	database, err := db.OpenIsolatedContext(ctx, path)
+	require.NoError(t, err)
+	sourcePath := "/original/rollout.jsonl"
+	for _, id := range []string{"codex:trashed-parent", "codex:active-fork"} {
+		require.NoError(t, database.UpsertSession(ctx, db.Session{ID: id, Agent: "codex", Project: "example", Machine: "original", FilePath: &sourcePath, MessageCount: 1}))
+		require.NoError(t, database.InsertMessages(ctx, []db.Message{{SessionID: id, Ordinal: 0, Role: "user", Content: id}}))
+	}
+	require.NoError(t, database.SoftDeleteSession(ctx, "codex:trashed-parent"))
+	archive, err := rawarchive.Open(ctx, database, data, nil)
+	require.NoError(t, err)
+	require.NoError(t, archive.Close())
+	require.NoError(t, database.Close())
+	raw, err := sql.Open("sqlite3", path)
+	require.NoError(t, err)
+	_, err = raw.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", db.CurrentDataVersion()-1))
+	require.NoError(t, err)
+	require.NoError(t, raw.Close())
+	backup := filepath.Join(t.TempDir(), "backup")
+	_, err = rawarchive.Backup(ctx, path, data, backup)
+	require.NoError(t, err)
+	restored := filepath.Join(t.TempDir(), "restored")
+	_, err = restoreRawArchive(ctx, backup, restored, nil)
+	require.NoError(t, err)
+	got, err := db.OpenReadOnly(ctx, filepath.Join(restored, "sessions.db"))
+	require.NoError(t, err)
+	defer got.Close()
+	session, err := got.GetSessionFull(ctx, "codex:active-fork")
+	require.NoError(t, err)
+	require.NotNil(t, session, "archive-only restore must retain the active row beside its historical trashed same-path row")
+	assert.False(t, got.NeedsResync())
+	for _, id := range []string{"codex:trashed-parent", "codex:active-fork"} {
+		messages, err := got.GetAllMessages(ctx, id)
+		require.NoError(t, err)
+		require.Len(t, messages, 1)
+		assert.Equal(t, id, messages[0].Content)
+	}
 }

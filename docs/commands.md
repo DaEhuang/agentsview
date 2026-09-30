@@ -52,8 +52,8 @@ Create an import specification:
 ```
 
 `path` is relative to the specification file unless absolute. It can change
-when a drive moves. Keep the device, root IDs, original paths, and machine label
-unchanged on retries. Inputs must be immutable captures with regular files;
+when a drive moves. List only `session_dirs` present in the capture. Keep the
+device, root IDs, original paths, and machine label unchanged on retries. Inputs must be immutable captures with regular files;
 symlinks and special files are rejected. Take consistent SQLite snapshots before
 importing provider databases. Import does not stop provider writers or create a
 capture of their live directories.
@@ -96,8 +96,10 @@ closure, closes SQLite and the embedded raw vault, and holds the writer lock
 while copying them. It also copies assets, the ordinary artifact vault,
 configuration, and installation identity when present. It hashes the copy and
 writes `recovery.json`. Restore checks those hashes, SQLite integrity, and all
-accepted source objects before succeeding. Keep the recovery point unchanged;
-use its restored copy as the working archive. Configuration and transcripts can
+accepted source objects before succeeding. An older database is rebuilt from its
+stored sessions with all live providers disabled; this makes it readable by the
+current version without reparsing original files. Keep the recovery point
+unchanged; use its restored copy as the working archive. Configuration and transcripts can
 contain credentials, so choose backup storage accordingly.
 
 Startup resync keeps archive-only sessions and their acceptance records without
