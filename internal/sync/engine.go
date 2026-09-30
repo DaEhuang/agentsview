@@ -1865,6 +1865,16 @@ func (e *Engine) parsePolicyContext(ctx context.Context) context.Context {
 
 // file watcher threads the serve shutdown context through here.
 func (e *Engine) SyncPathsContext(ctx context.Context, paths []string) error {
+	return e.syncPathsContext(ctx, paths, false)
+}
+
+// ReparsePathsContext fully parses only the selected sources, retaining the
+// normal publication rules and bounded-memory staging for large Codex files.
+func (e *Engine) ReparsePathsContext(ctx context.Context, paths []string) error {
+	return e.syncPathsContext(ctx, paths, true)
+}
+
+func (e *Engine) syncPathsContext(ctx context.Context, paths []string, force bool) error {
 	if e.refuseWriteInForceParse("SyncPaths") {
 		return nil
 	}
@@ -1873,6 +1883,9 @@ func (e *Engine) SyncPathsContext(ctx context.Context, paths []string) error {
 		e.syncMu.Lock()
 		defer e.syncMu.Unlock()
 		defer e.clearCurrentProgress()
+		previous := e.forceFullParse
+		e.forceFullParse = previous || force
+		defer func() { e.forceFullParse = previous }()
 		return e.syncChangedPathsLocked(ctx, paths)
 	}()
 	if stats.hasSessionChanges() || tombstoned > 0 {

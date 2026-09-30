@@ -423,6 +423,14 @@ func (d *DB) CopySyncStateFrom(sourcePath string) error {
 		}
 	}
 
+	for _, table := range []string{"raw_archive_roots", "raw_archive_files", "raw_archive_sources", "raw_archive_heads"} {
+		if oldDBHasTable(ctx, tx, table) {
+			if _, err := tx.ExecContext(ctx, "INSERT INTO main."+table+" SELECT * FROM old_db."+table); err != nil {
+				return fmt.Errorf("copying %s: %w", table, err)
+			}
+		}
+	}
+
 	headRevisionExpr := "0"
 	if oldDBHasColumn(ctx, tx, "artifact_checkpoint_heads", "publication_revision") {
 		headRevisionExpr = "publication_revision"
