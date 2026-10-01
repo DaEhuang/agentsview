@@ -3,6 +3,11 @@
 Status: implemented on this branch; not yet released. User instructions and
 command limits live in [the CLI reference](../commands.md#agentsview-archive).
 
+The proposed
+[multi-machine archive design](../superpowers/specs/2026-09-30-multi-machine-session-archive-design.md)
+revises source attribution, artifact/raw identity matching and recovery. Those
+changes are not implemented by this branch yet.
+
 ## Storage and reuse
 
 The offline commands keep original files in a dedicated embedded Docbank vault
