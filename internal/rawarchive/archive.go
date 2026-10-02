@@ -26,6 +26,7 @@ type Archive struct {
 	repository *artifact.Repository
 	objects    rawsync.ObjectStore
 	tenant     string
+	dataDir    string
 	progress   func(string)
 }
 
@@ -45,7 +46,7 @@ func Open(ctx context.Context, database *db.DB, dataDir string, progress func(st
 	if err != nil {
 		return nil, errors.Join(err, repo.Close())
 	}
-	return &Archive{database: database, repository: repo, objects: objects, tenant: tenant, progress: progress}, nil
+	return &Archive{database: database, repository: repo, objects: objects, tenant: tenant, dataDir: dataDir, progress: progress}, nil
 }
 
 func (a *Archive) Close() error { return a.repository.Close() }
@@ -57,13 +58,18 @@ func (a *Archive) report(message string) {
 
 // Report distinguishes custody from provider and parser coverage.
 type Report struct {
-	Roots        int      `json:"roots"`
-	Files        int      `json:"files"`
-	Bytes        int64    `json:"bytes"`
-	Sources      int      `json:"sources"`
-	Parsed       int      `json:"parsed"`
-	Supplemental int      `json:"supplemental"`
-	Gaps         []string `json:"gaps,omitempty"`
+	Roots            int      `json:"roots"`
+	Files            int      `json:"files"`
+	Bytes            int64    `json:"bytes"`
+	Sources          int      `json:"sources"`
+	Parsed           int      `json:"parsed"`
+	Supplemental     int      `json:"supplemental"`
+	Gaps             []string `json:"gaps,omitempty"`
+	RepositoryID     string   `json:"repository_id,omitempty"`
+	SnapshotID       string   `json:"snapshot_id,omitempty"`
+	MinReaderVersion int      `json:"min_reader_version,omitempty"`
+	ReaderBuild      string   `json:"reader_build,omitempty"`
+	Excluded         []string `json:"excluded,omitempty"`
 }
 
 type contextReader struct {

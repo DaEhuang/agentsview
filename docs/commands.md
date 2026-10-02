@@ -62,15 +62,18 @@ capture of their live directories.
 agentsview archive import --spec ./import.json
 agentsview archive sources
 agentsview archive verify
-agentsview archive backup /media/backup/recovery-point
-agentsview archive restore /media/backup/recovery-point /new/archive
+agentsview archive backup /media/backup/repository
+# Use snapshot_id from the backup report for both commands:
+agentsview archive verify --repository /media/backup/repository --snapshot SNAPSHOT_ID
+agentsview archive restore /media/backup/repository /new/archive --snapshot SNAPSHOT_ID
 AGENTSVIEW_DATA_DIR=/new/archive agentsview archive verify
 AGENTSVIEW_DATA_DIR=/new/archive agentsview archive reparse --all
 AGENTSVIEW_DATA_DIR=/new/archive agentsview archive extract /new/native-files
 ```
 
-Each destination must not exist. Backup and restore reject destinations inside
-their source. `extract` writes native files under their root IDs, including
+Restore and extract require new destinations. Backup creates a repository or adds
+a snapshot to an existing one. Backup and restore reject overlapping source and
+destination directories. `extract` writes native files under their root IDs, including
 supplemental files that have no parser. If an inventory contains different
 versions of one path, extraction fails without choosing a version or leaving a
 partial output.
@@ -92,15 +95,29 @@ files. `--scratch-bytes` limits each materialized source to 16 GiB by default;
 it does not cap total scratch usage.
 
 `verify` reads every retained object and accepted manifest. Backup verifies that
-closure, closes SQLite and the embedded raw vault, and holds the writer lock
-while copying them. It also copies assets, the ordinary artifact vault,
-configuration, and installation identity when present. It hashes the copy and
-writes `recovery.json`. Restore checks those hashes, SQLite integrity, and all
-accepted source objects before succeeding. An older database is rebuilt from its
-stored sessions with all live providers disabled; this makes it readable by the
-current version without reparsing original files. Keep the recovery point
-unchanged; use its restored copy as the working archive. Configuration and transcripts can
-contain credentials, so choose backup storage accordingly.
+closure, holds the writer and raw-vault locks, and creates a consistent SQLite
+snapshot through Docbank's portable backup API. It retains assets, installation
+identity, content/image retention policy and the original machine label. An
+existing ordinary artifact vault is currently rejected because its stopped-owner
+capture is not implemented; it is never silently omitted.
+
+Keep the backup report's repository ID, snapshot ID, application build and minimum
+reader version. Restore and repository verification require `--snapshot ID` even
+when the repository contains only one snapshot. Application extras over 64 MiB
+require Kit reader version 6; older binaries cannot use any part of that
+repository after it contains such a snapshot.
+
+Restore stages the selected snapshot and checks SQLite integrity and every
+accepted source object before publishing a new directory. An older database is
+rebuilt from its stored sessions with all live providers disabled. Allow space
+for the restored data and temporary complete copies of large extras.
+
+Original runtime configuration and connection credentials are not copied from
+configuration. Restore generates fresh local authentication and loopback settings.
+Previously retained raw files are preserved without redaction and may contain
+credentials. This branch does not yet enforce persisted archive-only mode: do not
+start a restored collector on a host with live provider files. Offline archive
+verification, extraction and explicit reparse are available.
 
 Startup resync keeps archive-only sessions and their acceptance records without
 opening the raw vault. Reparsing them always requires an explicit command.

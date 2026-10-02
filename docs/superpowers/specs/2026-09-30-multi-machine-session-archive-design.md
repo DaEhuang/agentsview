@@ -1,11 +1,11 @@
 # Move a session archive without losing its origins
 
-Status: proposed; requires review before implementation. This revises the
-direction of [PR #2036](https://github.com/kenn-io/agentsview/pull/2036), not
-the description of what that branch currently implements. The
-[current implementation](../../internal/local-session-archive.md) remains the
-baseline until the changes below are built and verified. Revised October 2 after
-external review; the previous review verdict does not cover this revision.
+Status: approved for careful implementation on October 2 after external review.
+This specifies the intended delivery for
+[PR #2036](https://github.com/kenn-io/agentsview/pull/2036). The
+[current implementation](../../internal/local-session-archive.md) distinguishes
+implemented behavior from the remaining work; approval does not mean the
+retirement acceptance criteria have passed.
 
 ## Outcome and limits
 
@@ -36,8 +36,9 @@ retention, garbage collection and disaster rebuild remain under
 
 ## What we know from the code
 
-The source baseline is PR #2036 at `07de734e1d9b629b16a766145294f6e99cc12ace`.
-The first spec commit is `30537403`. The October 2 review also inspected main at
+The reviewed source baseline was PR #2036 at
+`07de734e1d9b629b16a766145294f6e99cc12ace`. The first spec commit is `30537403`.
+The October 2 review also inspected main at
 `7203ab4df7071d0dd72bb2d215c12ef5aa706d3d`. These are observations, not claims
 that the proposed behavior already exists:
 
@@ -71,13 +72,12 @@ that the proposed behavior already exists:
 - Docbank #741 merged on September 30 as `4e9a5a0e`. The branch's pre-squash pin
   is not that merged revision; no fetched release tag contains the merge.
 
-Before implementation planning, establish a rebased source baseline: main is 31
-commits ahead of the branch's base and PR #2036 has merge conflicts. Main now
-pins Kit v0.29.2 and moved embedding lifecycle handling to Kit in #2056. Rerun
-the retained retired-generation regression after dependency reconciliation; the
-old blocker is not proven resolved by these source changes. Record the new
-baseline and recheck affected contracts before producing the implementation
-plan.
+The implementation baseline now merges main `1148d7f2` without rewriting the
+branch's history. Docbank is pinned to merged #764 (`1fc83dc6`). The retained
+retired-generation regressions pass after reconciliation. Main also requires
+Kit's pending #144 telemetry API, absent from v0.30.1; the local implementation
+uses its updated head `711756d2`, which includes the large-extras work. Replace
+that temporary pin with a tested tagged release before delivery.
 
 [Hosted raw sync](../../hosted-raw-sync.md) retains originals and authenticated
 source generations. [Artifact folder sync](../../artifact-sync.md) exchanges
@@ -380,16 +380,15 @@ dependency failures. Keep existing experimental recovery points and their saved
 readers untouched until the replacement has passed a cold restore.
 
 Before using that layout, require bounded streaming and chunked capture for
-`BackupExtraFile`, including files over 4 GiB. The currently pinned extras path
-does not meet this requirement. Resolve it in Kit/Docbank using their existing
-object recipes, with large-extra coverage for full verification, restore and
-prune. Exercise both an application database and an ordinary-vault database.
-This is a named prerequisite, not functionality supplied by the existing
-large-content change. Do not add gzip workarounds or a second AgentsView backup
-format to bypass it. Schedule this prerequisite first after design approval; it
-gates the retirement backup even if the seed alone currently fits. Measure the
-SQLite snapshot size, backup peak memory and scratch usage after trial
-collection of the other captures.
+`BackupExtraFile`, including files over 4 GiB. Merged Kit #145 and Docbank #764
+now provide this path using existing object recipes, with upstream coverage for
+full verification, restore and prune. Exercise both an application database and
+an ordinary-vault database. This is a named prerequisite, not functionality
+supplied by the existing large-content change. Do not add gzip workarounds or a
+second AgentsView backup format to bypass it. Keep it as a prerequisite for
+retirement backup even if the seed alone fits. Measure the SQLite snapshot size,
+backup peak memory and scratch usage after trial collection of the other
+captures.
 
 The first backup remains a stopped-owner operation. Acquire AgentsView's writer
 lock, keep both embedded vaults exclusive, and prevent application mutations
@@ -417,15 +416,16 @@ claiming a complete configuration backup. Existing preserved captures are left
 unchanged; do not quietly reimport their old credential files into the new
 capture format.
 
-Backup records the repository ID, exact snapshot ID, manifest digest,
-application reader build and snapshot minimum reader version in its recovery
-report. Chunk-recipe snapshots require Kit reader version 5. Restore and
+Backup records the repository ID, exact snapshot ID, application reader build
+and snapshot minimum reader version in its recovery report. Chunked extras
+require Kit reader version 6. Once such a snapshot exists, older readers cannot
+use the repository at all, including its older snapshots. Restore and
 backup-repository verification require `--snapshot ID`, pass that exact ID
 throughout the operation, and never resolve a changing `latest` snapshot on a
 shared repository. Live `archive verify` still verifies the open archive and
-does not select a backup snapshot. Expose manifest digest and minimum reader
-version in Docbank's public backup result as part of the prerequisite work; the
-currently pinned `BackupSnapshot` does not expose those two fields.
+does not select a backup snapshot. Docbank #764 exposes the minimum reader
+version. Do not record a second manifest digest: Kit validates manifest content
+against its snapshot ID.
 
 Restore opens only the backup repository and uses `BackupRepository.Restore` in
 a new staging directory. It then assembles the application layout from the
@@ -526,9 +526,9 @@ private runbook. The following are completion criteria, not tests already run:
    including a session that changed after rehearsal; verify its final accepted
    bytes can be reparsed. Record exactly which sessions and files the cutoff
    covers, remaining exclusions, and the recovery command, repository ID,
-   snapshot ID, manifest digest and reader version. Demonstrate that a changed
-   shared Codex index is reported as a conflict in the rehearsal rather than
-   claiming active-machine refresh support.
+   snapshot ID and reader version. Demonstrate that a changed shared Codex
+   index is reported as a conflict in the rehearsal rather than claiming
+   active-machine refresh support.
 
 The old computer is not ready to erase merely because import succeeds or a
 backup verifies. The final cutoff, complete extraction comparison, preserved

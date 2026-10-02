@@ -1,20 +1,15 @@
 package main
 
 import (
-	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/agentsview/internal/config"
 	"go.kenn.io/agentsview/internal/db"
-	"go.kenn.io/agentsview/internal/parser"
 	"go.kenn.io/agentsview/internal/rawarchive"
-	syncer "go.kenn.io/agentsview/internal/sync"
 )
 
 func newArchiveCommand() *cobra.Command {
@@ -64,6 +59,7 @@ func newArchiveCommand() *cobra.Command {
 			return err
 		}
 		// Source acceptance does not depend on the normalized parser version.
+		applyClassifierConfig(cfg)
 		database, err := db.OpenReadOnly(cmd.Context(), cfg.DBPath)
 		if err != nil {
 			return err
@@ -87,38 +83,38 @@ func newArchiveCommand() *cobra.Command {
 			}
 		}
 	}}
-	backupCmd := &cobra.Command{Use: "backup DESTINATION", Short: "Verify and copy the stopped archive, raw vault, assets, and configuration", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	backupCmd := &cobra.Command{Use: "backup REPOSITORY", Short: "Back up the stopped archive to a Docbank repository", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.LoadReadOnly()
 		if err != nil {
 			return err
 		}
-		database, lock, err := openWriteDB(cmd.Context(), cfg)
-		if err != nil {
-			return err
-		}
-		defer closeWriteDB(database, lock)
-		archive, err := rawarchive.Open(cmd.Context(), database, cfg.DataDir, archiveProgress(cmd))
-		if err != nil {
-			return err
-		}
-		_, verifyErr := archive.Verify(cmd.Context())
-		if err := errors.Join(verifyErr, archive.Close()); err != nil {
-			return err
-		}
-		if err := database.CheckpointWALTruncate(cmd.Context()); err != nil {
-			return err
-		}
-		if err := database.Close(); err != nil {
-			return err
-		}
-		// Keep the writer lock while both storage owners remain closed.
-		report, err := rawarchive.Backup(cmd.Context(), cfg.DBPath, cfg.DataDir, args[0])
+		return withRawArchive(cmd, func(a *rawarchive.Archive) error {
+			report, err := a.Backup(cmd.Context(), args[0], rawarchive.RecoverySettings{
+				ArchiveContent: cfg.ArchiveContent, ToolResultImages: cfg.ToolResultImages, LocalMachineName: cfg.LocalMachineName,
+			}, version)
+			return errors.Join(err, writeArchiveJSON(cmd.OutOrStdout(), report))
+		})
+	}}
+	var restoreSnapshot string
+	restoreCmd := &cobra.Command{Use: "restore REPOSITORY DESTINATION", Short: "Restore a selected snapshot into a new directory", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		report, err := rawarchive.Restore(cmd.Context(), args[0], restoreSnapshot, args[1], archiveProgress(cmd))
 		return errors.Join(err, writeArchiveJSON(cmd.OutOrStdout(), report))
 	}}
-	restoreCmd := &cobra.Command{Use: "restore BACKUP DESTINATION", Short: "Restore into a new directory and verify every accepted source", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
-		report, err := restoreRawArchive(cmd.Context(), args[0], args[1], archiveProgress(cmd))
+	restoreCmd.Flags().StringVar(&restoreSnapshot, "snapshot", "", "Snapshot ID from the backup report (required)")
+	var verifyRepository, verifySnapshot string
+	verifyCmd.Flags().StringVar(&verifyRepository, "repository", "", "Verify a backup repository instead of the local archive")
+	verifyCmd.Flags().StringVar(&verifySnapshot, "snapshot", "", "Snapshot ID to verify in the backup repository (required with --repository)")
+	verifyLocal := verifyCmd.RunE
+	verifyCmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if verifyRepository == "" {
+			if verifySnapshot != "" {
+				return errors.New("--snapshot requires --repository")
+			}
+			return verifyLocal(cmd, args)
+		}
+		report, err := rawarchive.VerifyRecovery(cmd.Context(), verifyRepository, verifySnapshot)
 		return errors.Join(err, writeArchiveJSON(cmd.OutOrStdout(), report))
-	}}
+	}
 	extractCmd := &cobra.Command{Use: "extract DESTINATION", Short: "Recover retained native files under their original root IDs", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return withRawArchive(cmd, func(a *rawarchive.Archive) error {
 			report, err := a.Extract(cmd.Context(), args[0])
@@ -157,58 +153,4 @@ func withRawArchive(cmd *cobra.Command, run func(*rawarchive.Archive) error) (re
 	}
 	defer func() { retErr = errors.Join(retErr, archive.Close()) }()
 	return run(archive)
-}
-
-func restoreRawArchive(ctx context.Context, source, target string, progress func(string)) (report rawarchive.Report, retErr error) {
-	if _, err := rawarchive.Restore(ctx, source, target); err != nil {
-		return report, err
-	}
-	defer func() {
-		if retErr != nil {
-			retErr = errors.Join(retErr, os.RemoveAll(target))
-		}
-	}()
-	database, err := db.OpenIsolatedContext(ctx, filepath.Join(target, "sessions.db"))
-	if err != nil {
-		return report, err
-	}
-	defer func() { retErr = errors.Join(retErr, database.Close()) }()
-	var integrity string
-	if err := database.Reader().QueryRow(ctx, "PRAGMA integrity_check").Scan(&integrity); err != nil {
-		return report, err
-	}
-	if integrity != "ok" {
-		return report, errors.New("restored SQLite archive failed integrity check")
-	}
-	archive, err := rawarchive.Open(ctx, database, target, progress)
-	if err != nil {
-		return report, err
-	}
-	defer func() { retErr = errors.Join(retErr, archive.Close()) }()
-	report, err = archive.Verify(ctx)
-	if err != nil {
-		return report, err
-	}
-	if database.NeedsResync() {
-		// A restored archive has no live source obligation. Use the ordinary
-		// rebuild's preserved-provider path so older data becomes readable while
-		// archived content and identities carry forward without a provider parse.
-		var disabled []parser.AgentType
-		for _, def := range parser.Registry {
-			disabled = append(disabled, def.Type)
-		}
-		if progress != nil {
-			progress("Upgrading the restored database while preserving archived sessions")
-		}
-		engine := syncer.NewEngine(ctx, database, syncer.EngineConfig{Ephemeral: true, DisabledAgents: disabled, DisableFilesystemProjectDiscovery: true})
-		stats, buildErr := engine.ResyncAllWithOptions(ctx, nil, syncer.RebuildOptions{})
-		if buildErr == nil && !stats.ArchiveRebuilt {
-			buildErr = errors.New("restored archive rebuild was aborted")
-		}
-		engine.Close()
-		if buildErr != nil {
-			return report, buildErr
-		}
-	}
-	return report, nil
 }

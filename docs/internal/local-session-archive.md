@@ -3,10 +3,13 @@
 Status: implemented on this branch; not yet released. User instructions and
 command limits live in [the CLI reference](../commands.md#agentsview-archive).
 
-The proposed
+The approved
 [multi-machine archive design](../superpowers/specs/2026-09-30-multi-machine-session-archive-design.md)
-revises source attribution, artifact/raw identity matching and recovery. Those
-changes are not implemented by this branch yet.
+defines source attribution, artifact/raw identity matching and recovery.
+Portable recovery is implemented here; multi-machine collection and persisted
+archive-only mode remain unimplemented. Do not start this experimental restore
+as a collector on a machine with live provider files until archive-only mode is
+implemented.
 
 ## Storage and reuse
 
@@ -65,20 +68,40 @@ parser-version bump.
 
 ## Recovery
 
-Stopped-owner filesystem backup includes SQLite, raw and normalized artifact
-vaults, assets, config, and installation identity. It keeps the writer lock
-until copying and read-back verification finish. Restore requires a new
-directory, checks file hashes and SQLite integrity, and verifies every accepted
-manifest and inventoried object. A matching vault ID or a bounded blob sample is
-not sufficient. Restore upgrades an older database through the normal
+The stopped archive writer keeps SQLite and the embedded raw vault under
+exclusive ownership while Docbank creates a portable backup. Its preparation
+callback takes a consistent SQLite snapshot, including WAL content. Application
+extras contain that snapshot, assets, installation identity and an allowlist of
+recovery settings. An application inventory names these components; Docbank owns
+their hashes, sizes and chunk recipes. Backup reports the repository ID, exact
+snapshot ID, application build and minimum reader version.
+
+Backup currently refuses an existing ordinary artifact vault. Docbank has no
+public API to hold that vault's ownership while leaving it closed and
+unmigrated. It must not be silently omitted from a recovery point. This
+limitation blocks complete recovery for archives that use that vault.
+
+Restore selects an exact snapshot, assembles a new data directory in private
+staging, checks SQLite integrity, and verifies every accepted manifest and
+inventoried raw object before publishing. A matching vault ID or bounded blob
+sample is insufficient. Restore upgrades an older database through the normal
 preserved-provider rebuild with every live provider disabled. Native extraction
 provides access to supplemental files too.
 
-Docbank [PR #741](https://github.com/kenn-io/docbank/pull/741) and merged Kit
-[PR #132](https://github.com/kenn-io/kit/pull/132) support large supplemental
-objects without the old 4 GiB admission limit. The AgentsView dependency pins
-that implementation. Existing standalone recovery repositories and their
-binaries need not be upgraded in place.
+The original runtime config is omitted. Only content/image retention policy and
+the original display label return; local authentication is regenerated and the
+host binds to loopback. Previously retained raw content is not redacted and may
+contain credentials. Persisted archive-only mode is still required before
+starting a restored collector on a receiving machine.
+
+Merged Docbank [#741](https://github.com/kenn-io/docbank/pull/741) and
+[#764](https://github.com/kenn-io/docbank/pull/764), with Kit
+[#132](https://github.com/kenn-io/kit/pull/132) and
+[#145](https://github.com/kenn-io/kit/pull/145), support large raw objects and
+application extras without the old 4 GiB limit. Extras over 64 MiB require Kit
+reader version 6. Once such a snapshot exists, older readers cannot use the
+repository, including its older snapshots. Existing experimental filesystem
+recovery points require their saved readers and are left untouched.
 
 ## Deferred work
 
