@@ -30,7 +30,6 @@ import (
 	"go.kenn.io/agentsview/internal/config"
 	"go.kenn.io/agentsview/internal/db"
 	"go.kenn.io/agentsview/internal/dbtest"
-	duckdbsync "go.kenn.io/agentsview/internal/duckdb"
 	"go.kenn.io/agentsview/internal/parser"
 	"go.kenn.io/agentsview/internal/remotesync"
 	"go.kenn.io/agentsview/internal/server"
@@ -216,12 +215,6 @@ func TestPGServeRuntimeRecordWriteFailureWarnsVisible(t *testing.T) {
 	assert.Contains(t, string(out), "could not write daemon runtime record")
 }
 
-func TestDuckDBServeRuntimeRecordWriteFailureWarnsVisible(t *testing.T) {
-	out, err := runDuckDBRuntimeWarningHelper(t)
-	require.NoError(t, err, string(out))
-	assert.Contains(t, string(out), "could not write daemon runtime record")
-}
-
 func runServeRuntimeWarningHelper(
 	t *testing.T, failWrite bool,
 ) ([]byte, error) {
@@ -397,36 +390,6 @@ func TestRunServeRuntimeWarningHelperProcess(t *testing.T) {
 	runServe(t.Context(), cfg, serveOptions{}, 0)
 }
 
-func runDuckDBRuntimeWarningHelper(t *testing.T) ([]byte, error) {
-	t.Helper()
-	dataDir := t.TempDir()
-	mirrorPath := filepath.Join(dataDir, "mirror.duckdb")
-	buildEmptyDuckDBMirrorFixture(t, mirrorPath)
-	return runRuntimeWarningHelperProcess(
-		t, "DuckDB", "TestRunDuckDBRuntimeWarningHelperProcess",
-		[]string{
-			"AGENTSVIEW_RUN_DUCKDB_RUNTIME_WARNING_HELPER=1",
-			"AGENTSVIEW_DATA_DIR=" + dataDir,
-			"AGENTSVIEW_DUCKDB_RUNTIME_WARNING_PATH=" + mirrorPath,
-		},
-		"could not write daemon runtime record",
-	)
-}
-
-// buildEmptyDuckDBMirrorFixture creates a schema-compatible, empty DuckDB
-// mirror file at path. 'duckdb serve' now probes instead of migrating (see
-// probeDuckDBMirrorForServe), so it fatally refuses to serve a missing or
-// bare file; tests that just need serve to reach its normal startup path
-// must seed a valid mirror first instead of relying on serve to create one.
-func buildEmptyDuckDBMirrorFixture(t *testing.T, path string) {
-	t.Helper()
-
-	conn, err := duckdbsync.Open(t.Context(), path)
-	require.NoError(t, err)
-	require.NoError(t, duckdbsync.EnsureSchema(t.Context(), conn))
-	require.NoError(t, conn.Close())
-}
-
 func runPGRuntimeWarningHelper(t *testing.T) ([]byte, error) {
 	t.Helper()
 	dataDir := t.TempDir()
@@ -477,28 +440,6 @@ func TestRunPGRuntimeWarningHelperProcess(t *testing.T) {
 	// driven by the parent observing the warning on stdout.
 	time.AfterFunc(2*time.Minute, func() { os.Exit(0) })
 	runReplicaServe(pgReplica{}, appCfg, "")
-}
-
-func TestRunDuckDBRuntimeWarningHelperProcess(t *testing.T) {
-	if os.Getenv("AGENTSVIEW_RUN_DUCKDB_RUNTIME_WARNING_HELPER") != "1" {
-		return
-	}
-	writeDaemonRuntimeWithAuth = func(
-		string, string, int, string, string, bool, bool, ...int,
-	) (string, error) {
-		return "", errors.New("forced runtime-record write failure")
-	}
-	// This is only an orphan guard if the parent dies; normal completion is
-	// driven by the parent observing the warning on stdout.
-	time.AfterFunc(2*time.Minute, func() { os.Exit(0) })
-	runDuckDBServe(config.Config{
-		Host:    "127.0.0.1",
-		Port:    0,
-		DataDir: os.Getenv("AGENTSVIEW_DATA_DIR"),
-		DuckDB: config.DuckDBConfig{
-			Path: os.Getenv("AGENTSVIEW_DUCKDB_RUNTIME_WARNING_PATH"),
-		},
-	}, "")
 }
 
 func TestMustLoadConfig(t *testing.T) {
@@ -1264,7 +1205,7 @@ func TestStartRemoteHostSync_NoEmitOnZeroSynced(t *testing.T) {
 func TestStartRemoteHostSync_NoEmitOnError(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		em := &fakeEmitter{}
-		syncFn := func() (int, error) { return 0, errors.New("ssh failure") }
+		syncFn := func() (int, error) { return 0, errors.New("remote sync failure") }
 
 		done := make(chan struct{})
 		exited := make(chan struct{})
@@ -1347,6 +1288,29 @@ func TestCollectWatchRootsWatchesHermesProfilesContainerRecursively(t *testing.T
 	assert.True(t, roots[0].recursive)
 	assert.True(t, roots[0].exists)
 	assert.Equal(t, []watchScope{{agent: parser.AgentHermes, syncDir: profilesRoot}}, roots[0].scopes)
+}
+
+func TestCollectWatchRootsCarriesAntigravityBrainDepthLimit(t *testing.T) {
+	root := t.TempDir()
+	brain := filepath.Join(root, "brain")
+	require.NoError(t, os.MkdirAll(brain, 0o755))
+	cfg := config.Config{
+		AgentDirs: map[parser.AgentType][]string{
+			parser.AgentAntigravity: {root},
+		},
+	}
+
+	roots, _, _, _ := collectWatchRoots(cfg)
+
+	got, ok := findCollectedWatchRoot(roots, brain)
+	require.True(t, ok, "antigravity brain root not collected")
+	assert.True(t, got.recursive)
+	assert.Equal(t, 1, got.maxDepth)
+	assert.Equal(t, []string{"*/.system_generated/logs"}, got.extraDirectories)
+	registered := got.registeredRoot()
+	assert.True(t, registered.Recursive)
+	assert.Equal(t, 1, registered.MaxDepth)
+	assert.Equal(t, []string{"*/.system_generated/logs"}, registered.ExtraDirectories)
 }
 
 func TestCollectWatchRootsUsesCoworkProviderRecursiveRoot(t *testing.T) {

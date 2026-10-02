@@ -4524,6 +4524,68 @@ func TestActivityExcludesSystemUserMessages(t *testing.T) {
 	assert.Equal(t, 1, entry.AssistantMessages, "AssistantMessages")
 }
 
+func TestActivityRoleSplitOnSingleRoleDays(t *testing.T) {
+	d := testDB(t)
+	sessions := []struct {
+		id   string
+		ts   string
+		msgs []Message
+	}{
+		{"assistant-only", "2024-06-01T10:00:00Z", []Message{
+			{Role: "assistant", Content: "a"},
+			{Role: "assistant", Content: "b"},
+		}},
+		{"system-only", "2024-06-02T10:00:00Z", []Message{
+			{Role: "user", Content: "banner", IsSystem: true},
+			{Role: "user", Content: "marker", IsSystem: true},
+		}},
+		{"mixed", "2024-06-03T10:00:00Z", []Message{
+			{Role: "user", Content: "question"},
+			{Role: "user", Content: "banner", IsSystem: true},
+			{Role: "user", Content: "result", SourceSubtype: "tool_result"},
+			{Role: "assistant", Content: "answer"},
+		}},
+	}
+	for _, sess := range sessions {
+		insertSession(t, d, sess.id, "proj", func(s *Session) {
+			s.StartedAt = new(sess.ts)
+			s.EndedAt = new(sess.ts)
+			s.MessageCount = len(sess.msgs)
+		})
+		for i := range sess.msgs {
+			sess.msgs[i].SessionID = sess.id
+			sess.msgs[i].Ordinal = i
+			sess.msgs[i].Timestamp = sess.ts
+			sess.msgs[i].ContentLength = len(sess.msgs[i].Content)
+		}
+		insertMessages(t, d, sess.msgs...)
+	}
+
+	resp, err := d.GetAnalyticsActivity(t.Context(), AnalyticsFilter{
+		From: "2024-06-01", To: "2024-06-03", Timezone: "UTC",
+	}, "day")
+	require.NoError(t, err)
+	require.Len(t, resp.Series, 3)
+
+	tests := []struct {
+		date                             string
+		messages, user, assistant, other int
+	}{
+		{"2024-06-01", 2, 0, 2, 0},
+		{"2024-06-02", 2, 0, 0, 2},
+		{"2024-06-03", 4, 1, 1, 2},
+	}
+	for i, tt := range tests {
+		entry := resp.Series[i]
+		assert.Equal(t, tt.date, entry.Date)
+		assert.Equal(t, tt.messages, entry.Messages, tt.date)
+		assert.Equal(t, tt.user, entry.UserMessages, tt.date)
+		assert.Equal(t, tt.assistant, entry.AssistantMessages, tt.date)
+		assert.Equal(t, tt.other,
+			entry.Messages-entry.UserMessages-entry.AssistantMessages, tt.date)
+	}
+}
+
 func TestGetAnalyticsSignals(t *testing.T) {
 	d := testDB(t)
 	ctx := t.Context()

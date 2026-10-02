@@ -22,12 +22,30 @@ type ImportStats struct {
 	Updated  int `json:"updated"`
 	Skipped  int `json:"skipped"`
 	Errors   int `json:"errors"`
+	// Refusals names each conversation a per-conversation write refused (each also counted in Errors); Gemini Apps parse errors are counted without an entry, and progress callbacks get counts only.
+	Refusals []ImportRefusal `json:"refusals,omitempty"`
+}
+
+// RefusalReason tells a caller whether importing the same export again can succeed.
+type RefusalReason string
+
+const (
+	RefusalDiverged      RefusalReason = "diverged"       // export rewrites archived messages
+	RefusalShorterExport RefusalReason = "shorter_export" // export has fewer messages than the archive
+	RefusalTrashed       RefusalReason = "trashed"        // session is in the trash
+	RefusalTransient     RefusalReason = "transient"      // anything else; a later import may succeed
+)
+
+// ImportRefusal identifies one conversation the import did not write.
+type ImportRefusal struct {
+	SessionID string        `json:"session_id"`
+	Reason    RefusalReason `json:"reason" enum:"diverged,shorter_export,trashed,transient"`
 }
 
 // ImportCallbacks provides optional progress reporting.
 type ImportCallbacks struct {
 	// OnProgress fires after each conversation with current
-	// cumulative stats.
+	// cumulative counts; Refusals is always left empty.
 	OnProgress func(ImportStats)
 	// OnIndexing fires before the FTS index rebuild starts.
 	OnIndexing func()
@@ -35,6 +53,7 @@ type ImportCallbacks struct {
 
 func (c *ImportCallbacks) progress(s ImportStats) {
 	if c != nil && c.OnProgress != nil {
+		s.Refusals = nil // per-conversation events stay constant-size; the result carries the list
 		c.OnProgress(s)
 	}
 }
@@ -102,7 +121,8 @@ func (f *lazyFTS) restore(ctx context.Context) error {
 // sessions are updated (messages replaced) unless the export
 // has fewer messages than the archive, which is refused.
 // User-renamed display names are preserved. Excluded (deleted)
-// sessions are counted as skipped.
+// sessions are counted as skipped. Refused conversations are
+// counted as errors and listed in Refusals with a reason.
 func ImportClaudeAI(
 	ctx context.Context,
 	store db.Store,
@@ -141,25 +161,7 @@ func ImportClaudeAI(
 		status, err := upsertConversation(
 			ctx, store, result, fts,
 		)
-		if err != nil {
-			stats.Errors++
-			log.Printf(
-				"import: skipping %s: %v",
-				result.Session.ID, err,
-			)
-			cb.progress(stats)
-			return nil
-		}
-
-		switch status {
-		case importNew:
-			stats.Imported++
-		case importUpdated:
-			stats.Updated++
-		case importSkipped:
-			stats.Skipped++
-		}
-
+		stats.record(result.Session.ID, status, err)
 		cb.progress(stats)
 		return nil
 	})
@@ -175,6 +177,51 @@ const (
 	importUpdated
 	importSkipped
 )
+
+// refusalError tags an import error with the reason reported to callers.
+type refusalError struct {
+	reason RefusalReason
+	err    error
+}
+
+func (e *refusalError) Error() string { return e.err.Error() }
+func (e *refusalError) Unwrap() error { return e.err }
+
+func refuse(reason RefusalReason, err error) error {
+	return &refusalError{reason: reason, err: err}
+}
+
+// refusalReason classifies an import error; anything untagged stays retryable.
+func refusalReason(err error) RefusalReason {
+	if tagged, ok := errors.AsType[*refusalError](err); ok {
+		return tagged.reason
+	}
+	if errors.Is(err, db.ErrSessionTrashed) {
+		return RefusalTrashed
+	}
+	if _, ok := errors.AsType[*db.SessionWouldShortenError](err); ok {
+		return RefusalShorterExport
+	}
+	return RefusalTransient
+}
+
+// record counts one conversation's outcome and lists it when the write failed.
+func (s *ImportStats) record(sessionID string, status importStatus, err error) {
+	if err != nil {
+		s.Errors++
+		s.Refusals = append(s.Refusals, ImportRefusal{SessionID: sessionID, Reason: refusalReason(err)})
+		log.Printf("import: skipping %s: %v", sessionID, err)
+		return
+	}
+	switch status {
+	case importNew:
+		s.Imported++
+	case importUpdated:
+		s.Updated++
+	case importSkipped:
+		s.Skipped++
+	}
+}
 
 func upsertConversation(
 	ctx context.Context,
@@ -205,10 +252,10 @@ func upsertConversation(
 	// turns) would make the replacement below drop stored messages.
 	// Refuse it before touching the session row.
 	if existing != nil && len(msgs) < existing.MessageCount {
-		return importNew, fmt.Errorf(
+		return importNew, refuse(RefusalShorterExport, fmt.Errorf(
 			"export has %d messages, archive has %d",
 			len(msgs), existing.MessageCount,
-		)
+		))
 	}
 
 	sess := db.Session{
@@ -343,25 +390,7 @@ func ImportChatGPT(
 			status, err := upsertChatGPTConversation(
 				ctx, store, result, fts,
 			)
-			if err != nil {
-				stats.Errors++
-				log.Printf(
-					"import: skipping %s: %v",
-					result.Session.ID, err,
-				)
-				cb.progress(stats)
-				return nil
-			}
-
-			switch status {
-			case importNew:
-				stats.Imported++
-			case importUpdated:
-				stats.Updated++
-			case importSkipped:
-				stats.Skipped++
-			}
-
+			stats.record(result.Session.ID, status, err)
 			cb.progress(stats)
 			return nil
 		},
@@ -402,9 +431,9 @@ func upsertChatGPTConversation(
 	}
 
 	if existing.Agent != string(parser.AgentChatGPT) {
-		return importNew, fmt.Errorf(
+		return importNew, refuse(RefusalDiverged, fmt.Errorf(
 			"existing session belongs to agent %q", existing.Agent,
-		)
+		))
 	}
 	policy := storeArchiveContent(store)
 	if policy.UsageOnly() {
@@ -422,19 +451,24 @@ func upsertChatGPTConversation(
 	// can differ from an unchanged archived copy.
 	canonical := canonicalChatGPTMessages(store, chatGPTSession(s), msgs, policy)
 	if len(canonical) < len(archived) {
-		return importNew, fmt.Errorf(
+		return importNew, refuse(RefusalShorterExport, fmt.Errorf(
 			"export has %d messages, archive has %d",
 			len(canonical), len(archived),
-		)
+		))
 	}
-	if len(canonical) != len(msgs) ||
-		!sameMessages(archived, canonical[:len(archived)]) {
-		return importNew, errors.New(
+	if len(canonical) != len(msgs) {
+		return importNew, refuse(RefusalDiverged, errors.New(
 			"export history diverges from the archived messages",
-		)
+		))
+	}
+	filled, ok := compareChatGPTPrefix(archived, canonical[:len(archived)])
+	if !ok {
+		return importNew, refuse(RefusalDiverged, errors.New(
+			"export history diverges from the archived messages",
+		))
 	}
 
-	if len(msgs) == len(archived) {
+	if len(msgs) == len(archived) && len(filled) == 0 {
 		// Refresh session_name without touching any other fields —
 		// a partial UpsertSession would overwrite first_message,
 		// timestamps, and counts with zero values.
@@ -450,15 +484,21 @@ func upsertChatGPTConversation(
 		return importSkipped, nil
 	}
 
-	// Insert only the rows past the verified prefix. A full replacement
-	// would delete and reinsert archived rows, changing message IDs and
-	// risking pins that cannot be re-matched without source UUIDs.
-	fts.suspend(ctx)
-	// The transcript grew, so stored quality signals and secret findings
-	// describe the shorter history. Clear them to version zero in the same
+	// Fill results that were empty when archived and insert the rows past
+	// the verified prefix. A full replacement would delete and reinsert
+	// archived rows, changing message IDs and risking pins that cannot be
+	// re-matched without source UUIDs. A fill-only import is an update too.
+	// Full-text search indexes message rows only, so fills alone skip it.
+	if len(msgs) > len(archived) {
+		fts.suspend(ctx)
+	}
+	// The transcript changed, so stored quality signals and secret findings
+	// describe the older history. Clear them to version zero in the same
 	// write so the signal backfill recomputes them from the new rows.
+	rows := chatGPTFillRows(archived, msgs, filled)
+	rows = append(rows, msgs[len(archived):]...)
 	if err := appendChatGPTMessages(
-		ctx, store, chatGPTSession(s), msgs[len(archived):],
+		ctx, store, chatGPTSession(s), rows,
 	); errors.Is(err, db.ErrSessionExcluded) {
 		return importSkipped, nil
 	} else if err != nil {
@@ -551,16 +591,38 @@ func writeChatGPTSession(
 	})
 }
 
-// appendChatGPTMessages inserts rows after the archived transcript without
-// touching existing rows. Signals are written as zero values so the
-// backfill recomputes them for the longer transcript.
+// appendChatGPTMessages fills archived-empty tool results at stored
+// ordinals and inserts later rows, leaving other stored rows untouched.
+// Signals are written as zero values so the backfill recomputes them.
 func appendChatGPTMessages(
-	ctx context.Context, store db.Store, sess db.Session, tail []db.Message,
+	ctx context.Context, store db.Store, sess db.Session, msgs []db.Message,
 ) error {
 	return writeChatGPTBatch(ctx, store, db.SessionBatchWrite{
-		Session:  sess,
-		Messages: tail,
+		Session:              sess,
+		Messages:             msgs,
+		FillEmptyToolResults: true,
 	})
+}
+
+// chatGPTFillRows copies the export rows whose archived calls get a result,
+// keeping only the results being filled so nothing else reaches the write.
+func chatGPTFillRows(
+	archived, incoming []db.Message, filled []int,
+) []db.Message {
+	rows := make([]db.Message, 0, len(filled))
+	for _, i := range filled {
+		row := incoming[i]
+		row.ToolCalls = slices.Clone(row.ToolCalls[:len(archived[i].ToolCalls)])
+		for j := range row.ToolCalls {
+			if !emptyToolResult(archived[i].ToolCalls[j]) {
+				row.ToolCalls[j].ResultContent = ""
+				row.ToolCalls[j].ResultContentLength = 0
+				row.ToolCalls[j].ResultEvents = nil
+			}
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 func writeChatGPTBatch(
@@ -569,11 +631,12 @@ func writeChatGPTBatch(
 	result, err := store.WriteSessionBatchAtomic(
 		ctx, []db.SessionBatchWrite{write},
 	)
-	if err != nil {
-		return err
-	}
+	// Trashed sessions count as excluded, so check before the returned error.
 	if result.ExcludedSessions > 0 {
 		return db.ErrSessionExcluded
+	}
+	if err != nil {
+		return err
 	}
 	if result.FailedSessions > 0 && len(result.Errors) > 0 {
 		return result.Errors[0]
@@ -623,6 +686,41 @@ func sameMessages(existing, incoming []db.Message) bool {
 		}
 	}
 	return true
+}
+
+// compareChatGPTPrefix reports whether the export still starts with the
+// archived messages and which rows hold archived-empty results the export
+// fills. Only fields no archive policy rewrites are compared: each archived
+// call's name and category, and whether its result is empty.
+func compareChatGPTPrefix(
+	existing, incoming []db.Message,
+) (filled []int, ok bool) {
+	if !sameMessages(existing, incoming) {
+		return nil, false
+	}
+	for i := range existing {
+		if len(incoming[i].ToolCalls) < len(existing[i].ToolCalls) {
+			return nil, false
+		}
+		fill := false
+		for j, tc := range existing[i].ToolCalls {
+			in := incoming[i].ToolCalls[j]
+			if tc.ToolName != in.ToolName || tc.Category != in.Category {
+				return nil, false
+			}
+			if emptyToolResult(tc) && !emptyToolResult(in) {
+				fill = true
+			}
+		}
+		if fill {
+			filled = append(filled, i)
+		}
+	}
+	return filled, true
+}
+
+func emptyToolResult(tc db.ToolCall) bool {
+	return tc.ResultContent == "" && tc.ResultContentLength == 0
 }
 
 func strPtr(s string) *string {

@@ -4,6 +4,7 @@ package clickhouse
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,6 +12,7 @@ import (
 
 	"go.kenn.io/agentsview/internal/clickhouse/chtest"
 	"go.kenn.io/agentsview/internal/db"
+	"go.kenn.io/agentsview/internal/storage"
 )
 
 func TestStoreAnalyticsReads(t *testing.T) {
@@ -180,4 +182,74 @@ func TestAnalyticsSessionSetQueriesMatchSQLite(t *testing.T) {
 	assert.Equal(t, wantVelocity, gotVelocity)
 	assert.NotEmpty(t, gotVelocity.ByAgent,
 		"fixture sessions have paired user and assistant messages, so velocity must have data")
+}
+
+// TestAnalyticsActivityRoleSplitMatchesSQLite pins the user / assistant /
+// other split behind the stacked activity timeline on assistant-only,
+// system-only, and mixed days.
+func TestAnalyticsActivityRoleSplitMatchesSQLite(t *testing.T) {
+	local, target := seedFixture(t)
+	ctx := t.Context()
+	type row struct {
+		role, subtype string
+		system        bool
+	}
+	days := []struct {
+		id, date string
+		rows     []row
+	}{
+		{"ch-role-assistant", "2026-02-01", []row{{role: "assistant"}, {role: "assistant"}}},
+		{"ch-role-system", "2026-02-02", []row{{role: "user", system: true}, {role: "user", system: true}}},
+		{"ch-role-mixed", "2026-02-03", []row{
+			{role: "user"},
+			{role: "user", system: true},
+			{role: "user", subtype: "tool_result"},
+			{role: "assistant"},
+		}},
+	}
+	writes := make([]db.SessionBatchWrite, 0, len(days))
+	for _, day := range days {
+		ts := day.date + "T10:00:00.000Z"
+		msgs := make([]db.Message, 0, len(day.rows))
+		for i, r := range day.rows {
+			m := fixtureMessage(day.id, i, r.role, fmt.Sprintf("row %d", i), ts)
+			m.IsSystem = r.system
+			m.SourceSubtype = r.subtype
+			msgs = append(msgs, m)
+		}
+		writes = append(writes, db.SessionBatchWrite{
+			Session:         fixtureSession(day.id, "gamma", "row 0", ts, len(msgs)),
+			Messages:        msgs,
+			DataVersion:     1,
+			ReplaceMessages: true,
+		})
+	}
+	_, err := local.WriteSessionBatchAtomic(ctx, writes)
+	require.NoError(t, err)
+	syncer := newTestSync(t, local, target, storage.PusherOptions{})
+	_, err = syncer.Push(ctx, false, nil)
+	require.NoError(t, err)
+	store, err := NewStore(ctx, target)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+
+	filter := db.AnalyticsFilter{From: "2026-02-01", To: "2026-02-03", Timezone: "UTC"}
+	want, err := local.GetAnalyticsActivity(ctx, filter, "day")
+	require.NoError(t, err)
+	got, err := store.GetAnalyticsActivity(ctx, filter, "day")
+	require.NoError(t, err)
+	require.Len(t, want.Series, 3)
+	require.Len(t, got.Series, 3)
+	for i, w := range want.Series {
+		g := got.Series[i]
+		assert.Equal(t, w.Date, g.Date)
+		assert.Equal(t, w.Messages, g.Messages, w.Date)
+		assert.Equal(t, w.UserMessages, g.UserMessages, w.Date)
+		assert.Equal(t, w.AssistantMessages, g.AssistantMessages, w.Date)
+	}
+	assert.Equal(t, 0, got.Series[0].UserMessages, "assistant-only day")
+	assert.Equal(t, 2, got.Series[0].AssistantMessages, "assistant-only day")
+	assert.Equal(t, 0, got.Series[1].UserMessages+got.Series[1].AssistantMessages, "system-only day")
+	assert.Equal(t, 2, got.Series[1].Messages, "system-only day")
+	assert.Equal(t, 1, got.Series[2].UserMessages, "mixed day")
 }

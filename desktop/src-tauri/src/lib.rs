@@ -38,6 +38,13 @@ const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const DAEMON_STARTUP_LONG_NOTICE_AFTER: Duration = Duration::from_secs(300);
 const DAEMON_UNHEALTHY_GRACE: Duration = Duration::from_secs(15);
 const READY_POLL_INTERVAL: Duration = Duration::from_millis(125);
+/// How often the Rust side probes the backend while the app is running. The
+/// web view's own recovery paths are JavaScript, and macOS stops executing the
+/// web view when the app has no window on screen, so this probe is the only
+/// recovery that keeps running. Kept well below a minute so an outage is
+/// noticed soon after it ends, and well above the request cost of one
+/// loopback GET.
+const BACKEND_PROBE_INTERVAL: Duration = Duration::from_secs(30);
 const STATUS_POLL_MAX_INTERVAL: Duration = Duration::from_secs(1);
 const STATUS_PROBE_TIMEOUT: Duration = Duration::from_millis(1250);
 const STATUS_PROBE_FAILURE_NOTICE_AFTER: u32 = 10;
@@ -108,7 +115,7 @@ struct DeepLinkState {
 enum DeepLinkDispatch {
     Deferred(Option<String>),
     Redirecting(Option<String>),
-    Live,
+    Live(BackendProbeState),
 }
 
 impl DeepLinkDispatch {
@@ -119,7 +126,7 @@ impl DeepLinkDispatch {
                 *pending = Some(route);
                 None
             }
-            DeepLinkDispatch::Live => match port {
+            DeepLinkDispatch::Live(_) => match port {
                 Some(port) => Some((port, route)),
                 // Sidecar is down; hold the route for the next redirect.
                 None => {
@@ -137,7 +144,7 @@ impl DeepLinkDispatch {
                 *self = DeepLinkDispatch::Redirecting(None);
                 route
             }
-            DeepLinkDispatch::Live => None,
+            DeepLinkDispatch::Live(_) => None,
         }
     }
 
@@ -151,10 +158,10 @@ impl DeepLinkDispatch {
         match self {
             DeepLinkDispatch::Redirecting(pending) => {
                 let route = pending.take();
-                *self = DeepLinkDispatch::Live;
+                *self = DeepLinkDispatch::Live(BackendProbeState::default());
                 route
             }
-            DeepLinkDispatch::Deferred(_) | DeepLinkDispatch::Live => None,
+            DeepLinkDispatch::Deferred(_) | DeepLinkDispatch::Live(_) => None,
         }
     }
 
@@ -163,12 +170,21 @@ impl DeepLinkDispatch {
     // redirect's fallback root navigation; hold routes until it runs.
     fn defer(&mut self) {
         match self {
-            DeepLinkDispatch::Live => *self = DeepLinkDispatch::Deferred(None),
+            DeepLinkDispatch::Live(_) => *self = DeepLinkDispatch::Deferred(None),
             DeepLinkDispatch::Redirecting(pending) => {
                 let route = pending.take();
                 *self = DeepLinkDispatch::Deferred(route);
             }
             DeepLinkDispatch::Deferred(_) => {}
+        }
+    }
+
+    // Startup owns navigation until its redirect finishes. Completing that
+    // redirect starts fresh probe history so a later probe cannot repeat it.
+    fn observe_backend(&mut self, port: u16, reachable: bool) -> bool {
+        match self {
+            DeepLinkDispatch::Live(probe) => probe.observe(port, reachable),
+            DeepLinkDispatch::Deferred(_) | DeepLinkDispatch::Redirecting(_) => false,
         }
     }
 }
@@ -809,6 +825,8 @@ fn launch_backend(app: &mut App) -> Result<(), DynError> {
             }
         }
     });
+
+    spawn_backend_probe(window.clone(), app.handle().clone());
 
     forward_sidecar_logs(rx, window, generation, sidecar_pid);
 
@@ -3693,6 +3711,73 @@ fn restart_backend_after_update(handle: AppHandle) {
     }
 }
 
+/// Records what the Rust-side probe last saw of the backend, so a restart the
+/// suspended web view could not notice can be recovered from.
+#[derive(Debug, Default)]
+struct BackendProbeState {
+    last: Option<(u16, bool)>,
+}
+
+impl BackendProbeState {
+    /// Records one probe result and reports whether the current page needs
+    /// to be reloaded.
+    ///
+    /// The window is reloaded when a reachable backend is not the one the
+    /// window was last known to be on: it answers on a different port, or it
+    /// answers again after having been unreachable. A backend that comes back
+    /// on the same port may be a different process, and the version endpoint
+    /// carries no per-process identity to tell them apart, so the
+    /// down-then-up transition is the signal. Recovery fires once per
+    /// transition, never on every probe, and never while the backend is down,
+    /// because there would be nothing to reload.
+    ///
+    /// The first observation never reloads: start-up has already pointed the
+    /// window at the backend.
+    fn observe(&mut self, port: u16, reachable: bool) -> bool {
+        let previous = self.last.replace((port, reachable));
+        if !reachable {
+            return false;
+        }
+        match previous {
+            None => false,
+            Some((last_port, last_reachable)) => !last_reachable || last_port != port,
+        }
+    }
+}
+
+/// Starts the Rust-side backend probe for the app's lifetime.
+///
+/// Recovery used to be wired to `WindowEvent::Focused(true)` alone, and the
+/// frontend's own health check is disabled in desktop mode on the grounds that
+/// Tauri owns recovery. With the window closed to the tray macOS suspends the
+/// web view, so neither path can fire: the backend can restart, or go away and
+/// come back, and the window stays on a dead page until the app is quit and
+/// started again. This probe runs on the side that keeps executing.
+fn spawn_backend_probe(window: WebviewWindow, handle: AppHandle) {
+    thread::spawn(move || {
+        loop {
+            if let Some(port) = current_backend_port(&handle) {
+                let reachable = backend_endpoint_ready(port);
+                let deep_link_state = handle.state::<DeepLinkState>();
+                if let Ok(mut dispatch) = deep_link_state.dispatch.lock() {
+                    // Recheck after HTTP: startup may have published a new port.
+                    // Hold dispatch through the asynchronous reload request so
+                    // a new deep link or startup redirect always follows it.
+                    if current_backend_port(&handle) == Some(port)
+                        && dispatch.observe_backend(port, reachable)
+                    {
+                        eprintln!("[agentsview] backend returned on port {port}, reloading window");
+                        if let Err(err) = window.reload() {
+                            eprintln!("[agentsview] backend recovery reload failed: {err}");
+                        }
+                    }
+                };
+            }
+            thread::sleep(BACKEND_PROBE_INTERVAL);
+        }
+    });
+}
+
 fn wait_for_server(port: u16, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -5993,5 +6078,113 @@ agentsview running at http://127.0.0.1:18082
             }
             other => panic!("expected NonZero{{code=42}}; got {other:?}"),
         }
+    }
+
+    // The desktop window's only recovery path was a window-focus event, and
+    // every other recovery path is JavaScript inside the web view. With no
+    // window on screen macOS stops executing that web view, so a backend that
+    // restarts leaves the window permanently stale. These tests pin the
+    // Rust-side probe that recovers it, because the Rust side is the part that
+    // keeps running.
+
+    #[test]
+    fn backend_probe_does_not_navigate_on_the_first_observation() {
+        let mut state = BackendProbeState::default();
+        assert!(
+            !state.observe(8080, true),
+            "start-up has already navigated; the first probe must not repeat it"
+        );
+        assert!(
+            !state.observe(8080, true),
+            "a backend that stays up must not be navigated again"
+        );
+    }
+
+    #[test]
+    fn backend_probe_navigates_when_the_backend_comes_back() {
+        let mut state = BackendProbeState::default();
+        assert!(!state.observe(8080, true));
+        assert!(
+            !state.observe(8080, false),
+            "there is nothing to navigate to while the backend is down"
+        );
+        assert!(
+            state.observe(8080, true),
+            "a backend that came back may be a new process, and a suspended \
+             web view cannot have noticed"
+        );
+        assert!(
+            !state.observe(8080, true),
+            "recovery happens once per outage, not on every later probe"
+        );
+    }
+
+    #[test]
+    fn backend_probe_navigates_when_the_port_changes() {
+        let mut state = BackendProbeState::default();
+        assert!(!state.observe(8080, true));
+        assert!(
+            state.observe(9090, true),
+            "a backend on a new port is a different backend"
+        );
+    }
+
+    #[test]
+    fn backend_probe_does_not_navigate_to_an_unreachable_backend() {
+        let mut state = BackendProbeState::default();
+        assert!(!state.observe(8080, true));
+        assert!(!state.observe(9090, false));
+        assert!(
+            state.observe(9090, true),
+            "the new port is navigated to once it answers"
+        );
+    }
+
+    #[test]
+    fn backend_probe_preserves_startup_deep_link() {
+        let mut dispatch = DeepLinkDispatch::Deferred(Some("/sessions/a".to_string()));
+        assert!(!dispatch.observe_backend(8080, false));
+        assert!(!dispatch.observe_backend(8080, true));
+        assert_eq!(dispatch.take_pending().as_deref(), Some("/sessions/a"));
+        assert!(!dispatch.observe_backend(8080, true));
+        assert_eq!(dispatch.finish_redirect(), None);
+        assert!(!dispatch.observe_backend(8080, true));
+    }
+
+    #[test]
+    fn backend_probe_does_not_repeat_completed_restart_redirect() {
+        for port in [8080, 9090] {
+            let mut dispatch = DeepLinkDispatch::Live(BackendProbeState::default());
+            assert!(!dispatch.observe_backend(8080, true));
+            assert!(!dispatch.observe_backend(8080, false));
+            dispatch.defer();
+            assert_eq!(
+                dispatch.route_for_navigation("/sessions/a".to_string(), Some(port)),
+                None
+            );
+            assert_eq!(dispatch.take_pending().as_deref(), Some("/sessions/a"));
+            assert_eq!(dispatch.finish_redirect(), None);
+            // The whole redirect can complete between scheduled probes.
+            assert!(!dispatch.observe_backend(port, true));
+
+            // A later outage still reloads the current page exactly once.
+            assert!(!dispatch.observe_backend(port, false));
+            assert!(dispatch.observe_backend(port, true));
+            assert!(!dispatch.observe_backend(port, true));
+        }
+    }
+
+    #[test]
+    fn backend_probe_recovers_live_deep_link_after_outage() {
+        let mut dispatch = DeepLinkDispatch::Live(BackendProbeState::default());
+        assert!(!dispatch.observe_backend(8080, true));
+        assert!(!dispatch.observe_backend(8080, false));
+        assert_eq!(
+            dispatch.route_for_navigation("/sessions/a".to_string(), Some(8080)),
+            Some((8080, "/sessions/a".to_string()))
+        );
+        // Opening a link does not establish readiness; the navigation can
+        // fail while the backend is down and still needs recovery afterward.
+        assert!(dispatch.observe_backend(8080, true));
     }
 }

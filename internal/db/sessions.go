@@ -166,7 +166,7 @@ func scanSessionRow(rs rowScanner) (Session, error) {
 }
 
 // scanSessionRowWithSource scans sessionBaseCols and an optional trailing
-// file_path into a Session.
+// source metadata into a Session.
 func scanSessionRowWithSource(rs rowScanner, includeSource bool) (Session, error) {
 	var s Session
 	targets := []any{
@@ -202,7 +202,7 @@ func scanSessionRowWithSource(rs rowScanner, includeSource bool) (Session, error
 		&s.TranscriptRevision, &s.CreatedAt, &s.ProjectAssigned,
 	}
 	if includeSource {
-		targets = append(targets, &s.FilePath)
+		targets = append(targets, &s.FilePath, &s.FileSize, &s.LocalModifiedAt)
 	}
 	err := rs.Scan(targets...)
 	return s, err
@@ -527,6 +527,11 @@ func (db *DB) DecodeCursor(s string) (SessionCursor, error) {
 
 // SessionFilter specifies how to query sessions.
 type SessionFilter struct {
+	// IDs selects rows directly. Nil preserves discovery defaults; an empty
+	// non-nil slice matches nothing. Raw IDs expand over literal tilde suffixes.
+	IDs []string
+	// IDsExact selects only physical IDs resolved by the hosted public-ID layer.
+	IDsExact  bool
 	SessionID string
 	Project   string
 	// ProjectLabels carries exact internal project labels resolved from an
@@ -755,7 +760,7 @@ func (db *DB) ListSessions(
 
 	columns := sessionBaseCols
 	if f.IncludeSource {
-		columns += ", file_path"
+		columns += ", file_path, file_size, local_modified_at"
 	}
 	query := "SELECT " + columns +
 		" FROM sessions WHERE " + cursorWhere + " " +
@@ -1299,17 +1304,18 @@ func (db *DB) IsSessionTrashed(ctx context.Context, id string) bool {
 	return n == 1
 }
 
+const hasTrashedSessionByFilePathQuery = "SELECT 1 FROM sessions" +
+	" INDEXED BY idx_sessions_file_path" +
+	" WHERE file_path = ? AND agent = ?" +
+	" AND deleted_at IS NOT NULL" +
+	" LIMIT 1"
+
 // HasTrashedSessionByFilePath returns true when a source path already belongs
-// to a trashed row for this agent.
+// to a trashed row for this agent. Use the path index so each parsed source
+// checks only its own rows, rather than scanning every session for the agent.
 func (db *DB) HasTrashedSessionByFilePath(ctx context.Context, path, agent string) bool {
 	var n int
-	_ = db.getReader().QueryRow(ctx,
-		"SELECT 1 FROM sessions"+
-			" WHERE file_path = ? AND agent = ?"+
-			" AND deleted_at IS NOT NULL"+
-			" LIMIT 1",
-		path, agent,
-	).Scan(&n)
+	_ = db.getReader().QueryRow(ctx, hasTrashedSessionByFilePathQuery, path, agent).Scan(&n)
 	return n == 1
 }
 
@@ -1884,16 +1890,25 @@ const linkSubagentSessionsQuery = `
 // use LinkSubagentSessionsForSessions instead, which further bounds the
 // pass to the changed batch.
 func (db *DB) LinkSubagentSessions() error {
-	return db.LinkSubagentSessionsContext(context.Background())
+	_, err := db.LinkSubagentSessionsContext(context.Background())
+	return err
 }
 
 // LinkSubagentSessionsContext is LinkSubagentSessions with caller-controlled
-// cancellation for bounded sync paths.
-func (db *DB) LinkSubagentSessionsContext(ctx context.Context) error {
+// cancellation for bounded sync paths. The count is the number of session
+// rows whose parent link changed. Legacy repairs and ordinary linking commit
+// together so an error leaves no unreported parent changes.
+func (db *DB) LinkSubagentSessionsContext(ctx context.Context) (int, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	if err := db.repairLegacySelfParentedSessions(ctx); err != nil {
-		return err
+	tx, err := db.getWriter().BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("beginning subagent linking: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	repaired, err := repairLegacySelfParentedSessions(ctx, tx)
+	if err != nil {
+		return 0, err
 	}
 
 	// local_modified_at is bumped so the sync_marker trigger fires and
@@ -1903,11 +1918,18 @@ func (db *DB) LinkSubagentSessionsContext(ctx context.Context) error {
 	// session after a mirror's cutoff would otherwise never re-push it
 	// (see updateSessionSignalsTx and ReplaceSessionUsageEvents for the
 	// same pattern).
-	_, err := db.getWriter().ExecContext(ctx, linkSubagentSessionsQuery)
+	res, err := tx.ExecContext(ctx, linkSubagentSessionsQuery)
 	if err != nil {
-		return fmt.Errorf("linking subagent sessions: %w", err)
+		return 0, fmt.Errorf("linking subagent sessions: %w", err)
 	}
-	return nil
+	updated, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("counting linked subagent sessions: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("committing subagent linking: %w", err)
+	}
+	return repaired + int(updated), nil
 }
 
 // selfParentRepairStateKey marks the archive as having cleared the
@@ -1937,37 +1959,34 @@ const clearSelfParentedSessionsSQL = `
 // affected rows would never re-enter the linker. The pass is a full scan
 // of sessions (parent_session_id IS id cannot use idx_sessions_parent), so
 // it is gated by a pg_sync_state marker rather than repeated on every sync.
-// The marker and the clear commit together so a failed run retries.
-func (db *DB) repairLegacySelfParentedSessions(ctx context.Context) error {
-	writer := db.getWriter()
+// The caller commits the marker, repair, and ordinary linking together so a
+// failed run retries every change.
+func repairLegacySelfParentedSessions(ctx context.Context, tx *sql.Tx) (int, error) {
 	var repaired int
-	if err := writer.QueryRowContext(
+	if err := tx.QueryRowContext(
 		ctx,
 		"SELECT EXISTS(SELECT 1 FROM pg_sync_state WHERE key = ?)",
 		selfParentRepairStateKey,
 	).Scan(&repaired); err != nil {
-		return fmt.Errorf("checking self-parent repair state: %w", err)
+		return 0, fmt.Errorf("checking self-parent repair state: %w", err)
 	}
 	if repaired != 0 {
-		return nil
+		return 0, nil
 	}
-	tx, err := writer.BeginTx(ctx, nil)
+	res, err := tx.ExecContext(ctx, clearSelfParentedSessionsSQL)
 	if err != nil {
-		return fmt.Errorf("beginning self-parent repair: %w", err)
+		return 0, fmt.Errorf("clearing legacy self-parented sessions: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, clearSelfParentedSessionsSQL); err != nil {
-		return fmt.Errorf("clearing legacy self-parented sessions: %w", err)
+	updated, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("counting legacy self-parent repairs: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO pg_sync_state (key, value) VALUES (?, '1')
 		ON CONFLICT(key) DO NOTHING`, selfParentRepairStateKey); err != nil {
-		return fmt.Errorf("recording self-parent repair state: %w", err)
+		return 0, fmt.Errorf("recording self-parent repair state: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing self-parent repair: %w", err)
-	}
-	return nil
+	return int(updated), nil
 }
 
 // linkSubagentSessionsForSessionsQuery is linkSubagentSessionsQuery
@@ -2052,19 +2071,26 @@ func clearDanglingSubagentParentQuery(ph string) string {
 // on every change — must use this form so their linking cost tracks the
 // changed batch; bulk paths (full sync, reconciliation, resync) keep the
 // global LinkSubagentSessions pass they already coalesce to.
-func (db *DB) LinkSubagentSessionsForSessions(ctx context.Context, ids []string) error {
+// The returned count includes only committed changes; all chunks commit together.
+func (db *DB) LinkSubagentSessionsForSessions(ctx context.Context, ids []string) (int, error) {
 	if len(ids) == 0 {
-		return nil
+		return 0, nil
 	}
 	db.mu.Lock()
 	defer db.mu.Unlock()
+	tx, err := db.getWriter().BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("beginning scoped subagent linking: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	updated := 0
 
 	// Each id binds twice (once per UNION branch), so halve the chunk to
 	// stay within SQLite's bind-variable limit.
-	return queryChunkedSize(ids, maxSQLVars/2, func(chunk []string) error {
+	err = queryChunkedSize(ids, maxSQLVars/2, func(chunk []string) error {
 		ph, args := inPlaceholders(chunk)
 		allArgs := append(append([]any{}, args...), args...)
-		_, err := db.getWriter().Exec(ctx,
+		res, err := tx.ExecContext(ctx,
 			linkSubagentSessionsForSessionsQuery(ph), allArgs...,
 		)
 		if err != nil {
@@ -2073,8 +2099,20 @@ func (db *DB) LinkSubagentSessionsForSessions(ctx context.Context, ids []string)
 				len(chunk), err,
 			)
 		}
+		count, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("counting scoped subagent links: %w", err)
+		}
+		updated += int(count)
 		return nil
 	})
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("committing scoped subagent linking: %w", err)
+	}
+	return updated, nil
 }
 
 // QueueSubagentParentRepairs durably records sessions whose hierarchy must be
@@ -2151,7 +2189,8 @@ func (db *DB) queueSubagentParentRepairs(ctx context.Context, ids []string, clea
 // back both the hierarchy changes and queue deletion so a later sync retries
 // the exact IDs even when their original spawn edges have disappeared.
 func (db *DB) RepairQueuedSubagentParents() error {
-	return db.RepairQueuedSubagentParentsContext(context.Background(), nil)
+	_, err := db.RepairQueuedSubagentParentsContext(context.Background(), nil)
+	return err
 }
 
 // RepairQueuedSubagentParentsContext is RepairQueuedSubagentParents with
@@ -2159,9 +2198,10 @@ func (db *DB) RepairQueuedSubagentParents() error {
 // checked queue entries, including missing sessions and unchanged parents. The
 // final callback precedes commit; an error still rolls back the entire repair.
 // The callback runs under the writer lock and must not call back into DB.
+// The returned count includes session rows changed by committed linking and cleanup.
 func (db *DB) RepairQueuedSubagentParentsContext(
 	ctx context.Context, onProgress func(done, total int),
-) error {
+) (int, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
@@ -2173,19 +2213,20 @@ func (db *DB) RepairQueuedSubagentParentsContext(
 		subagentParentRepairQueueStateKey,
 	).Scan(&pending)
 	if err != nil {
-		return fmt.Errorf("checking subagent parent repair queue: %w", err)
+		return 0, fmt.Errorf("checking subagent parent repair queue: %w", err)
 	}
 	if pending == 0 {
-		return nil
+		return 0, nil
 	}
 	tx, err := db.getWriter().BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("beginning queued subagent parent repair: %w", err)
+		return 0, fmt.Errorf("beginning queued subagent parent repair: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	if err := migrateLegacySubagentParentRepairQueueTx(ctx, tx); err != nil {
-		return err
+		return 0, err
 	}
+	updated := 0
 	var done, total int
 	if onProgress != nil {
 		if err := tx.QueryRowContext(ctx, `
@@ -2194,7 +2235,7 @@ func (db *DB) RepairQueuedSubagentParentsContext(
 				UNION
 				SELECT session_id FROM subagent_parent_cleanup_queue
 			)`).Scan(&total); err != nil {
-			return fmt.Errorf("counting queued subagent parent repairs: %w", err)
+			return 0, fmt.Errorf("counting queued subagent parent repairs: %w", err)
 		}
 		if total > 0 {
 			onProgress(0, total)
@@ -2228,7 +2269,7 @@ func (db *DB) RepairQueuedSubagentParentsContext(
 			return ids, nil
 		}()
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if len(ids) == 0 {
 			break
@@ -2237,30 +2278,42 @@ func (db *DB) RepairQueuedSubagentParentsContext(
 		chunk := ids
 		ph, args := inPlaceholders(chunk)
 		allArgs := append(append([]any{}, args...), args...)
-		if _, err := tx.ExecContext(ctx,
+		res, err := tx.ExecContext(ctx,
 			linkSubagentSessionsForSessionsQuery(ph), allArgs...,
-		); err != nil {
-			return fmt.Errorf(
+		)
+		if err != nil {
+			return 0, fmt.Errorf(
 				"linking queued subagent parents for %d sessions: %w",
 				len(chunk), err,
 			)
 		}
+		linked, err := res.RowsAffected()
+		if err != nil {
+			return 0, fmt.Errorf("counting queued subagent links: %w", err)
+		}
+		updated += int(linked)
 		cleanupSeeds := `(SELECT session_id
 			FROM subagent_parent_cleanup_queue WHERE session_id IN ` + ph + `)`
-		if _, err := tx.ExecContext(ctx,
+		res, err = tx.ExecContext(ctx,
 			clearDanglingSubagentParentQuery(cleanupSeeds), args...,
-		); err != nil {
-			return fmt.Errorf(
+		)
+		if err != nil {
+			return 0, fmt.Errorf(
 				"clearing queued dangling subagent parents for %d "+
 					"sessions: %w",
 				len(chunk), err,
 			)
 		}
+		cleared, err := res.RowsAffected()
+		if err != nil {
+			return 0, fmt.Errorf("counting queued dangling-parent repairs: %w", err)
+		}
+		updated += int(cleared)
 		if _, err := tx.ExecContext(ctx,
 			"DELETE FROM subagent_parent_cleanup_queue WHERE session_id IN "+ph,
 			args...,
 		); err != nil {
-			return fmt.Errorf(
+			return 0, fmt.Errorf(
 				"clearing %d queued subagent parent cleanups: %w",
 				len(chunk), err,
 			)
@@ -2269,7 +2322,7 @@ func (db *DB) RepairQueuedSubagentParentsContext(
 			"DELETE FROM subagent_parent_repair_queue WHERE session_id IN "+ph,
 			args...,
 		); err != nil {
-			return fmt.Errorf(
+			return 0, fmt.Errorf(
 				"clearing %d queued subagent parent repairs: %w",
 				len(chunk), err,
 			)
@@ -2280,9 +2333,9 @@ func (db *DB) RepairQueuedSubagentParentsContext(
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing queued subagent parent repair: %w", err)
+		return 0, fmt.Errorf("committing queued subagent parent repair: %w", err)
 	}
-	return nil
+	return updated, nil
 }
 
 func migrateLegacySubagentParentRepairQueueTx(
@@ -3460,6 +3513,66 @@ func (db *DB) StaleDataVersionAgentPaths(ctx context.Context,
 	return identities, nil
 }
 
+// RecentSessionSource is the stored source of a session whose last recorded
+// activity is recent enough that its file may still be growing.
+type RecentSessionSource struct {
+	ID         string
+	FilePath   string
+	FileSize   *int64
+	FileMtime  *int64
+	FileInode  *int64
+	FileDevice *int64
+	EndedAt    string
+}
+
+// recentSessionSourcesSQL takes the machine IN list as its one verb.
+const recentSessionSourcesSQL = `
+	SELECT id, file_path, file_size, file_mtime, file_inode, file_device, ended_at
+	FROM sessions
+	WHERE agent = ? AND machine IN %s AND julianday(ended_at) >= julianday(?)
+	  AND file_path IS NOT NULL AND file_path != ''
+	  AND file_path NOT LIKE 's3://%%'
+	  AND deleted_at IS NULL AND source_missing_at IS NULL
+	ORDER BY julianday(ended_at) DESC, id LIMIT ?`
+
+// RecentSessionSources lists the live local sessions of an agent, attributed
+// to any of machines, whose ended_at is at or after since, newest first at
+// SQLite millisecond precision. Object-storage sources have no local file to
+// poll.
+func (db *DB) RecentSessionSources(ctx context.Context,
+	agent string, machines []string, since time.Time, limit int,
+) ([]RecentSessionSource, error) {
+	if len(machines) == 0 {
+		return nil, nil
+	}
+	machineList, machineArgs := inPlaceholders(machines)
+	args := append([]any{agent}, machineArgs...)
+	args = append(args, since.UTC().Format(time.RFC3339Nano), limit)
+	rows, err := db.getReader().Query(ctx,
+		fmt.Sprintf(recentSessionSourcesSQL, machineList), args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listing recent session sources: %w", err)
+	}
+	defer rows.Close()
+	var sources []RecentSessionSource
+	for rows.Next() {
+		var source RecentSessionSource
+		if err := rows.Scan(
+			&source.ID, &source.FilePath, &source.FileSize,
+			&source.FileMtime, &source.FileInode, &source.FileDevice,
+			&source.EndedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scanning recent session source: %w", err)
+		}
+		sources = append(sources, source)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading recent session sources: %w", err)
+	}
+	return sources, nil
+}
+
 // VirtualContainerMemberFreshness is one stored virtual member's freshness
 // signal: the newest stored file_mtime for its path, the minimum stored
 // data version, and the newest row's fingerprint hash, mirroring
@@ -3468,6 +3581,11 @@ type VirtualContainerMemberFreshness struct {
 	MTimeNS     int64
 	DataVersion int
 	Hash        string
+	// Trashed reports that the newest-mtime row is in the user trash.
+	Trashed bool
+	// Excluded reports a permanently deleted member: no sessions row, only an
+	// excluded_sessions ID, so the other fields are zero.
+	Excluded bool
 }
 
 // VirtualContainerMemberFreshnessRow pairs one virtual member path with its
@@ -3482,7 +3600,10 @@ type VirtualContainerMemberFreshnessRow struct {
 // at containerPath ("<containerPath>#<sessionID>"), excluding source-missing
 // tombstones: at most limit member paths strictly after afterPath, in
 // ascending path order, and whether the container's stored membership is
-// exhausted. Changed-path classification merges a streamed watermark-only
+// exhausted. Permanently deleted members whose excluded_sessions ID is
+// idPrefix plus a raw ID merge into the same order at
+// "<containerPath>#<raw ID>", marked Excluded; an empty idPrefix skips them.
+// Changed-path classification merges a streamed watermark-only
 // listing against these pages, so a one-session write flows one candidate
 // into the sync pipeline while peak memory stays one page — never the
 // container's full membership.
@@ -3497,7 +3618,7 @@ type VirtualContainerMemberFreshnessRow struct {
 // and SQLite's bare-column-from-the-extreme-row guarantee only holds with
 // exactly one min/max aggregate in the query.
 func (db *DB) ListVirtualContainerMemberFreshnessPage(
-	ctx context.Context, containerPath, afterPath string, limit int,
+	ctx context.Context, containerPath, idPrefix, afterPath string, limit int,
 ) ([]VirtualContainerMemberFreshnessRow, bool, error) {
 	if containerPath == "" || limit <= 0 {
 		return nil, true, nil
@@ -3535,13 +3656,34 @@ func (db *DB) ListVirtualContainerMemberFreshnessPage(
 	if err := pathRows.Err(); err != nil {
 		return nil, false, err
 	}
-	if len(paths) == 0 {
+	excluded, err := db.listExcludedContainerMemberPaths(
+		ctx, containerPath, idPrefix, afterPath, limit,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	done := len(paths) < limit && len(excluded) < limit
+	merged, excludedSet := mergeContainerMemberPaths(paths, excluded)
+	if len(merged) > limit {
+		merged = merged[:limit]
+		done = false
+	}
+	if len(merged) == 0 {
 		return nil, true, nil
 	}
-	done := len(paths) < limit
+	paths = paths[:0]
+	for _, path := range merged {
+		if _, ok := excludedSet[path]; !ok {
+			paths = append(paths, path)
+		}
+	}
+	if len(paths) == 0 {
+		return excludedContainerMemberRows(merged), done, nil
+	}
 
 	rows, err := db.getReader().QueryContext(ctx,
-		"SELECT file_path, file_mtime, data_version, file_hash FROM sessions"+
+		"SELECT file_path, file_mtime, data_version, file_hash,"+
+			" deleted_at IS NOT NULL FROM sessions"+
 			" WHERE file_path >= ? AND file_path <= ?"+notMissing,
 		paths[0], paths[len(paths)-1],
 	)
@@ -3556,7 +3698,8 @@ func (db *DB) ListVirtualContainerMemberFreshnessPage(
 		var path string
 		var mtime, version sql.NullInt64
 		var hash sql.NullString
-		if err := rows.Scan(&path, &mtime, &version, &hash); err != nil {
+		var trashed bool
+		if err := rows.Scan(&path, &mtime, &version, &hash, &trashed); err != nil {
 			return nil, false, fmt.Errorf(
 				"scanning container member freshness %s: %w",
 				containerPath, err,
@@ -3566,6 +3709,7 @@ func (db *DB) ListVirtualContainerMemberFreshnessPage(
 			MTimeNS:     mtime.Int64,
 			DataVersion: int(version.Int64),
 			Hash:        hash.String,
+			Trashed:     trashed,
 		}
 		member, seen := members[path]
 		if !seen {
@@ -3575,6 +3719,7 @@ func (db *DB) ListVirtualContainerMemberFreshnessPage(
 		if row.MTimeNS > member.MTimeNS {
 			member.MTimeNS = row.MTimeNS
 			member.Hash = row.Hash
+			member.Trashed = row.Trashed
 		}
 		if row.DataVersion < member.DataVersion {
 			member.DataVersion = row.DataVersion
@@ -3584,14 +3729,105 @@ func (db *DB) ListVirtualContainerMemberFreshnessPage(
 	if err := rows.Err(); err != nil {
 		return nil, false, err
 	}
-	page := make([]VirtualContainerMemberFreshnessRow, 0, len(paths))
-	for _, path := range paths {
+	page := make([]VirtualContainerMemberFreshnessRow, 0, len(merged))
+	for _, path := range merged {
+		member, stored := members[path]
+		if _, ok := excludedSet[path]; ok && !stored {
+			member = VirtualContainerMemberFreshness{Excluded: true}
+		}
 		page = append(page, VirtualContainerMemberFreshnessRow{
 			Path:                            path,
-			VirtualContainerMemberFreshness: members[path],
+			VirtualContainerMemberFreshness: member,
 		})
 	}
 	return page, done, nil
+}
+
+// listExcludedContainerMemberPaths returns at most limit virtual paths
+// "<containerPath>#<raw ID>" strictly after afterPath, in ascending order,
+// for excluded_sessions IDs spelled idPrefix plus a raw ID. The ID range
+// rides the primary key, and raw-ID order equals virtual-path order.
+func (db *DB) listExcludedContainerMemberPaths(
+	ctx context.Context, containerPath, idPrefix, afterPath string, limit int,
+) ([]string, error) {
+	if idPrefix == "" {
+		return nil, nil
+	}
+	memberPrefix := containerPath + "#"
+	lower, lowerOp := idPrefix, ">="
+	if raw, ok := strings.CutPrefix(afterPath, memberPrefix); ok && raw != "" {
+		lower, lowerOp = idPrefix+raw, ">"
+	} else if afterPath >= containerPath+"$" {
+		return nil, nil
+	}
+	last := idPrefix[len(idPrefix)-1]
+	upper := idPrefix[:len(idPrefix)-1] + string(rune(last+1))
+	rows, err := db.getReader().QueryContext(ctx,
+		"SELECT id FROM excluded_sessions WHERE id "+lowerOp+" ? AND id < ?"+
+			" ORDER BY id LIMIT ?",
+		lower, upper, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"listing excluded container members %s: %w", containerPath, err,
+		)
+	}
+	defer rows.Close()
+	var paths []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf(
+				"scanning excluded container member %s: %w", containerPath, err,
+			)
+		}
+		if raw := strings.TrimPrefix(id, idPrefix); raw != "" {
+			paths = append(paths, memberPrefix+raw)
+		}
+	}
+	return paths, rows.Err()
+}
+
+// mergeContainerMemberPaths merges two ascending path lists without
+// duplicates and reports which paths came from the excluded list.
+func mergeContainerMemberPaths(
+	stored, excluded []string,
+) ([]string, map[string]struct{}) {
+	excludedSet := make(map[string]struct{}, len(excluded))
+	for _, path := range excluded {
+		excludedSet[path] = struct{}{}
+	}
+	merged := make([]string, 0, len(stored)+len(excluded))
+	i, j := 0, 0
+	for i < len(stored) && j < len(excluded) {
+		switch {
+		case stored[i] < excluded[j]:
+			merged = append(merged, stored[i])
+			i++
+		case excluded[j] < stored[i]:
+			merged = append(merged, excluded[j])
+			j++
+		default:
+			merged = append(merged, stored[i])
+			i++
+			j++
+		}
+	}
+	if i < len(stored) {
+		merged = append(merged, stored[i:]...)
+	}
+	if j < len(excluded) {
+		merged = append(merged, excluded[j:]...)
+	}
+	return merged, excludedSet
+}
+
+func excludedContainerMemberRows(paths []string) []VirtualContainerMemberFreshnessRow {
+	page := make([]VirtualContainerMemberFreshnessRow, 0, len(paths))
+	for _, path := range paths {
+		page = append(page, VirtualContainerMemberFreshnessRow{Path: path, Excluded: true})
+	}
+	return page
 }
 
 // GetProjectByPath returns the stored project for the newest

@@ -4,6 +4,7 @@ import (
 	"context"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,12 +54,26 @@ func TestNewReporterDisabledDuringTestsDespiteEnabledEnv(t *testing.T) {
 	assert.False(t, reporter.Enabled())
 }
 
+func TestNewReporterOptedOutKeepsAllowlist(t *testing.T) {
+	t.Setenv(GenericEnabledEnv, "0")
+
+	reporter, err := NewReporter(Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reporter.Close()) })
+
+	assert.False(t, reporter.Enabled())
+	assert.True(t, reporter.EventAllowed(EventAppOpened))
+	assert.True(t, reporter.EventAllowed(EventDaemonActive))
+	assert.False(t, reporter.EventAllowed("search_run"))
+	require.NoError(t, reporter.CaptureDaemonActive(t.Context()))
+}
+
 func TestAllowedEventOptionsConfigureDaemonActiveShape(t *testing.T) {
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
 
 	client, err := newKitReporter(
-		"anonymous-install-id", "v1.2.3", "abc123",
+		"anonymous-install-id", time.Time{}, "v1.2.3", "abc123",
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, client.Close()) })
@@ -66,6 +81,7 @@ func TestAllowedEventOptionsConfigureDaemonActiveShape(t *testing.T) {
 	reporter := &Reporter{client: client}
 
 	assert.True(t, reporter.EventAllowed(EventDaemonActive))
+	assert.True(t, reporter.EventAllowed(EventAppOpened))
 	assert.False(t, reporter.EventAllowed("daemon_started"))
 
 	props, err := reporter.SanitizeProperties(EventDaemonActive, map[string]any{
@@ -101,7 +117,7 @@ func TestReporterCaptureDaemonActiveNoopsDuringTests(t *testing.T) {
 	t.Setenv(GenericEnabledEnv, "1")
 
 	client, err := newKitReporter(
-		"anonymous-install-id", "v1.2.3", "abc123",
+		"anonymous-install-id", time.Time{}, "v1.2.3", "abc123",
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, client.Close()) })

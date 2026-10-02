@@ -137,13 +137,35 @@ You can safely re-import the same export file:
   export) is reported as an error and leaves the stored session unchanged.
   Equal-length or longer exports can refresh earlier messages, including
   attachment text; earlier turns do not have to match the archive.
-- **ChatGPT** — unchanged sessions are skipped. An export may append messages
-  when every archived message still matches the beginning of the export.
-  Shorter exports and exports that change archived history are reported as
-  errors and leave the archive unchanged. Existing message metadata and user
-  display names are preserved during an append.
+- **ChatGPT** — unchanged sessions are skipped. An export may add messages
+  when every archived message still matches the beginning of the export. The
+  match compares message text and each archived tool call's name and
+  category, and checks whether its result is empty. Extra tool calls in the
+  export are ignored. A tool result that was empty when archived and is filled
+  in the export is written into the archived message, which keeps its place
+  and any pin. For example, you export during a code run, keep chatting, and
+  export again: the re-import adds the run's output and the new turns. Other
+  result differences keep the archived result. Shorter exports and other
+  changes are reported as errors and leave the archive unchanged. Trashed
+  conversations are skipped. User display names are preserved.
 - **Gemini Apps** — existing sessions are matched by the canonical UTC
   timestamp and its zero-based occurrence among records sharing that
   timestamp. Inserting or reordering records with other timestamps doesn't
   change existing IDs. Content changes update the same one-message session;
   unchanged records are skipped.
+
+Claude.ai and ChatGPT import results list each conversation that could not be
+imported under `refusals`, with its AgentsView session ID
+(`chatgpt:<conversation id>` or `claude-ai:<conversation uuid>`, the export ID
+with the provider prefix) and a reason:
+
+- `diverged`: the export changes archived messages.
+- `shorter_export`: the export has fewer messages than the archive.
+- `trashed`: a Claude.ai or Gemini Apps session is in the trash. Restore it
+  first. A trashed ChatGPT conversation stays a skip.
+- `transient`: anything else. Importing again may work.
+
+The first three repeat on every import of the same export. Streamed progress
+events carry only the counts. The CLI summary shows the same reasons next to
+its error count. Gemini Apps records the parser rejects before they have a
+session ID are counted in `errors` without an entry.

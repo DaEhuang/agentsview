@@ -77,6 +77,8 @@ func TestMain(m *testing.M) {
 	if handled, code := rawderive.RunParserChild(os.Args[1:]); handled {
 		os.Exit(code)
 	}
+	// Match the default daemon fixtures; replacement tests set their own versions.
+	version = "test"
 	os.Exit(m.Run())
 }
 

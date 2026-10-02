@@ -16098,7 +16098,7 @@ type GetAPIV1SessionsQuery struct {
 	// IncludeChildren Include child sessions
 	IncludeChildren *bool `json:"include_children,omitempty"`
 
-	// IncludeSource Include source file paths
+	// IncludeSource Include available source file path, size, and archive-row update time on /sessions; accepted but ignored by /sessions/sidebar-index
 	IncludeSource *bool `json:"include_source,omitempty"`
 
 	// Outcome Filter by detected outcome
@@ -16130,6 +16130,9 @@ type GetAPIV1SessionsQuery struct {
 
 	// Descending Default sort direction for keys in order_by that carry no explicit :asc/:desc suffix
 	Descending *bool `json:"descending,omitempty"`
+
+	// Ids Comma-separated list of 1 to 100 session IDs. Quote IDs containing commas or line breaks with RFC 4180 CSV quoting; IDs containing CRLF are rejected. Raw IDs include host copies; tilde-qualified IDs match exactly. Explicit filters intersect the selection; discovery exclusions do not apply.
+	Ids *string `json:"ids,omitempty"`
 }
 
 func (g GetAPIV1SessionsQuery) Validate() error {
@@ -18950,10 +18953,8 @@ func (c ConfigDuckDBConfig) Validate() error {
 type ConfigRemoteHost struct {
 	Host      string  `json:"host" validate:"required"`
 	Interval  *int64  `json:"interval,omitempty"`
-	Port      *int64  `json:"port,omitempty"`
 	Transport *string `json:"transport,omitempty"`
 	URL       *string `json:"url,omitempty"`
-	User      *string `json:"user,omitempty"`
 }
 
 func (c ConfigRemoteHost) Validate() error {
@@ -19157,8 +19158,10 @@ type DBContentMatch struct {
 	Agent              string      `json:"agent" validate:"required"`
 	ContextAfter       []DBMessage `json:"context_after,omitempty"`
 	ContextBefore      []DBMessage `json:"context_before,omitempty"`
+	DisplayName        *string     `json:"display_name,omitempty" validate:"required"`
 	IsSidechain        *bool       `json:"is_sidechain,omitempty"`
 	Location           string      `json:"location" validate:"required"`
+	Machine            string      `json:"machine" validate:"required"`
 	Ordinal            int64       `json:"ordinal"`
 	OrdinalRange       []int64     `json:"ordinal_range" validate:"required"`
 	ParentSessionID    *string     `json:"parent_session_id,omitempty"`
@@ -19194,8 +19197,16 @@ func (d DBContentMatch) Validate() error {
 			}
 		}
 	}
+	if d.DisplayName != nil {
+		if err := typesValidator.Var(d.DisplayName, "required"); err != nil {
+			errors = errors.Append("DisplayName", err)
+		}
+	}
 	if err := typesValidator.Var(d.Location, "required"); err != nil {
 		errors = errors.Append("Location", err)
+	}
+	if err := typesValidator.Var(d.Machine, "required"); err != nil {
+		errors = errors.Append("Machine", err)
 	}
 	if err := typesValidator.Var(d.OrdinalRange, "required"); err != nil {
 		errors = errors.Append("OrdinalRange", err)
@@ -19789,14 +19800,40 @@ type DBStatsModelMix struct {
 	ByTokens map[string]int64 `json:"by_tokens"`
 }
 
+type DBStatsOutcomeSkippedRepo struct {
+	Op     string `json:"op" validate:"required"`
+	Reason string `json:"reason" validate:"required"`
+	Repo   string `json:"repo" validate:"required"`
+}
+
+func (d DBStatsOutcomeSkippedRepo) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
 type DBStatsOutcomeStats struct {
-	Commits      int64  `json:"commits"`
-	FilesChanged int64  `json:"files_changed"`
-	LocAdded     int64  `json:"loc_added"`
-	LocRemoved   int64  `json:"loc_removed"`
-	PrsMerged    *int64 `json:"prs_merged,omitempty"`
-	PrsOpened    *int64 `json:"prs_opened,omitempty"`
-	ReposActive  int64  `json:"repos_active"`
+	Commits      int64                       `json:"commits"`
+	FilesChanged int64                       `json:"files_changed"`
+	LocAdded     int64                       `json:"loc_added"`
+	LocRemoved   int64                       `json:"loc_removed"`
+	PrsMerged    *int64                      `json:"prs_merged,omitempty"`
+	PrsOpened    *int64                      `json:"prs_opened,omitempty"`
+	ReposActive  int64                       `json:"repos_active"`
+	Skipped      []DBStatsOutcomeSkippedRepo `json:"skipped,omitempty"`
+}
+
+func (d DBStatsOutcomeStats) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range d.Skipped {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Skipped[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type DBStatsOutcomes struct {
@@ -21066,6 +21103,8 @@ type SyncSyncStats struct {
 	Anomalies      *SyncAnomalyStats       `json:"anomalies,omitempty"`
 	CwdUpdated     *int64                  `json:"cwd_updated,omitempty"`
 	Failed         int64                   `json:"failed"`
+	LinksPending   *bool                   `json:"links_pending,omitempty"`
+	LinksUpdated   *int64                  `json:"links_updated,omitempty"`
 	OrphanedCopied *int64                  `json:"orphaned_copied,omitempty"`
 	RebuildPhases  []SyncRebuildPhaseStats `json:"rebuild_phases,omitempty"`
 	Skipped        int64                   `json:"skipped"`
@@ -21301,6 +21340,7 @@ type VersionInfo struct {
 	DataVersion                int64  `json:"data_version"`
 	InsightGenerationAvailable bool   `json:"insight_generation_available"`
 	ReadOnly                   *bool  `json:"read_only,omitempty"`
+	SessionStatsAvailable      bool   `json:"session_stats_available"`
 	Version                    string `json:"version" validate:"required"`
 }
 

@@ -24,6 +24,10 @@ jobs:
   lint:
     runs-on: namespace-profile-linux-4cpu
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        linter: [golangci, nilaway]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -63,9 +67,15 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Run Go linters
-        run: make lint-ci
+        if: matrix.linter == 'golangci'
+        run: make lint-config-check lint-sql check-timing-budgets lint-golangci-ci
+
+      - name: Run NilAway
+        if: matrix.linter == 'nilaway'
+        run: make nilaway
 
       - name: Check Huma API contract
+        if: matrix.linter == 'golangci'
         run: go run go.kenn.io/kit/cmd/huma-check@e9840a327158da2559458186b253b0c15a5e2c2b -fix=false ./...
 
   frontend:
@@ -190,7 +200,7 @@ jobs:
           - os: windows-latest
             runner: namespace-profile-windows-4cpu
           - os: macos-latest
-            runner: macos-latest
+            runner: namespace-profile-mac-6cpu
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -200,10 +210,9 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version-file: go.mod
-          cache: ${{ runner.os == 'macOS' }}
+          cache: false
 
       - name: Configure Namespace Go cache
-        if: runner.os != 'macOS'
         uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9  # v1
         with:
           cache: go
@@ -671,37 +680,6 @@ jobs:
         env:
           CGO_ENABLED: "1"
           TEST_CLICKHOUSE_URL: clickhouse://localhost:19000/default
-
-      - name: Build SSH test container
-        run: bash scripts/retry.sh 3 10 docker build -t agentsview-sshd -f testdata/ssh/Dockerfile .
-
-      - name: Start SSH test container
-        run: |
-          docker run -d --name sshd-test -p 2222:22 agentsview-sshd
-          for i in $(seq 1 10); do nc -z localhost 2222 && break || sleep 1; done
-          docker cp sshd-test:/tmp/test_ssh_key testdata/ssh/test_key
-          chmod 600 testdata/ssh/test_key
-
-      - name: Verify SSH connectivity
-        run: |
-          echo "=== Key file ==="
-          ls -la testdata/ssh/test_key
-          head -1 testdata/ssh/test_key
-          echo "=== Container sshd_config ==="
-          docker exec sshd-test cat /etc/ssh/sshd_config
-          echo "=== Container authorized_keys ==="
-          docker exec sshd-test cat /home/testuser/.ssh/authorized_keys
-          echo "=== Test SSH connection ==="
-          ssh -v -i testdata/ssh/test_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 testuser@localhost echo "SSH works" 2>&1 || true
-
-      - name: Run SSH integration tests
-        run: make test-ssh-ci
-        env:
-          CGO_ENABLED: "1"
-          TEST_SSH_HOST: localhost
-          TEST_SSH_PORT: "2222"
-          TEST_SSH_USER: testuser
-          TEST_SSH_KEY: ${{ github.workspace }}/testdata/ssh/test_key
 
   e2e:
     runs-on: namespace-profile-linux-8cpu

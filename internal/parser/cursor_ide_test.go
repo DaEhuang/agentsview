@@ -4,8 +4,10 @@ package parser
 
 import (
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"encoding/json/jsontext"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -1127,4 +1129,157 @@ func TestParseCursorIDEComposer_TypelessBubbleFallsBackToHeaderType(t *testing.T
 	assert.Equal(t, RoleUser, result.Messages[0].Role)
 	assert.Equal(t, RoleAssistant, result.Messages[1].Role)
 	assert.Equal(t, "answer", result.Messages[1].Content)
+}
+
+func TestCursorIDEParseEachReadsComposersOneAtATime(t *testing.T) {
+	composer := func(id string) cursorIDETestComposer {
+		return cursorIDETestComposer{
+			id: id, name: id, createdAt: 1782026756842, updatedAt: 1782026791522,
+			bubbles: []cursorIDETestBubble{{
+				id: "b1", bubbleType: 1, text: id, createdAt: "2026-06-21T07:27:29.606Z",
+			}},
+		}
+	}
+	setup := func(t *testing.T) (Provider, ParseRequest, string) {
+		t.Helper()
+		dbPath := createCursorIDEDB(t, []cursorIDETestComposer{
+			composer("composer-a"), composer("composer-b"), composer("composer-c"),
+		})
+		provider, ok := NewProvider(AgentCursorIDE, ProviderConfig{
+			Roots: []string{filepath.Dir(dbPath)}, Machine: "test",
+		})
+		require.True(t, ok)
+		sources, err := provider.Discover(t.Context())
+		require.NoError(t, err)
+		require.Len(t, sources, 1)
+		fingerprint, err := provider.Fingerprint(t.Context(), sources[0])
+		require.NoError(t, err)
+		return provider, ParseRequest{Source: sources[0], Machine: "test", Fingerprint: fingerprint}, dbPath
+	}
+
+	t.Run("matches Parse", func(t *testing.T) {
+		provider, req, _ := setup(t)
+		collected, err := provider.Parse(t.Context(), req)
+		require.NoError(t, err)
+		var want []string
+		for _, r := range collected.Results {
+			want = append(want, r.Result.Session.ID)
+		}
+		var got []string
+		outcome, err := ParseEach(t.Context(), provider, req, func(r ParseResultOutcome) error {
+			got = append(got, r.Result.Session.ID)
+			return nil
+		})
+		require.NoError(t, err)
+		assert.Equal(t, want, got)
+		assert.Len(t, got, 3)
+		assert.Nil(t, outcome.Results)
+		assert.True(t, outcome.ResultSetComplete)
+		assert.True(t, outcome.ForceReplace)
+	})
+
+	t.Run("reads each composer after the previous yield", func(t *testing.T) {
+		provider, req, dbPath := setup(t)
+		var got []string
+		_, err := ParseEach(t.Context(), provider, req, func(r ParseResultOutcome) error {
+			if len(got) == 0 {
+				writer, err := sql.Open("sqlite3", dbPath)
+				require.NoError(t, err)
+				defer writer.Close()
+				_, err = writer.ExecContext(t.Context(),
+					`DELETE FROM cursorDiskKV WHERE key = ?`,
+					cursorIDEComposerKeyPrefix+"composer-c",
+				)
+				require.NoError(t, err)
+			}
+			got = append(got, r.Result.Session.ID)
+			return nil
+		})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"cursor-ide:composer-a", "cursor-ide:composer-b"}, got)
+	})
+
+	t.Run("yield error stops the parse", func(t *testing.T) {
+		provider, req, _ := setup(t)
+		sentinel := errors.New("stop")
+		calls := 0
+		_, err := ParseEach(t.Context(), provider, req, func(ParseResultOutcome) error {
+			calls++
+			return sentinel
+		})
+		require.ErrorIs(t, err, sentinel)
+		assert.Equal(t, 1, calls)
+	})
+}
+
+// TestCursorIDEContainerFingerprintIgnoresEmptyWAL pins that a reader-created
+// empty state.vscdb-wal does not change the container fingerprint. SQLite
+// creates that empty WAL whenever any connection (including this process's
+// own read-only scans) opens the WAL-mode database and deletes it on close,
+// so counting its mtime or header made every scan look like a change and
+// reparse the whole container in a loop while Cursor was not even running.
+func TestCursorIDEContainerFingerprintIgnoresEmptyWAL(t *testing.T) {
+	dbPath := createCursorIDEDB(t, []cursorIDETestComposer{{
+		id:        "142856b4-34d8-4950-ba25-b45fe1c47941",
+		name:      "Thread",
+		createdAt: 1782026756842,
+		updatedAt: 1782026791522,
+	}})
+	walPath := dbPath + "-wal"
+	_ = os.Remove(walPath)
+	src := multiSessionSource{Container: dbPath, Path: dbPath}
+
+	before, err := cursorIDEFingerprintSource(t.Context(), src)
+	require.NoError(t, err)
+	require.NotEmpty(t, before.Hash)
+
+	require.NoError(t, os.WriteFile(walPath, nil, 0o644))
+	future := time.Now().Add(time.Hour)
+	require.NoError(t, os.Chtimes(walPath, future, future))
+	withEmptyWAL, err := cursorIDEFingerprintSource(t.Context(), src)
+	require.NoError(t, err)
+	assert.Equal(t, before, withEmptyWAL,
+		"an empty WAL holds no frames and must not change the fingerprint")
+
+	// A WAL that can carry frames still counts.
+	frames := make([]byte, 4096)
+	binary.BigEndian.PutUint32(frames[0:4], sqliteWALMagicBE)
+	require.NoError(t, os.WriteFile(walPath, frames, 0o644))
+	require.NoError(t, os.Chtimes(walPath, future, future))
+	withFrames, err := cursorIDEFingerprintSource(t.Context(), src)
+	require.NoError(t, err)
+	assert.NotEqual(t, before.Hash, withFrames.Hash)
+	assert.Equal(t, future.UnixNano(), withFrames.MTimeNS)
+}
+
+// TestCursorIDEClassifyPathIgnoresEmptyWALEvents pins that the create and
+// delete events of a reader's empty WAL do not resolve to the container, so
+// a scan's own read connection cannot schedule the next scan. A WAL holding
+// frames, and the database file itself, still resolve.
+func TestCursorIDEClassifyPathIgnoresEmptyWALEvents(t *testing.T) {
+	dbPath := createCursorIDEDB(t, []cursorIDETestComposer{{
+		id:        "142856b4-34d8-4950-ba25-b45fe1c47941",
+		name:      "Thread",
+		createdAt: 1782026756842,
+		updatedAt: 1782026791522,
+	}})
+	root := filepath.Dir(dbPath)
+	walPath := dbPath + "-wal"
+
+	_ = os.Remove(walPath)
+	_, ok := cursorIDEClassifyPath(root, walPath, true)
+	assert.False(t, ok, "a deleted reader WAL must not resolve to the container")
+
+	require.NoError(t, os.WriteFile(walPath, nil, 0o644))
+	_, ok = cursorIDEClassifyPath(root, walPath, true)
+	assert.False(t, ok, "an empty reader WAL must not resolve to the container")
+
+	require.NoError(t, os.WriteFile(walPath, []byte(walWithFramesFixture), 0o644))
+	match, ok := cursorIDEClassifyPath(root, walPath, true)
+	require.True(t, ok, "a WAL with frames must resolve to the container")
+	assert.Equal(t, dbPath, match.Container)
+
+	match, ok = cursorIDEClassifyPath(root, dbPath, true)
+	require.True(t, ok)
+	assert.Equal(t, dbPath, match.Container)
 }

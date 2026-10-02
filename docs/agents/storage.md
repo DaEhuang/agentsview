@@ -26,8 +26,9 @@ Conversation exports consume normalized SQLite message records for every agent.
 The database is the system of record: use stored content, roles, system markers,
 and source identities. Do not add agent allowlists, export-only parser fields,
 or source reparse requirements. Export metadata and message writes commit in the
-same transaction. After archive copies apply content policies, refresh the
-export index from the final stored messages while preserving their message IDs.
+same transaction. When sanitization or content policies change copied messages,
+refresh the export index from the final stored messages while preserving their
+message IDs. Unchanged full-content copies retain the copied export index.
 Usage-only writes publish a session-level coverage gap even when policy removes
 every message.
 
@@ -62,6 +63,15 @@ publish session invalidations without changing message revisions. Manifest and
 bounded body reads resolve project evidence in their own SQLite snapshot; body
 reads also pin the database generation and message revision. This local contract
 does not widen raw artifacts or mirror schemas.
+
+### Claude subagent sources
+
+Joined local subagent writes record contributing transcript paths with the
+messages in one SQLite transaction. Refreshes preserve the saved session when a
+recorded contributor is missing or no longer a regular file. Rebuilds copy this
+provenance with preserved sessions. Once all contributors are readable, a full
+parse can apply corrected or shortened transcripts. This metadata stays local to
+the archive; S3 materializations do not record temporary paths.
 
 ### Codex incremental import state
 

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-21
+last_edited: 2026-09-30
 title: CLI Reference
 description: All AgentsView commands, flags, and environment variables
 ---
@@ -259,10 +259,12 @@ the foreground. It remains attached to the terminal until you press `Ctrl+C`,
 unless `--background` is specified. This is the same writable server managed by
 `agentsview daemon`; the web UI and sync do not have separate lifecycles.
 
-If a compatible server is already running, `serve` reports its URL and exits.
-Open that URL to use the web UI. Stopping the server with either `daemon stop`
-or `serve stop` also stops its sync and file watchers. `--no-sync` disables
-automatic sync in that process; it does not create a separate sync daemon.
+`serve` reuses or replaces an existing local writable daemon according to the
+[replacement rules below](#background-mode). Read-only replica servers are left
+running. When reusing a server, `serve` reports its URL and exits. Open that URL
+to use the web UI. Stopping the server with either `daemon stop` or `serve stop`
+also stops its sync and file watchers. `--no-sync` disables automatic sync in
+that process; it does not create a separate sync daemon.
 
 ```bash
 agentsview serve [flags]
@@ -332,6 +334,32 @@ On startup, the server:
 The server shuts down cleanly on `Ctrl+C`, flushing the database and stopping
 file watchers.
 
+On current `main`, watcher batches link subagent relationships only for affected
+sessions. Unchanged polls skip archive-wide linking unless a failed or canceled
+batch left unfinished links. Poll logs identify the provider roots being checked
+and report how long the pass took.
+
+During polling, changes to working-directory metadata refresh clients without
+triggering global parent linking. Worker processes return link repairs and
+unfinished linking to the daemon, so clients see repaired links and later polls
+retry failed linking even when an unrelated source cannot be processed.
+Workers confirm their link state separately from source errors, so completed
+repairs clear obsolete retries even when another source fails. Installed
+rebuilds also clear completed retries. Audit workers receive pending links from
+the daemon even when sources are unchanged. Missing or invalid worker results
+keep the retry pending. Startup transfers pending links before
+reconciling the worker-to-watcher gap. Repairs queued in the archive run even
+when discovery finds no source files. Repairs committed to the live archive
+refresh clients even if sync is canceled. Full resync aborts before replacing
+the archive if relinking copied sessions fails; discarded replacements do not
+report their repairs and preserve pending retries for the live archive.
+
+Unchanged broken or missing source files are skipped through the failure cache
+described in [Sync Behavior](configuration.md#sync-behavior). Grok
+companion-file events use normal content-fingerprint checks, so repeated
+companion removal events do not clear a cached missing-summary failure. Actual
+companion edits still trigger sync.
+
 #### Background Mode
 
 The existing `serve` background and lifecycle forms remain available:
@@ -359,14 +387,27 @@ writable daemon if it was stopped. It accepts no serve flags and uses the same
 effective configuration as `daemon restart`. It is not equivalent to the broader
 `serve stop` followed by a foreground `serve` start.
 
-When a writable daemon is already running, a newer release binary automatically
-replaces an older compatible daemon before starting. Development builds,
-downgrades, and forward API/data-version conflicts do not auto-replace; use
-`--replace` when you deliberately want this invocation to stop the running
-daemon first. If the SQLite archive itself has a newer data version than the
-current binary can open, `serve` refuses before stopping the old daemon.
-`serve status` reports incompatible live daemons with their daemon and binary
-versions plus `daemon restart` or `daemon stop` guidance.
+`serve` and ordinary CLI commands automatically replace an older release daemon
+with a newer release. An older release reuses a compatible newer daemon; it does
+not downgrade it. When either binary is a development build, a different version
+string triggers replacement. Repeated dirty builds from the same commit can have
+the same version string and require `agentsview daemon restart`. Two different
+development installations sharing a data directory can replace each other when
+invoked; use separate data directories to keep them independent.
+
+Long-running clients (`mcp` and push commands with `--watch`, including
+installed push services) start a missing daemon and reconnect after daemon
+restarts, but never replace a running daemon. They keep using it while its API
+and data versions are compatible. If incompatible, they report the conflict and
+ask you to restart the client with the current binary.
+
+Use `serve --replace` or `agentsview daemon restart` for intentional
+replacement, including release downgrades. Automatic replacement preserves the
+daemon's launch options. All replacement paths check archive compatibility
+before stopping the daemon: an older binary cannot replace a daemon whose SQLite
+data version it cannot open. `serve status` reports incompatible live daemons
+with their daemon and binary versions plus `daemon restart` or `daemon stop`
+guidance.
 
 Background servers also act as the shared local daemon for the desktop app and
 CLI. The daemon owns local SQLite writes for its data directory, so common write
@@ -430,13 +471,11 @@ that lock, syncs directly, and exits without leaving a server running.
 agentsview sync [flags]
 ```
 
-| Flag       | Default | Description                                          |
-| ---------- | ------- | ---------------------------------------------------- |
+| Flag       | Default | Description                                         |
+| ---------- | ------- | --------------------------------------------------- |
 | `--full`   | `false` | Force a full resync regardless of data version       |
-| `--target` |         | Exchange normalized artifacts with a trusted folder  |
-| `--host`   |         | Configured HTTP host name or deprecated SSH hostname |
-| `--user`   |         | SSH username for deprecated remote sync              |
-| `--port`   | `22`    | SSH port for deprecated remote sync                  |
+| `--target` |         | Exchange normalized artifacts with a trusted folder |
+| `--host`   |         | Configured HTTP remote host name                    |
 
 **Examples:**
 
@@ -444,8 +483,7 @@ agentsview sync [flags]
 agentsview sync           # incremental sync and exit
 agentsview sync --full    # full resync and exit
 agentsview sync --target /path/to/shared-folder
-agentsview sync --host buildbox.local
-agentsview sync --host buildbox.local --user wes --port 2222
+agentsview sync --host devbox1
 ```
 
 After syncing, a summary of session and message counts is printed to stdout.
@@ -454,38 +492,30 @@ exchange. See [Artifact Folder Sync](/docs/artifact-sync/) for the trust model,
 first-use requirements, and exclusions. `--target` cannot be combined with
 `--host`.
 
-When `--host` is set, AgentsView syncs only that remote host and fails fast on
-error. If the local daemon has a matching configured `[[remote_hosts]]` entry,
-the daemon uses that stored entry and its configured transport. Otherwise,
-`--host` performs an ad hoc SSH sync: it resolves the supported agent session
-directories on the remote machine, transfers the source session data locally,
-and indexes it into your local archive. SSH remote sync is deprecated and
-receives only critical fixes; use configured HTTP remote sync for new setups.
+When `--host` is set, AgentsView syncs only the matching configured
+`[[remote_hosts]]` entry and fails fast on error. This also applies to offline
+sync with `AGENTSVIEW_NO_DAEMON=1`: the local command contacts the configured
+remote daemon directly. Unknown host names are rejected; ad hoc remotes are not
+supported.
 
 Local sync can also read configured Claude, Codex, and Cursor roots from
 S3-compatible object storage. Add `s3://` entries to `agents.claude.dirs`,
 `agents.codex.dirs`, or `agents.cursor.dirs` in `~/.agentsview/config.toml`,
-then run `agentsview sync` normally. This is not SSH remote sync: object storage
-is treated as a read-only session source, using object size and `LastModified`
-metadata to skip unchanged sessions and downloading only objects that need
+then run `agentsview sync` normally. Object storage is treated as a read-only
+session source, using object size and `LastModified` metadata to skip unchanged
+sessions and downloading only objects that need
 parsing. See
 [Configuration — S3-Compatible Session Sources](/docs/configuration/#s3-compatible-session-sources).
 
 #### Configured Remote Hosts
 
-As of 0.33.0, remote hosts can also be declared in `~/.agentsview/config.toml`
-so a single bare `agentsview sync` covers a whole fleet:
+Declare remote hosts in `~/.agentsview/config.toml` so a single bare
+`agentsview sync` covers a whole fleet. HTTP is the only remote sync transport:
 
 ```toml
 [[remote_hosts]]
-host = "buildbox.local"
-transport = "ssh" # optional; default
-user = "wes"      # optional
-port = 2222       # optional, defaults to 22
-
-[[remote_hosts]]
 host = "devbox1"
-transport = "http"
+transport = "http" # optional; default
 url = "http://devbox1.tailnet.ts.net:8080"
 token = "remote-token"
 ```
@@ -494,8 +524,7 @@ With hosts configured, `agentsview sync` (no `--host`) includes local sources
 and configured HTTP hosts in one coordinated sync. During a full or automatic
 data-version rebuild, AgentsView prepares every HTTP mirror, bulk-ingests the
 local and HTTP sources into one temporary database with FTS updates suspended,
-rebuilds FTS once, and atomically swaps the completed archive into place. SSH
-hosts run through their existing active-archive path only after that swap.
+rebuilds FTS once, and atomically swaps the completed archive into place.
 
 `--full` reparses every discovered local and remote session, but it does not
 force unchanged manifest-capable files to transfer again. Directory-scoped and
@@ -503,24 +532,16 @@ verbatim curated content still use delta transfer. Windsurf's sanitized curated
 export remains a separate full-archive transfer on every sync. HTTP collectors
 and spokes must use the same remote-sync protocol version; incompatible peers
 fail before exchanging targets or archive data. A configured HTTP host that is
-offline, unreachable, or times out is skipped; reachable HTTP hosts still join
-the combined rebuild. Other HTTP preparation or contributor failures abort the
-combined rebuild without replacing the active archive or running SSH. Ordinary
-incremental and post-swap SSH failures retain per-host reporting, and the
+offline, cannot resolve through DNS, is unreachable, or times out is skipped;
+local sources and reachable HTTP hosts still join the combined rebuild. Archived
+sessions from skipped hosts are preserved. Other HTTP preparation or contributor
+failures abort the combined rebuild without replacing the active archive. The
 command exits non-zero for any failure other than an unavailable configured HTTP
 host. See [Incremental Sync](/docs/remote-access/#incremental-sync).
 
-`agentsview sync --host X` syncs one host, not the whole configured list. When
-the local daemon knows a configured host with that identity, it uses the stored
-entry and transport so HTTP hosts can be selected by host name. Without a
-matching configured host, `--host` remains an ad hoc SSH sync. SSH remote sync
-is deprecated and receives only critical fixes. It remains non-interactive in
-both forms — it requires key-based passwordless SSH and never prompts for a
-password. Prefer configured HTTP remote sync.
-
 HTTP remote sync requires a reachable remote daemon, preferably over a private
 network such as Tailscale, and remote archive endpoints always require bearer
-auth. The per-host `token` is required and must match the remote daemon's
+auth. Every host requires a `url` and a `token` matching the remote daemon's
 `auth_token`; do not reuse the collector daemon's own token for untrusted remote
 endpoints. Ad hoc HTTP remotes are not supported. Hosts must be unique within
 the list, since remote sessions are namespaced by host.
@@ -1924,7 +1945,7 @@ agentsview help
 | ------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | `AIDER_DIR`                           | unset                                                | Aider discovery root; set this to opt into scanning a code root                                     |
 | `AMP_DIR`                             | `~/.local/share/amp/threads`                         | Deprecated; historical local Amp thread JSON files only                                             |
-| `ANTIGRAVITY_DIR`                     | `~/.gemini/antigravity`                              | Google Antigravity IDE sessions directory                                                           |
+| `ANTIGRAVITY_DIR`                     | `~/.gemini/antigravity`, `~/.gemini/antigravity-ide` | Google Antigravity IDE sessions directories                                                         |
 | `ANTIGRAVITY_CLI_DIR`                 | `~/.gemini/antigravity-cli`                          | Google Antigravity CLI sessions directory                                                           |
 | `ANTIGRAVITY_KEY`                     |                                                      | Optional key for decrypting Antigravity CLI `.pb` transcripts (defaults to summary mode without it) |
 | `AUGURE_CODE_SESSIONS_DIR`            | `~/.augure/sessions`                                 | Augure Code sessions directory                                                                      |
@@ -1937,6 +1958,7 @@ agentsview help
 | `CODEX_SESSIONS_DIR`                  | `~/.codex/sessions`                                  | Codex sessions directory                                                                            |
 | `CODEX_HOME`                          | unset                                                | Codex home that re-roots the default `sessions/` and `archived_sessions/` discovery paths           |
 | `CLINE_DIR`                           | `~/.cline`                                           | Cline CLI sessions directory (discovers under `<root>/data/sessions/` or direct sessions root)      |
+| `CODEBUFF_DIR`                        | `~/.config/manicode/projects`                        | Codebuff/Freebuff sessions directory                                                                |
 | `COMMANDCODE_PROJECTS_DIR`            | `~/.commandcode/projects`                            | Command Code projects directory                                                                     |
 | `COPILOT_DIR`                         | `~/.copilot`                                         | Copilot CLI sessions directory                                                                      |
 | `CRUSH_DIR`                           | (platform-specific)                                  | Crush registry, project data directory, or `crush.db` path                                          |
@@ -1947,6 +1969,7 @@ agentsview help
 | `DEEPSEEK_HARNESS_SESSIONS_DIR`       | `~/.dsh/sessions`                                    | DeepSeek Harness sessions directory                                                                 |
 | `DSH_HOME`                            | unset                                                | DeepSeek Harness home that re-roots the default `sessions/` discovery path                          |
 | `FORGE_DIR`                           | `~/.forge`                                           | Forge directory (contains `.forge.db`)                                                              |
+| `FREEBUFF_CONFIG_DIR`                 | unset                                                | Freebuff config home that re-roots the default `projects/` discovery path                           |
 | `GEMINI_DIR`                          | `~/.gemini`                                          | Gemini CLI directory                                                                                |
 | `GOOSE_PATH_ROOT`                     | (platform-specific)                                  | Goose path root; sessions are read from `<root>/data/sessions/sessions.db`                          |
 | `GPTME_DIR`                           | `~/.local/share/gptme/logs`                          | gptme logs directory                                                                                |
@@ -1971,6 +1994,9 @@ agentsview help
 | `PI_DIR`                              | `~/.pi/agent/sessions`                               | Pi sessions directory                                                                               |
 | `PI_CODING_AGENT_DIR`                 | unset                                                | Pi agent home that re-roots the default `sessions/` discovery path                                  |
 | `PI_CODING_AGENT_SESSION_DIR`         | unset                                                | Pi session directory override; `PI_DIR` takes precedence                                            |
+| `STEPCODE_DIR`                        | `~/.stepcode/agent/sessions`                         | StepCode sessions directory                                                                         |
+| `STEP_CODING_AGENT_DIR`               | unset                                                | StepCode agent home that re-roots the default `sessions/` discovery path                            |
+| `STEP_CODING_AGENT_SESSION_DIR`       | unset                                                | StepCode session directory override; `STEPCODE_DIR` takes precedence                                |
 | `PRIME_AGENT_SESSION_DIR`             | `~/.prime/agent/sessions`                            | Prime Agent sessions directory                                                                      |
 | `PIEBALD_DIR`                         | `~/.local/share/piebald`                             | Piebald directory (contains `app.db`)                                                               |
 | `POOLSIDE_DIR`                        | (platform-specific)                                  | Poolside Agent CLI trajectory directory                                                             |

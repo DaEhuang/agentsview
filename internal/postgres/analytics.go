@@ -1086,12 +1086,12 @@ func (s *Store) GetAnalyticsActivity(
 	}
 
 	query := `SELECT ` + pgDateColS + `, s.agent, s.id,
-		m.role, m.has_thinking, COALESCE(m.source_subtype, ''), COUNT(*)
+		m.role, m.has_thinking, m.is_system, COALESCE(m.source_subtype, ''), COUNT(*)
 		FROM sessions s
 		LEFT JOIN messages m ON m.session_id = s.id
 		WHERE ` + strings.Join(preds, " AND ") + `
 		GROUP BY s.id, ` + pgDateColS +
-		`, s.agent, m.role, m.has_thinking, m.source_subtype`
+		`, s.agent, m.role, m.has_thinking, m.is_system, m.source_subtype`
 
 	rows, err := s.pg.QueryContext(
 		ctx, query, pb.args...,
@@ -1113,11 +1113,11 @@ func (s *Store) GetAnalyticsActivity(
 		var agent, sid string
 		var role *string
 		var sourceSubtype string
-		var hasThinking *bool
+		var hasThinking, isSystem *bool
 		var count int
 		if err := rows.Scan(
 			&tsVal, &agent, &sid, &role,
-			&hasThinking, &sourceSubtype, &count,
+			&hasThinking, &isSystem, &sourceSubtype, &count,
 		); err != nil {
 			return db.ActivityResponse{},
 				fmt.Errorf(
@@ -1149,12 +1149,13 @@ func (s *Store) GetAnalyticsActivity(
 			entry.Sessions++
 		}
 
+		sys := isSystem != nil && *isSystem
 		if role != nil {
 			entry.Messages += count
 			entry.ByAgent[agent] += count
 			switch *role {
 			case "user":
-				if sourceSubtype != "tool_result" {
+				if !sys && sourceSubtype != "tool_result" {
 					entry.UserMessages += count
 				}
 			case "assistant":

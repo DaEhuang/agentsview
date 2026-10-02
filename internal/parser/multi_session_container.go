@@ -47,6 +47,14 @@ type multiSessionMatch struct {
 	DiscoveryFingerprint   *SourceFingerprint
 }
 
+// multiSessionMemberToken is one member's virtual path, raw ID, and cheap
+// change token.
+type multiSessionMemberToken struct {
+	Path     string
+	MemberID string
+	Token    string
+}
+
 // classifySQLiteContainerPath maps a stored or changed path to its database
 // container and member, shared by every multi-session provider whose
 // sessions live in one shared SQLite database (Zed, Shelley, Omnigent).
@@ -105,7 +113,12 @@ func sqliteContainerUnderRoot(
 
 // sqliteContainerPathForEvent resolves a changed-path event naming the
 // database file itself or a WAL/SHM/journal sibling to the container's
-// canonical path.
+// canonical path. While the database exists, a "-wal" event whose WAL is
+// gone or holds no frames is ignored: every read connection, this process's
+// own included, creates an empty WAL on open and deletes it on close, so
+// resolving those events made each scan schedule the next one. A commit
+// writes frames past the header and a checkpoint writes the database file
+// itself, so no content change is lost. A deleted database still resolves.
 func sqliteContainerPathForEvent(
 	root, path, dbRelPath string, rejectShmSiblingEvents bool,
 ) (string, bool) {
@@ -123,7 +136,12 @@ func sqliteContainerPathForEvent(
 	if filepath.ToSlash(rel) == dbRelPath ||
 		(filepath.ToSlash(filepath.Dir(rel)) == dbDir &&
 			strings.HasPrefix(filepath.Base(rel), dbBase+"-")) {
-		return filepath.Join(root, filepath.FromSlash(dbRelPath)), true
+		dbPath := filepath.Join(root, filepath.FromSlash(dbRelPath))
+		if strings.HasSuffix(path, "-wal") && !sqliteWALHasFrames(path) &&
+			IsRegularFile(dbPath) {
+			return "", false
+		}
+		return dbPath, true
 	}
 	return "", false
 }
@@ -171,6 +189,10 @@ type multiSessionConfig struct {
 	// per-request hints such as req.Source.ProjectHint.
 	parseContainer        func(src multiSessionSource, req ParseRequest) ([]ParseResult, error)
 	parseContainerContext func(context.Context, multiSessionSource, ParseRequest) ([]ParseResult, error)
+	// parseContainerEach parses one member at a time, handing each result to
+	// yield before reading the next; a yield error stops the parse and is
+	// returned unchanged.
+	parseContainerEach func(context.Context, multiSessionSource, ParseRequest, func(ParseResult) error) error
 	// parseMember parses a single member; a nil result is a clean no-session.
 	parseMember        func(src multiSessionSource, req ParseRequest) (*ParseResult, error)
 	parseMemberContext func(context.Context, multiSessionSource, ParseRequest) (*ParseResult, error)
@@ -181,6 +203,13 @@ type multiSessionConfig struct {
 	// changed container during a single tombstone pass. Optional; when nil the
 	// base falls back to calling memberPresent per member.
 	batchMemberPresence func(ctx context.Context, container multiSessionSource, members []multiSessionSource) map[string]bool
+	// memberTokens streams every listable member of one container in ascending
+	// virtual-path order with its change token. Nil keeps every changed-path
+	// event on the whole-container source.
+	memberTokens func(ctx context.Context, container multiSessionSource, yield func(multiSessionMemberToken) error) error
+	// storedMemberToken recovers the comparable token from a stored
+	// fingerprint hash; false when the hash cannot vouch.
+	storedMemberToken func(fileHash string) (string, bool)
 	// freshStoredMember reports whether a stored member source still resolves to
 	// the requested raw session ID under RequireFreshSource. Providers with
 	// positional member IDs (Aider's run index) set this so a stored path whose
@@ -288,6 +317,12 @@ func WithContextContainerParse(
 	return func(c *multiSessionConfig) { c.parseContainerContext = fn }
 }
 
+func WithContextContainerParseEach(
+	fn func(context.Context, multiSessionSource, ParseRequest, func(ParseResult) error) error,
+) MultiSessionOption {
+	return func(c *multiSessionConfig) { c.parseContainerEach = fn }
+}
+
 func WithContainerParseOutcome(
 	fn func(ctx context.Context, src multiSessionSource, req ParseRequest) (ParseOutcome, error),
 ) MultiSessionOption {
@@ -314,6 +349,16 @@ func WithBatchMemberPresence(
 	fn func(ctx context.Context, container multiSessionSource, members []multiSessionSource) map[string]bool,
 ) MultiSessionOption {
 	return func(c *multiSessionConfig) { c.batchMemberPresence = fn }
+}
+
+func WithMemberChangeTokens(
+	list func(context.Context, multiSessionSource, func(multiSessionMemberToken) error) error,
+	stored func(string) (string, bool),
+) MultiSessionOption {
+	return func(c *multiSessionConfig) {
+		c.memberTokens = list
+		c.storedMemberToken = stored
+	}
 }
 
 func WithFreshStoredMember(
@@ -346,10 +391,12 @@ func NewMultiSessionContainerSourceSet(
 		panic("multi-session container: missing WithMemberLookup")
 	case cfg.fingerprint == nil && cfg.fingerprintContext == nil:
 		panic("multi-session container: missing WithFingerprint")
-	case cfg.parseContainer == nil && cfg.parseContainerContext == nil && cfg.parseContainerOutcome == nil:
-		panic("multi-session container: missing WithContainerParse or WithContainerParseOutcome")
+	case cfg.parseContainer == nil && cfg.parseContainerContext == nil && cfg.parseContainerEach == nil && cfg.parseContainerOutcome == nil:
+		panic("multi-session container: missing WithContainerParse, WithContextContainerParseEach, or WithContainerParseOutcome")
 	case cfg.parseMember == nil && cfg.parseMemberContext == nil:
 		panic("multi-session container: missing WithMemberParse")
+	case (cfg.memberTokens == nil) != (cfg.storedMemberToken == nil):
+		panic("multi-session container: WithMemberChangeTokens needs both callbacks")
 	}
 	return multiSessionContainerSourceSet{
 		agent: agent,
@@ -387,6 +434,24 @@ func (s multiSessionContainerSourceSet) ReconciliationContainer(
 				match.Container != "" {
 				return match.Container, true
 			}
+		}
+	}
+	return "", false
+}
+
+// StoredMemberFreshnessContainer resolves the container a changed path names,
+// with the classification SourcesForChangedPath applies, for providers
+// configured with a member change-token listing.
+func (s multiSessionContainerSourceSet) StoredMemberFreshnessContainer(
+	path string,
+) (string, bool) {
+	if s.cfg.memberTokens == nil {
+		return "", false
+	}
+	for _, root := range s.roots {
+		if match, ok := s.cfg.classifyPath(root, path, true); ok &&
+			match.Container != "" && match.MemberID == "" {
+			return match.Container, true
 		}
 	}
 	return "", false
@@ -484,6 +549,13 @@ func (s multiSessionContainerSourceSet) SourcesForChangedPath(
 			continue
 		}
 		tombstones := s.changedPathTombstones(ctx, root, match, req.StoredSourcePaths)
+		members, listed, err := s.changedTokenMembers(ctx, root, match, req)
+		if err != nil {
+			return nil, err
+		}
+		if listed {
+			return append(members, tombstones...), nil
+		}
 		sources := make([]SourceRef, 0, 1+len(tombstones))
 		if req.EventKind != "remove" ||
 			len(tombstones) == 0 ||
@@ -632,6 +704,87 @@ func (s multiSessionContainerSourceSet) changedPathTombstones(ctx context.Contex
 	return tombstones
 }
 
+// changedTokenMembers answers a write to a present container with only the
+// members whose listed change token differs from the one in their stored
+// hash. listed=false keeps the whole-container source: no listing seam or
+// stored authority, a member or removal event, a missing container, an
+// empty stored side (the complete parse reconciles membership), or a failed
+// listing or pager. Suppressed rows alone count as an empty stored side.
+func (s multiSessionContainerSourceSet) changedTokenMembers(
+	ctx context.Context, root string, match multiSessionMatch,
+	req ChangedPathRequest,
+) ([]SourceRef, bool, error) {
+	if s.cfg.memberTokens == nil || !req.AllowWatermarkOnlySources ||
+		req.StoredMemberFreshnessPage == nil || match.MemberID != "" ||
+		match.Container == "" || req.EventKind == "remove" ||
+		!IsRegularFile(match.Container) {
+		return nil, false, nil
+	}
+	cursor, found, err := firstUnsuppressedStoredPage(ctx, req.StoredMemberFreshnessPage)
+	if err != nil || !found {
+		return nil, false, ctx.Err()
+	}
+	var sources []SourceRef
+	err = s.cfg.memberTokens(ctx, match.toSource(root),
+		func(member multiSessionMemberToken) error {
+			row, ok, err := cursor.lookup(ctx, member.Path)
+			if err != nil {
+				return err
+			}
+			if ok && row.Suppressed {
+				return nil
+			}
+			if ok {
+				if stored, usable := s.cfg.storedMemberToken(row.FingerprintHash); usable && stored == member.Token {
+					return nil
+				}
+			}
+			sources = append(sources, s.sourceRef(root, multiSessionMatch{
+				Path:      member.Path,
+				Container: match.Container,
+				MemberID:  member.MemberID,
+			}))
+			return nil
+		})
+	if err != nil {
+		return nil, false, ctx.Err()
+	}
+	return sources, true, nil
+}
+
+// firstUnsuppressedStoredPage pages the stored side, one page at a time, until
+// a row that is not Suppressed turns up. It returns a cursor positioned at the
+// start of the stored side, reusing the first page when that page holds one.
+func firstUnsuppressedStoredPage(
+	ctx context.Context, pager StoredMemberFreshnessPager,
+) (storedMemberFreshnessCursor, bool, error) {
+	after := ""
+	for {
+		rows, done, err := pager(ctx, after, storedMemberFreshnessPageSize)
+		if err != nil {
+			return storedMemberFreshnessCursor{}, false, err
+		}
+		for _, row := range rows {
+			if row.Suppressed {
+				continue
+			}
+			if after != "" {
+				return storedMemberFreshnessCursor{pager: pager}, true, nil
+			}
+			return storedMemberFreshnessCursor{
+				pager: pager,
+				rows:  rows,
+				after: rows[len(rows)-1].Path,
+				done:  done,
+			}, true, nil
+		}
+		if done || len(rows) == 0 {
+			return storedMemberFreshnessCursor{}, false, nil
+		}
+		after = rows[len(rows)-1].Path
+	}
+}
+
 func (s multiSessionContainerSourceSet) batchMemberPresence(ctx context.Context,
 	container multiSessionSource,
 	members []multiSessionMatch,
@@ -746,8 +899,11 @@ func (s multiSessionContainerSourceSet) Fingerprint(
 	return fingerprint, nil
 }
 
-func (s multiSessionContainerSourceSet) parse(
+// parseInto parses src and hands every result to yield in order. The returned
+// outcome carries the source-level fields and no Results.
+func (s multiSessionContainerSourceSet) parseInto(
 	ctx context.Context, src multiSessionSource, req ParseRequest,
+	yield func(ParseResultOutcome) error,
 ) (ParseOutcome, error) {
 	fingerprintHash := req.Fingerprint.Hash
 	if src.MemberID != "" {
@@ -769,11 +925,13 @@ func (s multiSessionContainerSourceSet) parse(
 		if result.Session.File.Hash == "" && fingerprintHash != "" {
 			result.Session.File.Hash = fingerprintHash
 		}
+		if err := yield(ParseResultOutcome{
+			Result:      *result,
+			DataVersion: DataVersionCurrent,
+		}); err != nil {
+			return ParseOutcome{}, err
+		}
 		return ParseOutcome{
-			Results: []ParseResultOutcome{{
-				Result:      *result,
-				DataVersion: DataVersionCurrent,
-			}},
 			ResultSetComplete: true,
 			ForceReplace:      true,
 		}, nil
@@ -784,12 +942,40 @@ func (s multiSessionContainerSourceSet) parse(
 		if err != nil {
 			return ParseOutcome{}, err
 		}
-		if fingerprintHash != "" && s.cfg.stampContainerHash {
-			for i := range outcome.Results {
+		for i := range outcome.Results {
+			if fingerprintHash != "" && s.cfg.stampContainerHash {
 				outcome.Results[i].Result.Session.File.Hash = fingerprintHash
 			}
+			if err := yield(outcome.Results[i]); err != nil {
+				return ParseOutcome{}, err
+			}
 		}
+		outcome.Results = nil
 		return outcome, nil
+	}
+
+	if s.cfg.parseContainerEach != nil {
+		yielded := 0
+		err := s.cfg.parseContainerEach(ctx, src, req, func(r ParseResult) error {
+			if fingerprintHash != "" && s.cfg.stampContainerHash {
+				r.Session.File.Hash = fingerprintHash
+			}
+			yielded++
+			return yield(ParseResultOutcome{
+				Result:      r,
+				DataVersion: DataVersionCurrent,
+			})
+		})
+		if err != nil {
+			return ParseOutcome{}, err
+		}
+		if yielded == 0 {
+			return s.skipOutcome(src), nil
+		}
+		return ParseOutcome{
+			ResultSetComplete: true,
+			ForceReplace:      true,
+		}, nil
 	}
 
 	var results []ParseResult
@@ -805,21 +991,36 @@ func (s multiSessionContainerSourceSet) parse(
 	if len(results) == 0 {
 		return s.skipOutcome(src), nil
 	}
-	out := make([]ParseResultOutcome, 0, len(results))
 	for i := range results {
 		if fingerprintHash != "" && s.cfg.stampContainerHash {
 			results[i].Session.File.Hash = fingerprintHash
 		}
-		out = append(out, ParseResultOutcome{
+		if err := yield(ParseResultOutcome{
 			Result:      results[i],
 			DataVersion: DataVersionCurrent,
-		})
+		}); err != nil {
+			return ParseOutcome{}, err
+		}
 	}
 	return ParseOutcome{
-		Results:           out,
 		ResultSetComplete: true,
 		ForceReplace:      true,
 	}, nil
+}
+
+func (s multiSessionContainerSourceSet) parse(
+	ctx context.Context, src multiSessionSource, req ParseRequest,
+) (ParseOutcome, error) {
+	var results []ParseResultOutcome
+	outcome, err := s.parseInto(ctx, src, req, func(r ParseResultOutcome) error {
+		results = append(results, r)
+		return nil
+	})
+	if err != nil {
+		return ParseOutcome{}, err
+	}
+	outcome.Results = results
+	return outcome, nil
 }
 
 func unsupportedMultiSessionOutcome() ParseOutcome {
@@ -966,6 +1167,26 @@ func (s multiSessionContainerSourceSet) Parse(
 	return s.parse(ctx, src, req)
 }
 
+// multiSessionStreamingSourceSet is the source set NewMultiSessionProviderFactory
+// returns. parseEach lives only here so a source set that embeds the base and
+// overrides Parse never gains a streaming path that skips its override.
+type multiSessionStreamingSourceSet struct {
+	multiSessionContainerSourceSet
+}
+
+func (s multiSessionStreamingSourceSet) parseEach(
+	ctx context.Context, req ParseRequest, yield func(ParseResultOutcome) error,
+) (ParseOutcome, error) {
+	if err := ctx.Err(); err != nil {
+		return ParseOutcome{}, err
+	}
+	src, ok := s.sourceFromRef(req.Source)
+	if !ok {
+		return ParseOutcome{}, fmt.Errorf("%s source path unavailable", s.agent)
+	}
+	return s.parseInto(ctx, src, req, yield)
+}
+
 // NewMultiSessionProviderFactory builds a ProviderFactory for a multi-session
 // container provider. It is a thin adapter over the generic SourceSetFactory;
 // the build closure constructs the agent's configured source set.
@@ -976,6 +1197,6 @@ func NewMultiSessionProviderFactory(
 ) ProviderFactory {
 	return NewSourceSetFactory(
 		def, caps,
-		func(cfg ProviderConfig) SourceSet { return build(cfg) },
+		func(cfg ProviderConfig) SourceSet { return multiSessionStreamingSourceSet{build(cfg)} },
 	)
 }

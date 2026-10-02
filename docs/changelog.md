@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-29
+last_edited: 2026-10-01
 title: Changelog
 description: Release history for AgentsView
 ---
@@ -11,6 +11,20 @@ The latest published release is
 
 **New features**
 
+- The web UI reports an anonymous `app_opened` event through the server when it
+  loads and on the first focus of each later UTC day.
+  `AGENTSVIEW_TELEMETRY_ENABLED=0` turns it off with the daemon ping.
+- Sessions show the title their agent keeps for them, and a name you chose with
+  `/rename` or the agent's equivalent wins over a generated title. Current
+  Claude Code `/rename` names now appear, and Qwen Code, Gemini CLI, Kimi CLI,
+  and OpenClaw titles appear for the first time. OpenCode, Kilo, MiMo Code, Amp,
+  Copilot CLI, VS Code Copilot, Positron, and Windsurf titles move out of the
+  first-message field, so previews and search show what you first typed. The
+  first sync after upgrading re-reads each session once.
+- Show OMO (oh-my-openagent) sessions as their own agent. AgentsView reads
+  them from `~/.omo/agent/sessions` with the Pi parser. Sessions you indexed
+  earlier by pointing `PI_DIR` at `~/.omo` stay labeled Pi; remove that
+  override so new OMO sessions are not indexed twice.
 - Verify conversation memory through an opt-in live release gate that records a
   synthetic decision, starts a fresh Claude Code or Codex session, and requires
   the client to search, read, answer accurately, and cite the source. Raw
@@ -63,9 +77,61 @@ The latest published release is
   or `kiro`; the Web UI picker and generation requests that name no agent use
   it. Leaving it unset keeps the previous `claude` default, and an unknown name
   fails configuration validation at startup.
+- Antigravity conversations that have no session database are now
+  stored from the plaintext transcript Antigravity's agent brain wrote beside
+  them, with the user's turns, the model's turns, its reasoning and its tool
+  calls. Until now those conversations were invisible: the only other copy is
+  an encrypted `.pb` stream that needs a key. `~/.gemini/antigravity-ide`, the
+  directory the IDE build uses, is also collected by default now. A
+  conversation that does have a database keeps one session, with the
+  transcript's entries folded into it. Both formats and copies across source
+  directories share the conversation ID. Transcript read failures preserve
+  archived messages. Antigravity sources re-parse once on upgrade to pick the
+  transcripts up.
+
+- StepCode sessions are collected. StepCode ships the same session format as
+  Pi but keeps its own directory, so its transcripts were previously invisible
+  even though the format was already supported. Sessions from
+  `~/.stepcode/agent/sessions` now appear alongside Pi's, under their own agent
+  name. `STEPCODE_DIR`, `STEP_CODING_AGENT_DIR`, and
+  `STEP_CODING_AGENT_SESSION_DIR` point discovery elsewhere when you keep
+  sessions somewhere else. Subagent and workflow runs StepCode spawns are
+  tagged as subagents, so they stay out of the session list the way they stay
+  out of StepCode's own resume picker.
 
 **Improvements**
 
+- The Usage page shows a **Total Input** card that adds uncached input, cache
+  writes, and cache reads, so heavy prompt caching no longer looks like missing
+  input. The input count that leaves out cached tokens is now labeled
+  **Uncached Input** on the Usage and Activity pages.
+- On Windows, each watched folder reserves 16 KiB for change notifications
+  instead of 64 KiB. At the 8192-folder budget, that reduces buffer capacity
+  from 512 MiB to 128 MiB.
+- Semantic search embedding requests now go through the shared Kenn embedding
+  client. Existing indexes keep working without re-embedding. Behavior that
+  changes:
+  - Requests use plain JSON float vectors instead of base64.
+  - A response with an invalid vector fails without retrying unless
+    `ollama_cpu_fallback` is on.
+  - Normal requests to an Ollama endpoint are no longer paused while
+    `ollama_cpu_fallback` recovers another request.
+  - Endpoints can no longer include a query string. Plain `http://` to a public
+    IP address now needs `https://`.
+- Remote session sync now uses HTTP only. Configure each remote host's daemon
+  URL and bearer token; omitting `transport` selects HTTP. SSH sync and the
+  `sync --user` and `sync --port` flags have been removed. `sync --host` selects
+  a configured host, including when syncing without a local daemon. Existing
+  archived sessions are preserved.
+- Full remote imports after a data-version upgrade use less CPU. Checking
+  whether a source file was trashed now looks up that path directly instead of
+  scanning every session from the same agent.
+- Full resync does less work when preserving archived sessions. It keeps
+  unchanged conversation export records and uses indexed session lookups.
+- `agentsview sync` now reports when it is waiting for an ongoing sync,
+  including startup reconciliation.
+- Startup now reports archive copying and index rebuilding as soon as each
+  stage starts, instead of leaving the previous subagent-repair label visible.
 - Full resync now shows how many queued sessions it has checked while repairing
   subagent relationships, then reports when it is saving those repairs.
 - Turning a session provider on or off, or adding or removing an alternate
@@ -119,12 +185,53 @@ The latest published release is
 
 **Bug fixes**
 
+- Price Codex auto-review turns, recorded as `codex-auto-review`, at GPT-5.6
+  Luna catalog rates instead of $0. Usage reports still list
+  `codex-auto-review` as the reported model, and a custom pricing row for it
+  still wins. Existing SQLite usage caches rebuild and the next ClickHouse push
+  reprices the mirror. (#2078)
+- Sync continues importing local sessions and reachable remotes when another
+  remote's hostname cannot resolve, such as while disconnected from a private
+  network. This also applies during archive upgrades and full rebuilds, which
+  preserve the unavailable host's archived sessions.
+- Re-importing a ChatGPT export now fills in code-run output that was still
+  missing when an earlier export was archived. The archived message keeps its
+  place and any pin. Re-importing a conversation you trashed now skips it
+  instead of reporting an error.
+- Cursor IDE chats stop re-syncing in a loop while Cursor is closed. Opening
+  Cursor's `state.vscdb` to read it makes SQLite create an empty `-wal` file
+  and delete it again on close, and AgentsView counted that file's appearance
+  and timestamp as a change, so each pass re-read every Cursor chat and
+  scheduled the next pass. On a large Cursor history this kept one or more CPU
+  cores busy indefinitely. An empty write-ahead log no longer counts as a
+  change for Cursor IDE or for other agents whose sessions live in SQLite
+  databases; real writes still sync as before.
 - Antigravity IDE and Antigravity CLI sessions stop re-syncing in a loop.
   Reading a session database rewrote its shared-memory (`-shm`) file, and
   AgentsView counted that as a change, so every pass re-read and re-uploaded
   every Antigravity session. Only changes to the database or its write-ahead
   log now trigger a re-sync. The first sync after upgrading re-reads each
   Antigravity session once.
+- Large Antigravity installs no longer push every agent's sessions to slow
+  polling. Each Antigravity `brain/<id>` folder can hold thousands of generated
+  subfolders that AgentsView never reads, and watching them used up the
+  8192-folder watch budget. AgentsView now watches each `brain/<id>` folder,
+  the markdown files inside it, and
+  `brain/<id>/.system_generated/logs`, which holds the plaintext transcript.
+  The other generated subfolders stay unwatched.
+- Active Codex Desktop sessions on macOS now update in AgentsView within about
+  30 seconds. Before, they could lag until Codex closed the session file,
+  AgentsView restarted, or you ran a Full Resync. macOS does not report
+  changes to a file that Codex keeps open, and Codex Desktop writes no
+  `history.jsonl` to say which sessions are active. AgentsView now also checks
+  the files of Codex sessions active in the last 24 hours. A session you resume
+  after more than 24 hours idle still waits until Codex closes its file.
+- Recall no longer records work an agent only proposed as work it completed.
+  When a stretch of a session ran no tools, extraction cannot produce a
+  procedure entry for it and tells the model nothing there was executed.
+  Other entry types still rely on the model's wording. A tool call counts as
+  evidence even if it was denied or failed. Upgrading re-extracts recall
+  entries for every session, which costs one round of model calls per session.
 
 ## 0.44.0
 
@@ -262,6 +369,10 @@ The latest published release is
 - Sync avoids repeatedly parsing unchanged malformed or missing source files
   where failure caching applies. Unrelated file events no longer bypass retry
   delays, and temporary lock-file changes no longer trigger session syncing.
+- The session list refreshes when sync repairs a subagent parent link, including
+  older self-parent links, even when no transcript changed.
+- Canceled syncs that saved session data retry unfinished parent links on the
+  next poll.
 - Configuration loading rejects unknown keys under `[vector]`, including
   misspelled or misplaced settings. Previously accepted configurations may now
   fail; correct or remove the named keys, even if vector search is disabled.

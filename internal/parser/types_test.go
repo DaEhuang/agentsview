@@ -232,6 +232,7 @@ func TestAgentByType(t *testing.T) {
 		{AgentPi, true},
 		{AgentPrimeAgent, true},
 		{AgentOMP, true},
+		{AgentStepCode, true},
 		{AgentDevin, true},
 		{AgentDeepSeekTUI, true},
 		{AgentDeepSeekHarness, true},
@@ -369,6 +370,12 @@ func TestAgentByPrefix(t *testing.T) {
 			true,
 		},
 		{
+			"stepcode prefix",
+			"stepcode:stepcode-session-uuid",
+			AgentStepCode,
+			true,
+		},
+		{
 			"devin prefix",
 			"devin:session-id",
 			AgentDevin,
@@ -484,6 +491,8 @@ func TestRegistryCompleteness(t *testing.T) {
 		AgentTau,
 		AgentPrimeAgent,
 		AgentOMP,
+		AgentOMO,
+		AgentStepCode,
 		AgentQwen,
 		AgentCommandCode,
 		AgentDeepSeekTUI,
@@ -647,6 +656,23 @@ func TestInferRelationshipTypes(t *testing.T) {
 	}
 }
 
+// TestStepCodeRegistryEntry pins StepCode's registry entry. StepCode is a
+// packaged Pi harness: it reuses Pi's JSONL format and provider, so the entry
+// only needs its own root, its two native env overrides, and its own session
+// ID prefix so its sessions never merge into Pi's.
+func TestStepCodeRegistryEntry(t *testing.T) {
+	def, ok := AgentByType(AgentStepCode)
+	require.True(t, ok, "AgentStepCode missing from Registry")
+	require.True(t, def.FileBased, "StepCode FileBased")
+	assert.Equal(t, "STEPCODE_DIR", def.EnvVar)
+	assert.Equal(t, "STEP_CODING_AGENT_SESSION_DIR", def.NativeEnvVar)
+	assert.Equal(t, "STEP_CODING_AGENT_DIR", def.DefaultRootEnvVar)
+	assert.Equal(t, ".stepcode/agent", def.DefaultRootDir)
+	assert.Equal(t, "stepcode_dirs", def.ConfigKey)
+	assert.Equal(t, []string{".stepcode/agent/sessions"}, def.DefaultDirs)
+	assert.Equal(t, "stepcode:", def.IDPrefix)
+}
+
 func TestZedRegistryEntry(t *testing.T) {
 	def, ok := AgentByType(AgentZed)
 	require.True(t, ok, "AgentZed missing from Registry")
@@ -745,6 +771,10 @@ func TestPeriodicReconcileCapability(t *testing.T) {
 	// updated_at floor, so metadata-only edits and deletions rely on the
 	// scheduled fingerprint-gated container reparse.
 	assert.True(t, optedIn[AgentOmnigent])
+	// Cursor IDE's watcher parses only composers whose composerData
+	// document changed, so bubble-only edits rely on the scheduled
+	// fingerprint-gated container reparse.
+	assert.True(t, optedIn[AgentCursorIDE])
 	// Codebuff's recursive per-project watch covers existing projects;
 	// scheduled reconciliation picks up newly created project
 	// directories under the root (see codebuffWatchRoots).

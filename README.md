@@ -356,7 +356,7 @@ local Amp thread JSON files.
 | Amp (deprecated)      | `~/.local/share/amp/threads/` (historical local thread JSON only)                                                                                                                                                                                    |
 | Augure Code           | `~/.augure/sessions/`                                                                                                                                                                                                                                |
 | Augure Desktop        | `~/.augure-desktop/` (macOS/Linux), `%LOCALAPPDATA%\augure-desktop\` (Windows)                                                                                                                                                                       |
-| Antigravity           | `~/.gemini/antigravity/`                                                                                                                                                                                                                             |
+| Antigravity           | `~/.gemini/antigravity/`, `~/.gemini/antigravity-ide/`                                                                                                                                                                                               |
 | Antigravity CLI       | `~/.gemini/antigravity-cli/` (see note below)                                                                                                                                                                                                        |
 | Cline CLI             | `~/.cline/data/sessions/` (CLI sessions only)                                                                                                                                                                                                        |
 | Claude Code           | `~/.claude/projects/`                                                                                                                                                                                                                                |
@@ -391,11 +391,13 @@ local Amp thread JSON files.
 | OpenCode              | `~/.local/share/opencode/`                                                                                                                                                                                                                           |
 | Open Code Review      | `~/.opencodereview/sessions/`                                                                                                                                                                                                                        |
 | OpenHands CLI         | `~/.openhands/conversations/`                                                                                                                                                                                                                        |
+| OMO                   | `~/.omo/agent/sessions/`                                                                                                                                                                                                                             |
 | OhMyPi                | `~/.omp/agent/sessions/`                                                                                                                                                                                                                             |
 | Omnigent              | `~/.omnigent/chat.db`                                                                                                                                                                                                                                |
 | Pi                    | `~/.pi/agent/sessions/`                                                                                                                                                                                                                              |
 | Tau                   | `~/.tau/sessions/`                                                                                                                                                                                                                                   |
 | Prime Agent           | `~/.prime/agent/sessions/`                                                                                                                                                                                                                           |
+| StepCode              | `~/.stepcode/agent/sessions/`                                                                                                                                                                                                                        |
 | Poolside              | `~/Library/Application Support/poolside/trajectories/` (macOS), `~/.local/state/poolside/trajectories/` (Linux), `%APPDATA%\\poolside\\trajectories\\` (Windows)                                                                                     |
 | Piebald               | `~/.local/share/piebald/`                                                                                                                                                                                                                            |
 | Posit Assistant       | `~/.posit/assistant/workspaces/`                                                                                                                                                                                                                     |
@@ -773,9 +775,10 @@ Troubleshooting:
 
 ## Privacy
 
-agentsview sends a limited anonymous `daemon_active` telemetry ping to PostHog
-when the server starts and every 24 hours while it runs, using a stable random
-install ID as the event `DistinctId`. The event includes
+agentsview sends limited anonymous telemetry to PostHog: a `daemon_active` ping
+when the server starts and every 24 hours while it runs, and an `app_opened`
+event when the web UI loads and on the first focus of a later UTC day. Both use
+a stable random install ID as the event `DistinctId`. The events include
 `application=agentsview`, app version, commit, OS, and CPU architecture, with
 `$process_person_profile=false` and `$geoip_disable=true`. It does not include
 session, project, prompt, file path, account, or machine identity. Disable

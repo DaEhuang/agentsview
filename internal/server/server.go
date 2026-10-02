@@ -44,6 +44,7 @@ type VersionInfo struct {
 	BuildDate                  string `json:"build_date"`
 	ReadOnly                   bool   `json:"read_only,omitempty"`
 	InsightGenerationAvailable bool   `json:"insight_generation_available"`
+	SessionStatsAvailable      bool   `json:"session_stats_available"`
 	APIVersion                 int    `json:"api_version"`
 	DataVersion                int    `json:"data_version"`
 }
@@ -193,6 +194,9 @@ type Server struct {
 	// localCompactRunner, when set, backs archive compaction with the daemon's
 	// maintenance barrier instead of allowing a CLI to bypass the writer.
 	localCompactRunner LocalCompactRunner
+
+	// telemetryCapture receives UI telemetry events; nil leaves the route unregistered.
+	telemetryCapture http.Handler
 
 	artifactExchangeRunner ArtifactExchangeRunner
 	rawSyncTenant          string
@@ -716,6 +720,7 @@ func (s *Server) routes() {
 	s.api = humago.New(s.mux, s.humaConfig())
 	s.registerTypedAPIRoutes()
 	s.registerMemoryRefreshRoute()
+	s.registerTelemetryCaptureRoute()
 
 	if s.pprofEnabled {
 		s.handleHTTP(&huma.Operation{Method: http.MethodGet, Path: "/debug/pprof/", Hidden: true}, httppprof.Index)

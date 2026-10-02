@@ -32,6 +32,7 @@ import (
 	"go.kenn.io/agentsview/internal/jsonutil"
 	"go.kenn.io/agentsview/internal/parser"
 	"go.kenn.io/agentsview/internal/pathutil"
+	"go.kenn.io/kit/embedconfig"
 )
 
 // TerminalConfig holds terminal launch preferences.
@@ -459,6 +460,48 @@ func (c VectorConfig) ResolvedDBPath(dataDir string) string {
 	return filepath.Join(dataDir, "vectors.db")
 }
 
+// EmbedModel maps the configured model identity onto kit's shared model
+// contract. Vectors are stored as the endpoint returns them (no client-side
+// normalization) so existing generations keep their exact values.
+func (c VectorEmbeddingsConfig) EmbedModel() embedconfig.Model {
+	return embedconfig.Model{
+		Name:              c.Model,
+		Dimensions:        c.Dimension,
+		Metric:            embedconfig.MetricCosine,
+		Normalization:     embedconfig.NormalizationNone,
+		RequestDimensions: c.RequestDimensions,
+	}
+}
+
+// EmbedRoles maps the configured prefixes and the shared input suffix onto
+// kit's role contract: documents get document_prefix, queries get
+// query_prefix, and both get input_suffix.
+func (c VectorEmbeddingsConfig) EmbedRoles() embedconfig.Roles {
+	return embedconfig.Roles{
+		DocumentPrefix: c.DocumentPrefix,
+		DocumentSuffix: c.InputSuffix,
+		QueryPrefix:    c.QueryPrefix,
+		QuerySuffix:    c.InputSuffix,
+		InputType:      embedconfig.InputTypeNone,
+	}
+}
+
+// EmbedDeployment maps the server endpoint onto kit's deployment contract.
+// agentsview has always accepted plaintext endpoints on the local network, so
+// private addresses and host names are trusted.
+func (c VectorEmbeddingsServerConfig) EmbedDeployment() embedconfig.Deployment {
+	return embedconfig.Deployment{BaseURL: c.Endpoint, TrustPrivateNetwork: true}
+}
+
+// EmbedTransport maps the server timeout onto kit's transport contract.
+func (c VectorEmbeddingsServerConfig) EmbedTransport() (embedconfig.Transport, error) {
+	timeout, err := time.ParseDuration(c.Timeout)
+	if err != nil {
+		return embedconfig.Transport{}, fmt.Errorf("invalid timeout %q: %w", c.Timeout, err)
+	}
+	return embedconfig.Transport{Timeout: timeout}, nil
+}
+
 // APIKey reads the API key from the environment variable named by
 // APIKeyEnv. Returns "" when APIKeyEnv is unset.
 func (c VectorEmbeddingsServerConfig) APIKey() string {
@@ -699,12 +742,7 @@ func decodeCustomModelPricing(data string) (map[string]CustomModelRate, error) {
 
 type RemoteTransport string
 
-const (
-	// RemoteTransportSSH is retained for compatibility but deprecated. New
-	// remote sync configurations should use RemoteTransportHTTP.
-	RemoteTransportSSH  RemoteTransport = "ssh"
-	RemoteTransportHTTP RemoteTransport = "http"
-)
+const RemoteTransportHTTP RemoteTransport = "http"
 
 type ChartPalette string
 
@@ -772,17 +810,13 @@ func (a ArchiveContent) UsageOnly() bool {
 }
 
 // RemoteHost describes one target for config-driven `agentsview sync`
-// fan-out. Host is required. Deprecated SSH remotes may set User and Port
-// (Port 0 means the ssh default of 22). HTTP remotes must set URL
-// and Token. A zero/empty Interval disables periodic remote
-// sync for this host.
+// fan-out over HTTP. Host, URL, and Token are required. An omitted Transport
+// selects HTTP. A zero/empty Interval disables periodic remote sync for this host.
 //
 //nolint:recvcheck // Value encoding and pointer decoding intentionally implement distinct interfaces.
 type RemoteHost struct {
 	Host      string          `toml:"host" json:"host"`
 	Transport RemoteTransport `toml:"transport,omitempty" json:"transport,omitempty"`
-	User      string          `toml:"user,omitempty" json:"user,omitempty"`
-	Port      int             `toml:"port,omitempty" json:"port,omitzero"`
 	URL       string          `toml:"url,omitempty" json:"url,omitempty"`
 	Token     string          `toml:"token,omitempty" json:"-"`
 	Interval  time.Duration   `toml:"interval,omitempty" json:"interval,omitzero"`
@@ -860,6 +894,9 @@ type Config struct {
 	WriteTimeout         time.Duration               `json:"-" toml:"-"`
 	// InstallationID identifies this data directory independently of its label.
 	InstallationID string `json:"-" toml:"-"`
+	// InstallationCreatedAt is when InstallationID was created, or zero for
+	// IDs created before the time was recorded.
+	InstallationCreatedAt time.Time `json:"-" toml:"-"`
 	// LocalMachineName is the display label, defaulting to the system hostname.
 	LocalMachineName string `json:"-" toml:"local_machine_name"`
 
@@ -1044,76 +1081,29 @@ func (c Config) ValidateRemoteHosts() error {
 	var problems []string
 	seen := make(map[string]int, len(c.RemoteHosts))
 	for i, h := range c.RemoteHosts {
-		transport := h.Transport
-		if transport == "" {
-			transport = RemoteTransportSSH
-		}
 		if h.Host == "" {
 			problems = append(problems,
 				fmt.Sprintf("entry %d: host is required", i+1))
-		}
-		if trimmed := strings.TrimSpace(h.Host); isSSHOptionShaped(h.Host) {
-			problems = append(problems,
-				fmt.Sprintf("entry %d: host must not begin with '-' (got %q)",
-					i+1, trimmed))
-		}
-		if trimmed := strings.TrimSpace(h.User); isSSHOptionShaped(h.User) {
-			problems = append(problems,
-				fmt.Sprintf("entry %d (%q): user must not begin with '-' (got %q)",
-					i+1, h.Host, trimmed))
-		}
-		if h.Port < 0 || h.Port > 65535 {
-			problems = append(problems,
-				fmt.Sprintf("entry %d (%q): invalid port %d",
-					i+1, h.Host, h.Port))
 		}
 		if h.Interval < 0 {
 			problems = append(problems,
 				fmt.Sprintf("entry %d (%q): invalid interval %s",
 					i+1, h.Host, h.Interval))
 		}
-		switch transport {
-		case RemoteTransportSSH:
-			if h.URL != "" {
-				problems = append(problems,
-					fmt.Sprintf("entry %d (%q): url is only valid for http",
-						i+1, h.Host))
-			}
-			if h.Token != "" {
-				problems = append(problems,
-					fmt.Sprintf("entry %d (%q): token is only valid for http",
-						i+1, h.Host))
-			}
-		case RemoteTransportHTTP:
-			if h.User != "" {
-				problems = append(problems,
-					fmt.Sprintf("entry %d (%q): user is only valid for ssh",
-						i+1, h.Host))
-			}
-			if h.Port != 0 {
-				problems = append(problems,
-					fmt.Sprintf("entry %d (%q): port is only valid for ssh",
-						i+1, h.Host))
-			}
-			if err := validateRemoteHTTPURL(h.URL); err != nil {
-				problems = append(problems,
-					fmt.Sprintf("entry %d (%q): %v",
-						i+1, h.Host, err))
-			}
-			if h.Token == "" {
-				problems = append(problems,
-					fmt.Sprintf("entry %d (%q): token is required for http",
-						i+1, h.Host))
-			}
-		default:
+		if h.Transport != "" && h.Transport != RemoteTransportHTTP {
 			problems = append(problems,
-				fmt.Sprintf("entry %d (%q): invalid transport %q",
+				fmt.Sprintf("entry %d (%q): invalid transport %q; use http with a url and token",
 					i+1, h.Host, h.Transport))
 		}
-		// Remote sync namespaces sessions and the skip cache by
-		// host alone (see ssh.RemoteSync), so two entries sharing a
-		// host collide regardless of user/port. Reject duplicates
-		// rather than silently share or overwrite cached state.
+		if err := validateRemoteHTTPURL(h.URL); err != nil {
+			problems = append(problems,
+				fmt.Sprintf("entry %d (%q): %v", i+1, h.Host, err))
+		}
+		if h.Token == "" {
+			problems = append(problems,
+				fmt.Sprintf("entry %d (%q): token is required for http", i+1, h.Host))
+		}
+		// Remote sync namespaces sessions and cached state by host.
 		if h.Host != "" {
 			if first, ok := seen[h.Host]; ok {
 				problems = append(problems,
@@ -1157,10 +1147,6 @@ func validateRemoteHTTPURL(raw string) error {
 		return errors.New("url must not include fragment")
 	}
 	return nil
-}
-
-func isSSHOptionShaped(value string) bool {
-	return strings.HasPrefix(strings.TrimSpace(value), "-")
 }
 
 // Default returns a Config with default values.
@@ -1968,8 +1954,6 @@ func (c *Config) applyConfigTOML(data string) error {
 			hosts[i] = RemoteHost{
 				Host:      strings.TrimSpace(h.Host),
 				Transport: RemoteTransport(strings.TrimSpace(string(h.Transport))),
-				User:      strings.TrimSpace(h.User),
-				Port:      h.Port,
 				URL:       strings.TrimSpace(h.URL),
 				Token:     strings.TrimSpace(h.Token),
 				Interval:  h.Interval,

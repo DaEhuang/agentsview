@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { m } from "../../i18n/index.js";
+  import { formatDateTime, m } from "../../i18n/index.js";
   import { onMount, untrack } from "svelte";
   import {
     activity,
@@ -50,6 +50,20 @@
       ? localDateStr(new Date(new Date(activity.report.range_end).getTime() - 1))
       : "",
   );
+  // The report's last data point while its period is still in progress, in the
+  // report's timezone so it matches the timeline clock labels.
+  const inProgressAsOf = $derived.by(() => {
+    const report = activity.report;
+    if (!report?.partial || !report.as_of) return "";
+    const d = new Date(report.as_of);
+    if (Number.isNaN(d.getTime())) return "";
+    return formatDateTime(d, {
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+      timeZone: report.timezone,
+    });
+  });
   const activityPanelDate = $derived(currentActivityPanelDate());
   const activityDateSignature = $derived(dateSignature(activityPanelDate));
   let activityYokeReady = $state(false);
@@ -76,9 +90,15 @@
     }
   });
 
+  // The last sessions request the user started: a time range, a sort, or the
+  // next page. Retry repeats it, so a failed sort or range change is retried
+  // instead of loading the next page of the list still on screen.
+  let retrySessions: (() => void) | null = null;
+
   async function selectRange(
     sel: { start: number; end: number; label: string } | null,
   ) {
+    retrySessions = () => void selectRange(sel);
     const generation = activity.reportGeneration;
     if (
       await activity.loadSessionPage({
@@ -94,7 +114,13 @@
     sort: import("../../api/activity-report.js").ActivitySessionSort,
     direction: "asc" | "desc",
   ) {
+    retrySessions = () => void sortSessions(sort, direction);
     await activity.loadSessionPage({ sort, direction });
+  }
+
+  function loadMoreSessions(cursor: string) {
+    retrySessions = () => loadMoreSessions(cursor);
+    void activity.loadSessionPage({ cursor });
   }
 
   function reportProgressLabel(progress: ActivityReportProgress | null): string {
@@ -455,6 +481,12 @@
         label={m.activity_refresh()}
       />
     </div>
+
+    {#if inProgressAsOf}
+      <div class="activity-partial-note">
+        {m.activity_in_progress_as_of({ time: inProgressAsOf })}
+      </div>
+    {/if}
   </div>
 
   <div class="activity-content">
@@ -481,9 +513,11 @@
           error={activity.sessionsError}
           sortKey={activity.sessionsSort}
           sortDir={activity.sessionsDirection}
+          listVersion={activity.sessionsListVersion}
           onClearFilter={() => selectRange(null)}
           onSort={sortSessions}
-          onNext={(cursor) => activity.loadSessionPage({ cursor })}
+          onLoadMore={loadMoreSessions}
+          onRetry={() => retrySessions?.()}
         />
       </Card>
       <Card level="default" padding="none" class="chart-panel">
@@ -557,6 +591,14 @@
     flex: 0 0 auto;
     max-width: 100%;
     min-width: 0;
+  }
+
+  /* Pinned to the right end of the toolbar, or of the wrapped last row. */
+  .activity-partial-note {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--accent-amber);
+    white-space: nowrap;
   }
 
   .activity-content {

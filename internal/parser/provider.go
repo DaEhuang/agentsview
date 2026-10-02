@@ -65,7 +65,7 @@ type ProviderConfig struct {
 	// provider must treat roots owned by another machine as remote metadata.
 	SourceMachines map[string]string
 	// PathRewriter maps an on-disk source path to its canonical stored form.
-	// It is non-nil only during remote (SSH) sync, where source files are read
+	// It is non-nil only during remote sync, where source files are read
 	// from a temporary extraction directory but must keep a stable identity
 	// across syncs. Providers whose session IDs are derived from the source
 	// path (Aider) use it to seed those IDs from the canonical remote path
@@ -103,6 +103,13 @@ type StoredFingerprintLookup func(path string) (string, bool)
 // Providers without this optional capability receive no archive lookup.
 type StoredFingerprintProvider interface {
 	FingerprintWithStored(context.Context, SourceRef, StoredFingerprintLookup) (SourceFingerprint, error)
+}
+
+// ParseSourceSizer reports all bytes a full parse may read, including companion
+// sources. It affects memory admission only, never stored fingerprints or offsets.
+// Providers without this capability use the discovered source's size.
+type ParseSourceSizer interface {
+	ParseSourceSize(context.Context, SourceRef) (int64, error)
 }
 
 // SourceFingerprints, and normalized ParseResults without knowing whether the
@@ -291,10 +298,10 @@ type StoredSourceHintScopeProvider interface {
 // asserts a constructed provider against MultiFileStatHasher and caches
 // the result. Single-file providers whose Fingerprint content-hashes the
 // source (Claude, Codex) also implement it: their digest folds the
-// change-time term, so a persisted stat digest preserves in-place-rewrite
-// detection across process restarts without re-reading unchanged content
-// on every pass. Providers that implement neither behavior take the
-// existing stat-only composite path.
+// change-time and inode terms, so a persisted stat digest preserves
+// in-place-rewrite and replacement detection across process restarts
+// without re-reading unchanged content on every pass. Providers that
+// implement neither behavior take the existing stat-only composite path.
 type MultiFileStatHasher interface {
 	// ComputeMultiFileStatHash stats the chat path plus any companion
 	// siblings declared by the provider and returns a stable per-source
@@ -771,9 +778,11 @@ func watchRootMetadata(roots []WatchRoot) []WatchRoot {
 	out := make([]WatchRoot, 0, len(roots))
 	for _, root := range roots {
 		out = append(out, WatchRoot{
-			Path:        root.Path,
-			Recursive:   root.Recursive,
-			DebounceKey: root.DebounceKey,
+			Path:             root.Path,
+			Recursive:        root.Recursive,
+			MaxDepth:         root.MaxDepth,
+			ExtraDirectories: append([]string(nil), root.ExtraDirectories...),
+			DebounceKey:      root.DebounceKey,
 		})
 	}
 	return out
@@ -784,11 +793,23 @@ func watchRootMetadata(roots []WatchRoot) []WatchRoot {
 // changes and must not be treated as covering missing nested provider roots
 // unless caller-specific creation handling documents that equivalence.
 type WatchRoot struct {
-	Path         string
-	Recursive    bool
-	IncludeGlobs []string
-	ExcludeGlobs []string
-	DebounceKey  string
+	Path      string
+	Recursive bool
+	// MaxDepth limits a recursive root to directories at most MaxDepth
+	// levels below Path; zero means no limit. Set it when a provider reads
+	// only a fixed depth under a root whose deeper subtrees it never
+	// parses, so those subtrees do not consume the recursive-watch budget.
+	MaxDepth int
+	// ExtraDirectories lists directories relative to Path that stay watched
+	// below MaxDepth. Separate segments with "/" and use "*" for one
+	// directory name. Each directory on the way to a listed directory is
+	// watched too. Files directly inside a listed directory are reported.
+	// Files in an intermediate directory are not. An empty list leaves
+	// MaxDepth as the whole limit.
+	ExtraDirectories []string
+	IncludeGlobs     []string
+	ExcludeGlobs     []string
+	DebounceKey      string
 }
 
 // ActivityHintSource is one bounded append-only signal a provider exposes to
@@ -911,6 +932,12 @@ type ChangedPathRequest struct {
 type StoredMemberFreshness struct {
 	Path             string
 	CoveredThroughNS int64
+	// FingerprintHash is the member's committed stored fingerprint hash,
+	// opaque to the caller; providers that compare a change token instead of
+	// a watermark read it. An empty value never vouches for a member.
+	FingerprintHash string
+	// Suppressed means the archive refuses writes for this member (trashed or permanently deleted), so a changed-path listing omits it whatever its token or watermark.
+	Suppressed bool
 }
 
 // StoredMemberFreshnessPager returns stored freshness rows strictly after
@@ -920,6 +947,27 @@ type StoredMemberFreshness struct {
 type StoredMemberFreshnessPager func(
 	ctx context.Context, afterPath string, limit int,
 ) ([]StoredMemberFreshness, bool, error)
+
+// StoredMemberFreshnessContainerResolver maps a changed path to the shared
+// container whose stored member freshness a changed-path listing merges with.
+type StoredMemberFreshnessContainerResolver interface {
+	StoredMemberFreshnessContainer(path string) (string, bool)
+}
+
+// ResolveStoredMemberFreshnessContainer returns the container for path when
+// provider declares Source.StoredMemberFreshnessListing.
+func ResolveStoredMemberFreshnessContainer(
+	provider Provider, path string,
+) (string, bool) {
+	if provider.Capabilities().Source.StoredMemberFreshnessListing != CapabilitySupported {
+		return "", false
+	}
+	resolver, ok := provider.(StoredMemberFreshnessContainerResolver)
+	if !ok {
+		return "", false
+	}
+	return resolver.StoredMemberFreshnessContainer(path)
+}
 
 // FindSourceRequest contains lookup inputs and persisted source hints for
 // provider-owned source resolution. RawSessionID and FullSessionID identify the
@@ -1083,10 +1131,11 @@ type IncrementalRequest struct {
 	// StoredSessionName is the session_name already persisted for this
 	// session ("" when the row carries none), or nil when the call site
 	// cannot supply it. Claude adopts a generated ai-title only when no
-	// /rename is present, and the producer repeats the same record many
-	// times per transcript, so the incremental parser escalates on an
-	// appended title only when it could fill a still-empty stored name.
-	// nil keeps the append incremental.
+	// user rename is present, and the producer repeats its ai-title and
+	// custom-title records many times per transcript, so the incremental
+	// parser escalates on an appended ai-title only when it could fill a
+	// still-empty stored name, and on an appended custom-title only when it
+	// differs from the stored name. nil keeps the append incremental.
 	StoredSessionName *string
 	// StoredPendingUsageOrdinal is the last assistant message without token
 	// usage in the current turn, as resolved from the committed transcript.
@@ -1229,7 +1278,7 @@ func providerFactoryForDef(def AgentDef) ProviderFactory {
 		return newOpenCodeProviderFactory(def)
 	case AgentOpenCodeReview:
 		return newOpenCodeReviewProviderFactory(def)
-	case AgentOMP:
+	case AgentOMP, AgentOMO, AgentStepCode:
 		return newPiProviderFactory(def)
 	case AgentOpenClaw:
 		return newOpenClawProviderFactory(def)

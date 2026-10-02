@@ -10,7 +10,6 @@ import (
 
 	"go.kenn.io/agentsview/internal/config"
 	"go.kenn.io/agentsview/internal/db"
-	"go.kenn.io/agentsview/internal/update"
 )
 
 type serveReplacementAction int
@@ -203,14 +202,9 @@ func decideCompatibleServeDaemonReplacement(
 		decision.Reason = "replacement requested with --replace"
 		return decision
 	}
-	if shouldUpgradeDaemonRuntime(rt, version) {
+	if shouldReplaceDaemonRuntime(rt, version) {
 		decision.Action = serveReplacementAuto
-		decision.Reason = serveDaemonOlderReason(rt)
-		return decision
-	}
-	if rt.Record.Version != version {
-		decision.Action = serveReplacementRefuse
-		decision.Reason = serveDaemonRefusalReason(rt, nil)
+		decision.Reason = serveDaemonVersionMismatchReason(rt)
 		return decision
 	}
 	decision.Action = serveReplacementUseExisting
@@ -230,9 +224,9 @@ func decideIncompatibleServeDaemonReplacement(
 		decision.Reason = "replacement requested with --replace"
 		return decision
 	}
-	if shouldUpgradeIncompatibleDaemonRuntime(rt, version) {
+	if shouldReplaceIncompatibleDaemonRuntime(rt, version) {
 		decision.Action = serveReplacementAuto
-		decision.Reason = serveDaemonOlderReason(rt)
+		decision.Reason = serveDaemonVersionMismatchReason(rt)
 		return decision
 	}
 	decision.Action = serveReplacementRefuse
@@ -240,17 +234,17 @@ func decideIncompatibleServeDaemonReplacement(
 	return decision
 }
 
-func serveDaemonOlderReason(rt *DaemonRuntime) string {
+func serveDaemonVersionMismatchReason(rt *DaemonRuntime) string {
 	daemonVersion := serveDaemonVersion(rt)
 	if rt == nil || rt.Record.Version == "" {
 		return fmt.Sprintf(
-			"daemon version is unknown and treated as older than current "+
+			"daemon version is unknown; restarting with current "+
 				"binary version %s",
 			serveCurrentVersion(),
 		)
 	}
 	return fmt.Sprintf(
-		"daemon version %s is older than current binary version %s",
+		"daemon version %s differs from current binary version %s",
 		daemonVersion, serveCurrentVersion(),
 	)
 }
@@ -266,29 +260,9 @@ func serveDaemonRefusalReason(
 			rt.API, rt.Data, daemonAPIVersion, db.CurrentDataVersion(),
 		)
 	}
-	if update.IsDevBuildVersion(version) {
-		return fmt.Sprintf(
-			"current binary version %s is a dev build; dev builds do not "+
-				"replace running daemons automatically",
-			serveCurrentVersion(),
-		)
-	}
-	if rt != nil && update.IsNewer(rt.Record.Version, version) {
-		return fmt.Sprintf(
-			"daemon version %s is newer than current binary version %s",
-			serveDaemonVersion(rt), serveCurrentVersion(),
-		)
-	}
-	if compatErr != nil {
-		return fmt.Sprintf(
-			"current binary version %s is not newer than daemon version %s "+
-				"and cannot automatically replace the incompatible daemon: %v",
-			serveCurrentVersion(), serveDaemonVersion(rt), compatErr,
-		)
-	}
 	return fmt.Sprintf(
-		"current binary version %s is not newer than daemon version %s",
-		serveCurrentVersion(), serveDaemonVersion(rt),
+		"daemon version %s cannot serve current binary version %s: %v",
+		serveDaemonVersion(rt), serveCurrentVersion(), compatErr,
 	)
 }
 

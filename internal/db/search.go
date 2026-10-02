@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"go.kenn.io/kit/search/lexical"
 )
 
 const (
@@ -306,6 +308,7 @@ type SearchResult struct {
 	SessionID      string  `json:"session_id"`
 	Project        string  `json:"project"`
 	Agent          string  `json:"agent"`
+	Machine        string  `json:"machine"`
 	Name           string  `json:"name"`
 	Ordinal        int     `json:"ordinal"`
 	SessionEndedAt string  `json:"session_ended_at"`
@@ -439,11 +442,11 @@ func (db *DB) Search(
 	args = append(args, f.Limit+1, f.Cursor) // (9) LIMIT / OFFSET
 
 	query := fmt.Sprintf(`
-		SELECT session_id, project, agent, name,
+		SELECT session_id, project, agent, machine, name,
 			session_ended_at, ordinal, snippet, rank, match_pos
 		FROM (
 			-- FTS branch: message content matches
-			SELECT m.session_id, s.project, s.agent,
+			SELECT m.session_id, s.project, s.agent, s.machine,
 				COALESCE(s.display_name, s.session_name, s.first_message, '') AS name,
 				COALESCE(s.ended_at, s.started_at, '') AS session_ended_at,
 				best.best_ordinal AS ordinal,
@@ -480,7 +483,7 @@ func (db *DB) Search(
 			UNION ALL
 
 			-- Name branch: display_name / session_name / first_message matches not in FTS branch
-			SELECT s.id, s.project, s.agent,
+			SELECT s.id, s.project, s.agent, s.machine,
 				COALESCE(s.display_name, s.session_name, s.first_message, '') AS name,
 				COALESCE(s.ended_at, s.started_at, '') AS session_ended_at,
 				-1 AS ordinal,
@@ -545,7 +548,7 @@ func (db *DB) Search(
 		var r SearchResult
 		var matchPos int
 		if err := rows.Scan(
-			&r.SessionID, &r.Project, &r.Agent, &r.Name,
+			&r.SessionID, &r.Project, &r.Agent, &r.Machine, &r.Name,
 			&r.SessionEndedAt, &r.Ordinal,
 			&r.Snippet, &r.Rank, &matchPos,
 		); err != nil {
@@ -639,17 +642,17 @@ func PrepareFTSQuery(raw string) string {
 	if raw == "" || strings.HasPrefix(raw, `"`) {
 		return raw
 	}
-	var b strings.Builder
-	for i, term := range strings.Fields(raw) {
-		if i > 0 {
-			b.WriteByte(' ')
-		}
-		b.WriteByte('"')
-		b.WriteString(strings.ReplaceAll(term, `"`, `""`))
-		b.WriteByte('"')
+	prepared, err := literalFTSAnalyzer.PrepareLiteral(raw)
+	if err != nil {
+		// Only blank input fails, and it returned above.
+		return raw
 	}
-	return b.String()
+	return prepared.Match
 }
+
+// literalFTSAnalyzer quotes each whitespace-separated term, doubling embedded
+// quotes, and joins the terms with FTS5's implicit AND.
+var literalFTSAnalyzer = lexical.Literal()
 
 // FTSTerms decomposes a PrepareFTSQuery output back into its individual terms,
 // un-doubling escaped quotes inside quoted terms and collecting bare tokens. A

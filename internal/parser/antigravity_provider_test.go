@@ -32,6 +32,10 @@ func TestAntigravityProviderSourceMethods(t *testing.T) {
 	assert.False(t, plan.Roots[0].Recursive)
 	assert.Equal(t, filepath.Join(root, "brain"), plan.Roots[1].Path)
 	assert.True(t, plan.Roots[1].Recursive)
+	assert.Equal(t, 1, plan.Roots[1].MaxDepth,
+		"generated brain trees stay unwatched")
+	assert.Equal(t, []string{"*/.system_generated/logs"}, plan.Roots[1].ExtraDirectories,
+		"the plaintext transcript directory stays watched")
 	assert.Equal(t, filepath.Join(root, "conversations"), plan.Roots[2].Path)
 	assert.False(t, plan.Roots[2].Recursive)
 
@@ -86,7 +90,7 @@ func TestAntigravityProviderFingerprintAndParse(t *testing.T) {
 	assert.NotEmpty(t, before.Hash)
 
 	walPath := dbPath + "-wal"
-	writeSourceFile(t, walPath, "wal")
+	writeSourceFile(t, walPath, walWithFramesFixture)
 	walTime := time.Unix(0, before.MTimeNS+int64(time.Second))
 	require.NoError(t, os.Chtimes(walPath, walTime, walTime))
 	after, err := provider.Fingerprint(t.Context(), source)
@@ -198,6 +202,10 @@ func TestAntigravityCLIProviderSourceMethods(t *testing.T) {
 	require.Len(t, plan.Roots, 5)
 	assert.Equal(t, filepath.Join(root, "brain"), plan.Roots[0].Path)
 	assert.True(t, plan.Roots[0].Recursive)
+	assert.Equal(t, 1, plan.Roots[0].MaxDepth,
+		"only brain/<id>/*.md is parsed; deeper brain trees stay unwatched")
+	assert.Empty(t, plan.Roots[0].ExtraDirectories,
+		"the CLI brain root does not read the IDE transcript directory")
 	assert.Equal(t, filepath.Join(root, "conversations"), plan.Roots[1].Path)
 	assert.False(t, plan.Roots[1].Recursive)
 	assert.Equal(t, root, plan.Roots[2].Path)
@@ -1183,7 +1191,7 @@ func TestAntigravityProvidersFingerprintIgnoresShm(t *testing.T) {
 			assert.Equal(t, beforeInfo, afterInfo)
 
 			walTime := base.Add(2 * time.Hour)
-			writeSourceFile(t, walPath, "wal with a committed frame")
+			writeSourceFile(t, walPath, walWithFramesFixture)
 			require.NoError(t, os.Chtimes(walPath, walTime, walTime))
 			afterWAL, err := provider.Fingerprint(t.Context(), source)
 			require.NoError(t, err)
