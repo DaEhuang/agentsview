@@ -2275,6 +2275,51 @@ schemas keep their existing ordering behavior.
   accepts a relative resource path after the name. Agentsview attributes only
   the URI in the Pi-family read path and decodes the name before storing it.
 
+## StepCode (`stepcode`)
+
+- **Format:** Pi-family JSONL. StepCode distributes the Pi coding-agent
+  harness as a product, so it reuses Pi's session file, entry types, and tree
+  structure without modification.
+
+- **Evidence:** `source`.
+
+- **Upstream:** Clone `https://github.com/stepfun-ai/Step-Code.git` at
+  `519e4de4ed2162d3667be1821cb92ada6b884e5a`; see the pinned
+  [session format](https://github.com/stepfun-ai/Step-Code/blob/519e4de4ed2162d3667be1821cb92ada6b884e5a/packages/coding-agent/docs/session-format.md)
+  and
+  [Step integration](https://github.com/stepfun-ai/Step-Code/blob/519e4de4ed2162d3667be1821cb92ada6b884e5a/packages/coding-agent/docs/step-integration.md),
+  plus
+  [third-party notices](https://github.com/stepfun-ai/Step-Code/blob/519e4de4ed2162d3667be1821cb92ada6b884e5a/THIRD_PARTY_NOTICES.md).
+  The integration page states that the product entrypoint is an adapter over the
+  Pi coding-agent runtime that keeps Pi's `SessionManager` class, JSONL format,
+  and tree operations unchanged while binding that manager to the StepCode
+  agent root. The session-format page documents
+  `~/.stepcode/agent/sessions/<encoded-cwd>/` and the
+  `<timestamp>_<session-id>.jsonl` naming. StepCode is public and MIT-licensed;
+  its notices state that it is derived from Pi, which is also MIT.
+
+- **Usage and cost:** Pi-family usage persists input, output, cache-read, and
+  cache-write tokens with a model. Agentsview derives monetary cost from the
+  catalog.
+
+- **Agentsview:** StepCode reuses the Pi-family provider in
+  `internal/parser/pi.go` and `internal/parser/pi_provider.go`; no separate
+  parser is needed. Its registry entry supplies its own agent root
+  (`.stepcode/agent/sessions`) and its own session-ID prefix, so StepCode
+  transcripts never merge into Pi's. `STEP_CODING_AGENT_DIR` re-roots the
+  default sessions path and `STEP_CODING_AGENT_SESSION_DIR` replaces it
+  outright, mirroring how Pi resolves the same pair of overrides;
+  `STEPCODE_DIR` or `stepcode_dirs` override both. Because default filenames
+  are timestamp-prefixed rather than header-UUID-named, identity lookup that
+  arrives with only a bare header UUID falls back to a header scan.
+  StepCode's own subagent and workflow runners spawn a child with
+  `--session-id subagent-<uuid>` or `workflow-<run>-<agent>`
+  ([helpers.ts](https://github.com/stepfun-ai/Step-Code/blob/519e4de4ed2162d3667be1821cb92ada6b884e5a/packages/coding-agent/src/features/subagent/helpers.ts)),
+  so the child lands beside its parent in the same project directory with no
+  `parentSession`. Agentsview classifies those IDs as subagents, the same
+  prefix StepCode's resume picker hides, and leaves them unlinked because the
+  parent transcript doesn't record the child ID.
+
 ## Qwen Code (`qwen`)
 
 - **Format:** Gemini-derived project chat-record JSONL.
