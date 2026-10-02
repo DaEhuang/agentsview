@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	kittelemetry "go.kenn.io/kit/telemetry"
 )
@@ -29,8 +30,11 @@ type Reporter struct {
 
 type Options struct {
 	InstallationID string
-	Version        string
-	Commit         string
+	// InstalledAt is when InstallationID was created. Reports carry its age as
+	// install_age_hours; zero sends them without an age.
+	InstalledAt time.Time
+	Version     string
+	Commit      string
 }
 
 func EnabledFromEnv() bool {
@@ -40,7 +44,7 @@ func EnabledFromEnv() bool {
 func NewReporter(opts Options) (*Reporter, error) {
 	if !EnabledFromEnv() {
 		// kit keeps the allowlist on an opted-out reporter, so the UI route still rejects unknown events.
-		client, err := newKitReporter(opts.InstallationID, opts.Version, opts.Commit)
+		client, err := newKitReporter(opts.InstallationID, opts.InstalledAt, opts.Version, opts.Commit)
 		if err != nil {
 			return nil, err
 		}
@@ -53,7 +57,7 @@ func NewReporter(opts Options) (*Reporter, error) {
 		return nil, errors.New("installation ID is required")
 	}
 
-	client, err := newKitReporter(opts.InstallationID, opts.Version, opts.Commit)
+	client, err := newKitReporter(opts.InstallationID, opts.InstalledAt, opts.Version, opts.Commit)
 	if err != nil {
 		return nil, err
 	}
@@ -125,13 +129,14 @@ func (r *Reporter) Close() error {
 }
 
 func newKitReporter(
-	distinctID, version, commit string,
+	distinctID string, installedAt time.Time, version, commit string,
 ) (*kittelemetry.PostHogReporter, error) {
 	return kittelemetry.NewPostHogReporter(kittelemetry.PostHogOptions{
 		APIKey:      postHogAPIKey,
 		Application: application,
 		EnvPrefix:   envPrefix,
 		DistinctID:  distinctID,
+		InstalledAt: installedAt,
 		Version:     version,
 		Commit:      commit,
 		Source:      "daemon",
