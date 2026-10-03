@@ -73,6 +73,29 @@ provenance with preserved sessions. Once all contributors are readable, a full
 parse can apply corrected or shortened transcripts. This metadata stays local to
 the archive; S3 materializations do not record temporary paths.
 
+### Codex deletion scope
+
+Before data version 127, deleting a Codex-format thread excluded all its rollout
+files under one ID. The upgrade marks those exclusions with
+`include_codex_pages`, so pages remain excluded even if their files were absent
+during the upgrade and return later. Copies preserve that scope across later
+rebuilds. New deletions keep the default per-file scope. Session and recall
+imports use the same exclusion check.
+
+Legacy trash keeps the same thread-wide scope in
+`sessions.trash_includes_codex_pages`. The retained thread row blocks imports of
+absent pages even when they return at a different path. Restoring the thread or
+one of its pages ends that inherited scope; other existing trash rows remain
+trashed. Permanently deleting the thread transfers the scope to
+`excluded_sessions` and removes its covered pages in the same transaction. New
+trash actions remain per-file.
+
+PostgreSQL mirrors this scope and keeps a separate source baseline for it, so
+restoring a page in PostgreSQL survives later pushes even when its thread row
+stays trashed. Restoring a page locally also advances the thread row's sync
+marker. PostgreSQL purge retains thread-wide exclusions for later pushes; the
+hosted legacy routes use the same behavior without removing raw projections.
+
 ### Codex incremental import state
 
 Four SQLite-only tables support local Codex imports: `parser_checkpoints` holds
@@ -458,12 +481,12 @@ Empty events, such as timing-only `tool_execution` marks, don't count. That
 pair, an empty column with a non-zero length, tells a reader to take the text
 from the one event with content. Summaries over several content-bearing events,
 summaries that differ from their event, calls with no content-bearing event, and
-blocked categories store exactly what the parser produced. Load tool calls through the message loaders, which
-refill the summary once events are attached; a query that selects the column
-directly must apply the same fallback, and PostgreSQL and DuckDB apply the same
-write rule so their tool-call fingerprints match SQLite. Anyone reading the
-archive or a mirror by hand sees the empty column and must join the events table
-to recover the text.
+blocked categories store exactly what the parser produced. Load tool calls
+through the message loaders, which refill the summary once events are attached;
+a query that selects the column directly must apply the same fallback, and
+PostgreSQL and DuckDB apply the same write rule so their tool-call fingerprints
+match SQLite. Anyone reading the archive or a mirror by hand sees the empty
+column and must join the events table to recover the text.
 
 ## DuckDB Mirror
 

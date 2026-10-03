@@ -565,7 +565,13 @@ CREATE INDEX IF NOT EXISTS idx_provider_freshness_updated_at
 // rows with source_subtype peer_message instead of user prompts. Re-parse
 // unchanged Claude sources so user-message counts and first messages drop
 // them.)
-const dataVersion = 126
+// (127: a Codex rollout written by thread/revert,
+// rollout-<ts>-<thread>_<rollout>.jsonl, is stored as its own session
+// codex:<thread>_<rollout> linked as a continuation instead of overwriting
+// codex:<thread>. Re-parse unchanged Codex sources so every file gets its own
+// session; the resync's orphan copy drops a stale codex:<thread> row whose
+// file now belongs to a page session.)
+const dataVersion = 127
 
 const tokenCoverageRepairStatsKey = "token_coverage_repair_v1"
 
@@ -2178,6 +2184,14 @@ func legacySchemaColumnMigrations() []schemaColumnMigration {
 func schemaColumnMigrations() []schemaColumnMigration {
 	return []schemaColumnMigration{
 		{"excluded_sessions", "file_path", "ALTER TABLE excluded_sessions ADD COLUMN file_path TEXT"},
+		{
+			"sessions", "trash_includes_codex_pages",
+			"ALTER TABLE sessions ADD COLUMN trash_includes_codex_pages INTEGER NOT NULL DEFAULT 0",
+		},
+		{
+			"excluded_sessions", "include_codex_pages",
+			"ALTER TABLE excluded_sessions ADD COLUMN include_codex_pages INTEGER NOT NULL DEFAULT 0",
+		},
 		{
 			"session_project_assignments", "original_project",
 			"ALTER TABLE session_project_assignments ADD COLUMN original_project TEXT NOT NULL DEFAULT '';" +
