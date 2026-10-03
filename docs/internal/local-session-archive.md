@@ -95,12 +95,13 @@ contain credentials.
 
 Restore permanently marks the staged database as archive-only before publishing
 it. Every subsequent foreground or background start skips provider watchers,
-automatic sync and filesystem project discovery. Manual source sync, source
-transfer, artifact exchange and mirror publication are refused. Read commands,
-curation, archive import, extraction, backup and explicit archive reparse remain
-available. The flag lives in SQLite and survives database rebuilds and backups;
-there is no flag or config setting to turn it off. Use a separate data directory
-with a fresh installation identity to collect new local sessions.
+automatic sync and filesystem project discovery. Manual source sync, transcript
+uploads, source transfer, artifact exchange and mirror publication are refused.
+Read commands, curation, archive import, extraction, backup and explicit archive
+reparse remain available. The flag lives in SQLite and survives database
+rebuilds and backups; there is no flag or config setting to turn it off. Use a
+separate data directory with a fresh installation identity to collect new local
+sessions.
 
 Merged Docbank [#741](https://github.com/kenn-io/docbank/pull/741) and
 [#764](https://github.com/kenn-io/docbank/pull/764), with Kit
