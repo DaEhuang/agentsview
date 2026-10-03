@@ -47,7 +47,8 @@ func PrepareLocalSource(
 		ProviderMetadata: map[parser.AgentType]map[string][]string{
 			agent: materializedProviderMetadataDirs(manifest, materialized, roots),
 		},
-		Machine: machine, Ephemeral: true, DiscardPendingWritesOnCancel: true,
+		ArchiveReparse: true,
+		Machine:        machine, Ephemeral: true, DiscardPendingWritesOnCancel: true,
 		DisableFilesystemProjectDiscovery: true, StableSourceSnapshots: true,
 		PathRewriter: paths.rewrite, StoredPathResolver: paths.resolve,
 	}}, nil

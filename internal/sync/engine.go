@@ -438,6 +438,10 @@ type Emitter interface {
 // EngineConfig holds the configuration needed by the sync
 // engine, replacing per-agent positional parameters.
 type EngineConfig struct {
+	// ArchiveReparse permits only the verified materialized inputs supplied by
+	// rawderive.PrepareLocalSource. It is not exposed in runtime configuration.
+	ArchiveReparse bool
+
 	AgentDirs      map[parser.AgentType][]string
 	SourceMachines map[parser.AgentType]map[string]string
 	// ProviderMetadata carries the resolved metadata directories used to
@@ -542,6 +546,8 @@ type EngineConfig struct {
 
 // Engine orchestrates session file discovery and sync.
 type Engine struct {
+	sourceSyncErr error
+
 	db    *db.DB
 	stat  func(string) (os.FileInfo, error)
 	lstat func(string) (os.FileInfo, error)
@@ -910,6 +916,22 @@ func NewEngine(ctx context.Context,
 	if cfg.ProviderFactories != nil {
 		providerFactories = append([]parser.ProviderFactory(nil), cfg.ProviderFactories...)
 	}
+	sourceSyncErr := database.RequireSourceSync(ctx)
+	if errors.Is(sourceSyncErr, db.ErrArchiveOnly) && cfg.ArchiveReparse {
+		sourceSyncErr = nil
+	}
+	if sourceSyncErr != nil {
+		// No provider may discover default roots, even during a parser rebuild or
+		// after source reconfiguration. Disabled providers retain their old rows.
+		cfg.DisabledAgents = nil
+		for _, factory := range providerFactories {
+			cfg.DisabledAgents = append(cfg.DisabledAgents, factory.Definition().Type)
+		}
+		cfg.AgentDirs = nil
+		cfg.SourceMachines = nil
+		cfg.ProviderMetadata = nil
+		cfg.DisableFilesystemProjectDiscovery = true
+	}
 	providerModes := parser.ProviderMigrationModes()
 	if cfg.ProviderMigrationModes != nil {
 		maps.Copy(providerModes, cfg.ProviderMigrationModes)
@@ -996,6 +1018,7 @@ func NewEngine(ctx context.Context,
 			return newReconciliationSpool(ctx, path)
 		},
 	}
+	e.sourceSyncErr = sourceSyncErr
 	e.sourceSet.Store(newEngineSources(providerFactories, SourceConfig{
 		AgentDirs:        cfg.AgentDirs,
 		SourceMachines:   cfg.SourceMachines,
@@ -1893,6 +1916,9 @@ func (e *Engine) ReparsePathsContext(ctx context.Context, paths []string) error 
 }
 
 func (e *Engine) syncPathsContext(ctx context.Context, paths []string, force bool) error {
+	if e.sourceSyncErr != nil {
+		return e.sourceSyncErr
+	}
 	if e.refuseWriteInForceParse("SyncPaths") {
 		return nil
 	}
@@ -3025,6 +3051,9 @@ func (e *Engine) resyncBuildLocked(
 	ctx context.Context, onProgress ProgressFunc, opts RebuildOptions,
 	ops rebuildOperations, restoreActiveWriterOnAbort bool,
 ) (stats SyncStats, retErr error) {
+	if e.sourceSyncErr != nil && (!errors.Is(e.sourceSyncErr, db.ErrArchiveOnly) || len(opts.Contributors) > 0) {
+		return SyncStats{Aborted: true}, e.sourceSyncErr
+	}
 	e.clearPiebaldFailureMemo()
 	defer e.clearPiebaldFailureMemo()
 	// Rebuild tombstones and links commit only inside the replacement, and every
@@ -4360,6 +4389,9 @@ func (e *Engine) SyncThenRun(
 	onProgress ProgressFunc,
 	work func(forceFull bool) error,
 ) (stats SyncStats, err error) {
+	if e.sourceSyncErr != nil {
+		return SyncStats{Aborted: true}, e.sourceSyncErr
+	}
 	if e.refuseWriteInForceParse("SyncThenRun") {
 		return SyncStats{}, nil
 	}
@@ -4459,6 +4491,9 @@ func (e *Engine) SyncThenRunWithRebuild(
 	rebuildDone func(SyncStats, error),
 	work func(forceFull, rebuilt bool) error,
 ) (stats SyncStats, retErr error) {
+	if e.sourceSyncErr != nil {
+		return SyncStats{Aborted: true}, e.sourceSyncErr
+	}
 	if e.refuseWriteInForceParse("SyncThenRunWithRebuild") {
 		return SyncStats{}, nil
 	}
@@ -5143,6 +5178,9 @@ func (e *Engine) reconcileScopedWatchRootsLocked(
 	ctx context.Context, agent parser.AgentType, roots []string, full, force bool,
 	onProgress ProgressFunc,
 ) (SyncStats, int, passEpilogueEligibility, error) {
+	if e.sourceSyncErr != nil {
+		return SyncStats{Aborted: true}, 0, passEpilogueEligibility{}, e.sourceSyncErr
+	}
 	e.reportProgress(onProgress, Progress{
 		Phase:  PhaseDiscovering,
 		Detail: "Reconciling watched session roots",
@@ -7854,6 +7892,9 @@ func (e *Engine) syncAllLocked(
 	scope *rootSyncScope, writeMode syncWriteMode, recordSyncState bool,
 	forceDiscoveredFiles bool,
 ) (stats SyncStats) {
+	if e.sourceSyncErr != nil && e.archiveStore == nil {
+		return SyncStats{Aborted: true, Warnings: []string{e.sourceSyncErr.Error()}}
+	}
 	if ctx.Err() != nil {
 		return SyncStats{Aborted: true}
 	}
@@ -11421,6 +11462,9 @@ func (e *Engine) processFile(
 	ctx context.Context,
 	file parser.DiscoveredFile,
 ) processResult {
+	if e.sourceSyncErr != nil {
+		return processResult{err: e.sourceSyncErr}
+	}
 	if res, ok := e.processProviderFile(ctx, file); ok {
 		return res
 	}
@@ -17140,6 +17184,9 @@ func (e *Engine) BackfillSignalComputer() func(context.Context, string) error {
 // stored session metadata. Candidate selection and progress are durable, while
 // filesystem and Git discovery happen here so database startup remains cheap.
 func (e *Engine) BackfillProjectIdentitySnapshots(ctx context.Context) error {
+	if e.sourceSyncErr != nil {
+		return e.sourceSyncErr
+	}
 	if e.refuseWriteInForceParse("BackfillProjectIdentitySnapshots") {
 		return errors.New(
 			"BackfillProjectIdentitySnapshots refused on report-only parse-diff engine",
@@ -20539,6 +20586,9 @@ func (e *Engine) SyncSingleSession(sessionID string) (err error) {
 func (e *Engine) SyncSingleSessionContext(
 	ctx context.Context, sessionID string,
 ) (err error) {
+	if e.sourceSyncErr != nil {
+		return e.sourceSyncErr
+	}
 	if e.refuseWriteInForceParse("SyncSingleSession") {
 		return fmt.Errorf(
 			"cannot sync session %s on a report-only (parse-diff) engine",

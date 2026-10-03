@@ -6,10 +6,8 @@ command limits live in [the CLI reference](../commands.md#agentsview-archive).
 The approved
 [multi-machine archive design](../superpowers/specs/2026-09-30-multi-machine-session-archive-design.md)
 defines source attribution, artifact/raw identity matching and recovery.
-Portable recovery is implemented here; multi-machine collection and persisted
-archive-only mode remain unimplemented. Do not start this experimental restore
-as a collector on a machine with live provider files until archive-only mode is
-implemented.
+Portable recovery and persisted archive-only mode are implemented here.
+Multi-machine collection and source identity mapping remain unimplemented.
 
 ## Storage and reuse
 
@@ -62,9 +60,10 @@ one source at a time bounds source scratch usage; the database copy and WAL need
 additional disk space. Explicit batches can be retried after interruption.
 
 Full resync carries durable raw records with other archive state and copies
-sessions whose original sources are absent. The existing empty-discovery abort
-remains in force. Accepted archived sources are not automatically reparsed on a
-parser-version bump.
+stored sessions. For an archive-only database, every live provider is disabled
+during the rebuild, even when its original paths exist on the receiving host.
+Accepted archived sources are not automatically reparsed on a parser-version
+bump.
 
 ## Recovery
 
@@ -92,8 +91,16 @@ extraction provides access to supplemental files too.
 The original runtime config is omitted. Only content/image retention policy and
 the original display label return; local authentication is regenerated and the
 host binds to loopback. Previously retained raw content is not redacted and may
-contain credentials. Persisted archive-only mode is still required before
-starting a restored collector on a receiving machine.
+contain credentials.
+
+Restore permanently marks the staged database as archive-only before publishing
+it. Every subsequent foreground or background start skips provider watchers,
+automatic sync and filesystem project discovery. Manual source sync, source
+transfer, artifact exchange and mirror publication are refused. Read commands,
+curation, archive import, extraction, backup and explicit archive reparse remain
+available. The flag lives in SQLite and survives database rebuilds and backups;
+there is no flag or config setting to turn it off. Use a separate data directory
+with a fresh installation identity to collect new local sessions.
 
 Merged Docbank [#741](https://github.com/kenn-io/docbank/pull/741) and
 [#764](https://github.com/kenn-io/docbank/pull/764), with Kit

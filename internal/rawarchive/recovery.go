@@ -16,7 +16,6 @@ import (
 
 	"go.kenn.io/agentsview/internal/config"
 	"go.kenn.io/agentsview/internal/db"
-	"go.kenn.io/agentsview/internal/parser"
 	syncer "go.kenn.io/agentsview/internal/sync"
 	"go.kenn.io/docbank"
 	"go.kenn.io/kit/atomicfile"
@@ -364,6 +363,9 @@ func verifyRestoredArchive(ctx context.Context, path string, settings RecoverySe
 		return report, err
 	}
 	defer func() { retErr = errors.Join(retErr, database.Close()) }()
+	if err := database.EnableArchiveOnly(ctx); err != nil {
+		return report, fmt.Errorf("marking restored archive: %w", err)
+	}
 	database.SetArchiveContent(settings.ArchiveContent)
 	database.SetToolResultImages(settings.ToolResultImages)
 	var integrity string
@@ -385,11 +387,7 @@ func verifyRestoredArchive(ctx context.Context, path string, settings RecoverySe
 		return report, err
 	}
 	if database.NeedsResync() {
-		var disabled []parser.AgentType
-		for _, def := range parser.Registry {
-			disabled = append(disabled, def.Type)
-		}
-		engine := syncer.NewEngine(ctx, database, syncer.EngineConfig{Ephemeral: true, DisabledAgents: disabled, DisableFilesystemProjectDiscovery: true})
+		engine := syncer.NewEngine(ctx, database, syncer.EngineConfig{Ephemeral: true, ArchiveContent: settings.ArchiveContent})
 		stats, buildErr := engine.ResyncAllWithOptions(ctx, nil, syncer.RebuildOptions{})
 		engine.Close()
 		if buildErr != nil {

@@ -116,9 +116,12 @@ for the restored data and temporary complete copies of large extras.
 Original runtime configuration and connection credentials are not copied from
 configuration. Restore generates fresh local authentication and loopback settings.
 Previously retained raw files are preserved without redaction and may contain
-credentials. This branch does not yet enforce persisted archive-only mode: do not
-start a restored collector on a host with live provider files. Offline archive
-verification, extraction and explicit reparse are available.
+credentials. Restored databases are permanently archive-only: foreground starts,
+background starts and restarts do not scan the receiving machine. Ordinary sync,
+source transfers, artifact exchange, mirror publication and raw-sync watch are
+refused. Browsing, curation, archive import, verification, extraction, backup and
+explicit reparse remain available. Use a separate data directory to collect new
+local sessions; no runtime flag or config setting disables archive-only mode.
 
 Startup resync keeps archive-only sessions and their acceptance records without
 opening the raw vault. Reparsing them always requires an explicit command.

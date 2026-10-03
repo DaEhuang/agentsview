@@ -812,6 +812,9 @@ func (b *localArchiveWriteBackend) ReplicaPush(
 	projects []string,
 	excludeProjects []string,
 ) (storage.PushResult, error) {
+	if err := b.database.RequireSourceSync(ctx); err != nil {
+		return storage.PushResult{}, err
+	}
 	display := backend.DisplayName()
 	didResync, err := runLocalSyncAuthoritative(
 		ctx, b.appCfg, b.database, cfg.Full,
@@ -892,6 +895,9 @@ func (b *localArchiveWriteBackend) duckDBPush(
 	projects []string,
 	excludeProjects []string,
 ) (storage.MirrorPushResult, error) {
+	if err := b.database.RequireSourceSync(ctx); err != nil {
+		return storage.MirrorPushResult{}, err
+	}
 	if err := mirrorBackend.ValidatePushTarget(duckCfg); err != nil {
 		return storage.MirrorPushResult{}, err
 	}
@@ -984,6 +990,12 @@ func (b *localArchiveWriteBackend) DuckDBPushWatch(
 	debounce time.Duration,
 	interval time.Duration,
 ) error {
+	if err := b.database.RequireSourceSync(ctx); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		return err
+	}
 	if interval <= 0 {
 		interval = defaultWatchInterval
 	}
@@ -1118,6 +1130,12 @@ func (b *localArchiveWriteBackend) ReplicaPushWatch(
 	debounce time.Duration,
 	interval time.Duration,
 ) error {
+	if err := b.database.RequireSourceSync(ctx); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		return err
+	}
 	if interval <= 0 {
 		interval = defaultWatchInterval
 	}

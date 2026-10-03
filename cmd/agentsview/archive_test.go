@@ -241,9 +241,9 @@ func TestArchiveMoveAndReparse(t *testing.T) {
 	stats, err := engine.ResyncAllWithOptions(ctx, nil, syncer.RebuildOptions{})
 	engine.Close()
 	require.NoError(t, err)
-	assert.True(t, stats.Aborted)
+	assert.True(t, stats.ArchiveRebuilt)
 	check()
-	// Once a live source exists, exercise the actual replacement database swap.
+	// A receiving-host source must remain absent after the replacement swap.
 	liveRoot := t.TempDir()
 	newID := "019eb791-cf7d-75c1-8439-9ed74c122e03"
 	dbtest.WriteTestFile(t, filepath.Join(liveRoot, "project-b", newID+".jsonl"), []byte(testjsonl.NewSessionBuilder().AddClaudeUserWithSessionID("2026-02-01T00:00:00Z", "new machine session", newID).String()))
@@ -252,6 +252,10 @@ func TestArchiveMoveAndReparse(t *testing.T) {
 	engine.Close()
 	require.NoError(t, err)
 	require.True(t, stats.ArchiveRebuilt)
+	receiving, err := database.GetSessionFull(ctx, newID)
+	require.NoError(t, err)
+	assert.Nil(t, receiving)
+	require.ErrorIs(t, database.RequireSourceSync(ctx), db.ErrArchiveOnly)
 	check()
 	require.NoError(t, database.Close())
 	// The accepted ledger by itself is not a backup. Missing raw bytes must be
