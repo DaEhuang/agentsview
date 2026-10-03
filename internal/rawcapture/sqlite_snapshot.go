@@ -285,3 +285,46 @@ func sqliteSnapshotReservationBytes(snapshotBytes int64) int64 {
 	}
 	return snapshotBytes + metadata
 }
+
+// SnapshotSQLite makes a standalone online backup without the upload spool.
+// The caller owns a private destination directory. Existing files are refused.
+func SnapshotSQLite(ctx context.Context, sourcePath, destination string, expected os.FileInfo) (retErr error) {
+	info, err := os.Lstat(sourcePath)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("SQLite source must be a regular file")
+	}
+	source, err := openSQLiteSnapshotSource(ctx, sourcePath, expected)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, source.Close()) }()
+	f, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	defer func() {
+		if retErr != nil {
+			_ = os.Remove(destination)
+		}
+	}()
+	backupCtx, cancel := context.WithTimeout(ctx, sqliteBackupTimeout)
+	defer cancel()
+	if err := sqliteOnlineBackup(backupCtx, source.connection, destination, math.MaxInt64); err != nil {
+		return err
+	}
+	standalone, err := sql.Open(sqliteSnapshotDriverName, sqliteSnapshotDSN(destination, false))
+	if err != nil {
+		return err
+	}
+	_, err = standalone.ExecContext(backupCtx, "PRAGMA journal_mode=DELETE")
+	if err = errors.Join(err, standalone.Close()); err != nil {
+		return err
+	}
+	return source.verifyCurrent()
+}

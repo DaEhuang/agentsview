@@ -22,28 +22,33 @@ import (
 // ImportSpec binds immutable capture directories to their original identities.
 // Paths may change between imports; IDs and OriginalPath must not.
 type ImportSpec struct {
-	DeviceID string     `json:"device_id"`
-	Machine  string     `json:"machine"`
-	Roots    []RootSpec `json:"roots"`
+	DeviceID      string     `json:"device_id"`
+	Machine       string     `json:"machine"`
+	Roots         []RootSpec `json:"roots"`
+	capture       *CaptureDescriptor
+	inventory     []CaptureFile
+	inventoryData []byte
 }
 type RootSpec struct {
-	ID           string   `json:"id"`
-	Provider     string   `json:"provider"`
-	Path         string   `json:"path"`
-	OriginalPath string   `json:"original_path"`
-	SessionDirs  []string `json:"session_dirs,omitempty"`
+	ID             string   `json:"id"`
+	Provider       string   `json:"provider"`
+	Path           string   `json:"path"`
+	OriginalPath   string   `json:"original_path"`
+	ConfiguredPath string   `json:"configured_path,omitempty"`
+	SessionDirs    []string `json:"session_dirs,omitempty"`
 }
 
-func LoadImportSpec(path string) (ImportSpec, error) {
-	f, err := os.Open(path)
+func LoadImportSpec(ctx context.Context, path string) (ImportSpec, error) {
+	descriptor, inventory, err := readCapture(ctx, path)
 	if err != nil {
 		return ImportSpec{}, err
 	}
-	defer f.Close()
-	var spec ImportSpec
-	if err := json.UnmarshalRead(io.LimitReader(f, 1<<20), &spec, json.RejectUnknownMembers(true)); err != nil {
-		return spec, err
+	if err := descriptor.Preflight.projectionError(); err != nil {
+		return ImportSpec{}, err
 	}
+	spec := descriptor.Source
+	spec.capture, spec.inventory, spec.inventoryData = &descriptor, inventory.Files, inventory.data
+	spec.Roots = slices.Clone(spec.Roots)
 	for i := range spec.Roots {
 		if !filepath.IsAbs(spec.Roots[i].Path) {
 			spec.Roots[i].Path = filepath.Join(filepath.Dir(path), spec.Roots[i].Path)
@@ -57,6 +62,14 @@ func LoadImportSpec(path string) (ImportSpec, error) {
 // immutable capture. Unsupported files remain supplemental and are recoverable.
 func (a *Archive) Import(ctx context.Context, spec ImportSpec) (Report, error) {
 	var report Report
+	if spec.capture != nil {
+		report.CaptureID = spec.capture.CaptureID
+		report.Preflight = &spec.capture.Preflight
+	}
+	expected := make(map[string]CaptureFile, len(spec.inventory))
+	for _, file := range spec.inventory {
+		expected[file.RootID+"/"+file.Path] = file
+	}
 	identity, err := rawsync.NewAuthIdentity(a.tenant, spec.DeviceID)
 	if err != nil {
 		return report, err
@@ -125,6 +138,13 @@ func (a *Archive) Import(ctx context.Context, spec ImportSpec) (Report, error) {
 			if ref.Length != info.Size() {
 				return errors.New("capture changed while hashing")
 			}
+			if spec.capture != nil {
+				want, ok := expected[input.ID+"/"+filepath.ToSlash(rel)]
+				if !ok || want.SHA256 != ref.SHA256 || want.Size != ref.Length {
+					return errors.New("capture changed after inventory verification")
+				}
+				delete(expected, input.ID+"/"+filepath.ToSlash(rel))
+			}
 			if _, err = f.Seek(0, io.SeekStart); err != nil {
 				return err
 			}
@@ -154,6 +174,14 @@ func (a *Archive) Import(ctx context.Context, spec ImportSpec) (Report, error) {
 		})
 		if err != nil {
 			return report, fmt.Errorf("retaining root %s: %w", input.ID, err)
+		}
+	}
+	if len(expected) > 0 {
+		return report, errors.New("capture files disappeared after verification")
+	}
+	if spec.capture != nil {
+		if err := a.retainCaptureEvidence(ctx, spec); err != nil {
+			return report, err
 		}
 	}
 	for _, input := range spec.Roots {

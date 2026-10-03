@@ -58,18 +58,20 @@ func (a *Archive) report(message string) {
 
 // Report distinguishes custody from provider and parser coverage.
 type Report struct {
-	Roots            int      `json:"roots"`
-	Files            int      `json:"files"`
-	Bytes            int64    `json:"bytes"`
-	Sources          int      `json:"sources"`
-	Parsed           int      `json:"parsed"`
-	Supplemental     int      `json:"supplemental"`
-	Gaps             []string `json:"gaps,omitempty"`
-	RepositoryID     string   `json:"repository_id,omitempty"`
-	SnapshotID       string   `json:"snapshot_id,omitempty"`
-	MinReaderVersion int      `json:"min_reader_version,omitempty"`
-	ReaderBuild      string   `json:"reader_build,omitempty"`
-	Excluded         []string `json:"excluded,omitempty"`
+	CaptureID        string            `json:"capture_id,omitempty"`
+	Preflight        *CapturePreflight `json:"preflight,omitempty"`
+	Roots            int               `json:"roots"`
+	Files            int               `json:"files"`
+	Bytes            int64             `json:"bytes"`
+	Sources          int               `json:"sources"`
+	Parsed           int               `json:"parsed"`
+	Supplemental     int               `json:"supplemental"`
+	Gaps             []string          `json:"gaps,omitempty"`
+	RepositoryID     string            `json:"repository_id,omitempty"`
+	SnapshotID       string            `json:"snapshot_id,omitempty"`
+	MinReaderVersion int               `json:"min_reader_version,omitempty"`
+	ReaderBuild      string            `json:"reader_build,omitempty"`
+	Excluded         []string          `json:"excluded,omitempty"`
 }
 
 type contextReader struct {

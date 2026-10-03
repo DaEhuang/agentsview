@@ -6,8 +6,24 @@ command limits live in [the CLI reference](../commands.md#agentsview-archive).
 The approved
 [multi-machine archive design](../superpowers/specs/2026-09-30-multi-machine-session-archive-design.md)
 defines source attribution, artifact/raw identity matching and recovery.
-Portable recovery and persisted archive-only mode are implemented here.
-Multi-machine collection and source identity mapping remain unimplemented.
+Portable capture, recovery and persisted archive-only mode are implemented here.
+Seed assembly and multi-machine source identity mapping remain unimplemented.
+
+## Source capture
+
+`archive capture` writes an immutable package with source identity, root
+bindings, a checksummed inventory and a closed application database. It reuses
+the raw capturer's online SQLite backup without its upload spool budget, and
+reads only allowlisted identity/receipt fields from raw-sync checkpoints.
+Configuration loading and source database reads never migrate the source.
+
+A digest binds the inventory to its source and root identities. Import checks
+all captured files and rechecks each file against that inventory while storing
+it. The descriptor and exact inventory are retained as supplemental evidence.
+Curation counts come from the closed database, not its live predecessor. The
+current importer refuses unknown preflight, deletion evidence and artifact
+history until source mapping can honor those inputs. Ordinary-vault capture also
+remains blocked on upstream stopped-owner custody support.
 
 ## Storage and reuse
 

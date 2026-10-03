@@ -11,7 +11,8 @@ description: All AgentsView commands, flags, and environment variables
 These commands are under development and are not in the latest release. They
 retain a closed capture from one machine, recover its original files, and
 reparse Claude and Codex sessions after the original directories are gone.
-Stop the daemon first. Archive writes refuse to run while another process owns
+`capture` can snapshot live sources. Stop the destination daemon before import,
+reparse, backup or extraction. Those archive writes refuse to run while another process owns
 the database.
 
 Set `AGENTSVIEW_DATA_DIR` to an isolated working archive. Seed its `sessions.db`
@@ -20,46 +21,51 @@ curation. Keep `telemetry-install-id`, `assets`, and any existing `artifacts`
 with it. Older or alternate databases can be retained as supplemental files;
 these commands do not merge them into the main database.
 
-Create an import specification:
-
-```json
-{
-  "device_id": "original-device",
-  "machine": "original-machine-label",
-  "roots": [
-    {
-      "id": "claude-home",
-      "provider": "claude",
-      "path": "./capture/claude",
-      "original_path": "/home/example/.claude",
-      "session_dirs": ["projects"]
-    },
-    {
-      "id": "codex-home",
-      "provider": "codex",
-      "path": "./capture/codex",
-      "original_path": "/home/example/.codex",
-      "session_dirs": ["sessions", "archived_sessions"]
-    },
-    {
-      "id": "other-files",
-      "provider": "files",
-      "path": "./capture/other-files",
-      "original_path": "/home/example/other-files"
-    }
-  ]
-}
-```
-
-`path` is relative to the specification file unless absolute. It can change
-when a drive moves. List only `session_dirs` present in the capture. Keep the
-device, root IDs, original paths, and machine label unchanged on retries. Inputs must be immutable captures with regular files;
-symlinks and special files are rejected. Take consistent SQLite snapshots before
-importing provider databases. Import does not stop provider writers or create a
-capture of their live directories.
+Create a capture on the source machine. Select roots explicitly; `files` retains
+supplemental trees without parsing them:
 
 ```bash
-agentsview archive import --spec ./import.json
+agentsview archive capture /media/backup/source-capture \
+  --root claude="$HOME/.claude/projects" \
+  --root codex="$HOME/.codex/sessions" \
+  --root files=/path/to/supplemental-history
+```
+
+The standard Claude `projects` and Codex `sessions`/`archived_sessions` roots
+include their parent directory to retain companion files. Only the selected
+session directory is parsed. Selecting a provider home includes its existing
+conventional session directories. No other home-directory scanning occurs.
+
+Capture reads the installation ID without creating one in the source. It reuses
+known raw-sync root IDs. When it generates identities, the JSON report lists
+them under `new_identities`; pass `--identity-from PREVIOUS/capture.json` on
+subsequent captures to reuse them. A previous descriptor from another
+installation, or conflicting checkpoint identities, causes an error.
+
+Regular files are streamed and checked. SQLite databases use online backups,
+including committed WAL contents. Symlinks, special files and recognized
+credential/settings files are omitted and listed. Original application config
+is replaced by allowlisted recovery settings. This does not redact transcripts
+or database content. An ordinary artifact vault currently prevents capture;
+its stopped-owner copying support is still required.
+If the source already contains a raw archive, use `archive backup` to preserve
+its vault as well as its database; `capture` refuses that input.
+
+`--writers-stopped` records your attestation that source writers were stopped;
+it does not stop them. A rolling capture is not a final retirement cutoff.
+The destination must be new and outside the selected inputs. Failed captures
+are not published. The completed directory contains `capture.json`, a hashed
+inventory and root-relative files; move the directory as a whole.
+
+Import verifies the generated descriptor and every file before accepting
+sources. Handwritten import specifications are no longer accepted. The capture
+and import reports include counts from the captured database. Missing or
+unsupported preflight data, deletions, artifact origins/imports or qualified
+session IDs currently block import pending source-mapping support. Other
+curation is retained in the captured database but is not merged by import.
+
+```bash
+agentsview archive import --spec /media/backup/source-capture/capture.json
 agentsview archive sources
 agentsview archive verify
 agentsview archive backup /media/backup/repository

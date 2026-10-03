@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/agentsview/internal/config"
@@ -14,12 +15,41 @@ import (
 
 func newArchiveCommand() *cobra.Command {
 	command := &cobra.Command{Use: "archive", Short: "Retain original session files, reparse them, and move a complete archive", GroupID: groupData}
+	var captureRoots []string
+	var identityFrom string
+	var writersStopped bool
+	captureCmd := &cobra.Command{Use: "capture DESTINATION", Short: "Copy source files and consistent databases into a new portable capture", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.LoadReadOnly()
+		if err != nil {
+			return err
+		}
+		var roots []rawarchive.RootSpec
+		for _, value := range captureRoots {
+			provider, path, ok := strings.Cut(value, "=")
+			if !ok || path == "" {
+				return errors.New("--root requires PROVIDER=PATH")
+			}
+			roots = append(roots, rawarchive.RootSpec{Provider: provider, Path: path})
+		}
+		report, err := rawarchive.Capture(cmd.Context(), rawarchive.CaptureOptions{
+			Destination: args[0], DataDir: cfg.DataDir, Roots: roots, IdentityFrom: identityFrom,
+			WritersStopped: writersStopped, ReaderBuild: version, Progress: archiveProgress(cmd),
+			Settings: rawarchive.RecoverySettings{ArchiveContent: cfg.ArchiveContent, ToolResultImages: cfg.ToolResultImages, LocalMachineName: cfg.LocalMachineName},
+		})
+		if err != nil {
+			return err
+		}
+		return writeArchiveJSON(cmd.OutOrStdout(), report)
+	}}
+	captureCmd.Flags().StringArrayVar(&captureRoots, "root", nil, "Source root: claude=PATH, codex=PATH or files=PATH (repeatable, required)")
+	captureCmd.Flags().StringVar(&identityFrom, "identity-from", "", "Previous capture.json whose generated identities should be reused")
+	captureCmd.Flags().BoolVar(&writersStopped, "writers-stopped", false, "Record that the operator stopped source writers before capture")
 	var specPath string
 	importCmd := &cobra.Command{Use: "import", Short: "Import an immutable capture with explicit original device and root identities", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		if specPath == "" {
 			return errors.New("--spec is required")
 		}
-		spec, err := rawarchive.LoadImportSpec(specPath)
+		spec, err := rawarchive.LoadImportSpec(cmd.Context(), specPath)
 		if err != nil {
 			return err
 		}
@@ -121,7 +151,7 @@ func newArchiveCommand() *cobra.Command {
 			return errors.Join(err, writeArchiveJSON(cmd.OutOrStdout(), report))
 		})
 	}}
-	command.AddCommand(importCmd, reparseCmd, verifyCmd, sourcesCmd, backupCmd, restoreCmd, extractCmd)
+	command.AddCommand(captureCmd, importCmd, reparseCmd, verifyCmd, sourcesCmd, backupCmd, restoreCmd, extractCmd)
 	return command
 }
 
