@@ -76,6 +76,9 @@ func (a *Archive) Backup(ctx context.Context, target string, settings RecoverySe
 	if report, err = a.Verify(ctx); err != nil {
 		return report, err
 	}
+	if err := a.database.VerifyAssets(ctx, filepath.Join(source, "assets")); err != nil {
+		return report, err
+	}
 	scratch, err := os.MkdirTemp(source, ".archive-backup-")
 	if err != nil {
 		return report, err
@@ -140,6 +143,9 @@ func (a *Archive) Backup(ctx context.Context, target string, settings RecoverySe
 		if err != nil {
 			return report, err
 		}
+	}
+	if pathsOverlap(source, repository.Root()) {
+		return report, errors.New("backup repository must be outside the archive data directory")
 	}
 	snapshot, err := a.repository.CreateBackup(ctx, repository, docbank.BackupOptions{
 		ExtraFiles: extras,
@@ -373,6 +379,9 @@ func verifyRestoredArchive(ctx context.Context, path string, settings RecoverySe
 	}
 	defer func() { retErr = errors.Join(retErr, archive.Close()) }()
 	if report, err = archive.Verify(ctx); err != nil {
+		return report, err
+	}
+	if err := database.VerifyAssets(ctx, filepath.Join(path, "assets")); err != nil {
 		return report, err
 	}
 	if database.NeedsResync() {

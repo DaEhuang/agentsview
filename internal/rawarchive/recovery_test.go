@@ -6,12 +6,15 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/agentsview/internal/assets"
 	"go.kenn.io/agentsview/internal/db"
 	"go.kenn.io/agentsview/internal/dbtest"
+	"go.kenn.io/docbank"
 )
 
 // The default crosses the recipe boundary. Run with
@@ -77,4 +80,50 @@ func TestRecoveryLargeApplicationExtra(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, size, n)
 	assert.Equal(t, want.Sum(nil), got.Sum(nil))
+}
+
+func TestRecoveryRejectsRepositorySymlinkInsideSource(t *testing.T) {
+	ctx := t.Context()
+	data := t.TempDir()
+	database, err := db.OpenIsolatedContext(ctx, filepath.Join(data, "sessions.db"))
+	require.NoError(t, err)
+	defer database.Close()
+	archive, err := Open(ctx, database, data, nil)
+	require.NoError(t, err)
+	defer archive.Close()
+	dbtest.WriteTestFile(t, filepath.Join(data, "telemetry-install-id"), []byte("019eb791cf7d75c184399ed74c122e04"))
+	target := filepath.Join(data, "backups")
+	repository, err := docbank.InitBackupRepository(target)
+	require.NoError(t, err)
+	alias := filepath.Join(t.TempDir(), "backup-link")
+	require.NoError(t, os.Symlink(target, alias))
+	_, err = archive.Backup(ctx, alias, RecoverySettings{LocalMachineName: "source-device"}, "test")
+	require.ErrorContains(t, err, "outside the archive data directory")
+	snapshots, err := repository.Snapshots()
+	require.NoError(t, err)
+	assert.Empty(t, snapshots)
+}
+
+func TestRecoveryRejectsMissingReferencedAsset(t *testing.T) {
+	ctx := t.Context()
+	data := t.TempDir()
+	database, err := db.OpenIsolatedContext(ctx, filepath.Join(data, "sessions.db"))
+	require.NoError(t, err)
+	defer database.Close()
+	archive, err := Open(ctx, database, data, nil)
+	require.NoError(t, err)
+	defer archive.Close()
+	dbtest.WriteTestFile(t, filepath.Join(data, "telemetry-install-id"), []byte("019eb791cf7d75c184399ed74c122e04"))
+	ref, _, err := assets.Put(filepath.Join(data, "assets"), "image/png", []byte("synthetic image"))
+	require.NoError(t, err)
+	require.NoError(t, database.UpsertSession(ctx, db.Session{ID: "example", Agent: "chatgpt", Project: "example", Machine: "source-device"}))
+	require.NoError(t, database.InsertMessages(ctx, []db.Message{{SessionID: "example", Ordinal: 0, Role: "user", Content: "![image](" + ref + ")"}}))
+	require.NoError(t, os.Remove(filepath.Join(data, "assets", strings.TrimPrefix(ref, "asset://"))))
+	settings := RecoverySettings{LocalMachineName: "source-device"}
+	_, err = archive.Backup(ctx, filepath.Join(t.TempDir(), "backup"), settings, "test")
+	require.ErrorContains(t, err, "asset")
+	require.NoError(t, archive.Close())
+	require.NoError(t, database.Close())
+	_, err = verifyRestoredArchive(ctx, data, settings, nil)
+	assert.ErrorContains(t, err, "asset")
 }

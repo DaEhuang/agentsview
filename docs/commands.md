@@ -107,8 +107,9 @@ when the repository contains only one snapshot. Application extras over 64 MiB
 require Kit reader version 6; older binaries cannot use any part of that
 repository after it contains such a snapshot.
 
-Restore stages the selected snapshot and checks SQLite integrity and every
-accepted source object before publishing a new directory. An older database is
+Restore stages the selected snapshot and checks SQLite integrity, every
+accepted source object, and referenced message/tool images before publishing a
+new directory. Missing or corrupt referenced images also prevent backup. An older database is
 rebuilt from its stored sessions with all live providers disabled. Allow space
 for the restored data and temporary complete copies of large extras.
 

@@ -82,11 +82,12 @@ unmigrated. It must not be silently omitted from a recovery point. This
 limitation blocks complete recovery for archives that use that vault.
 
 Restore selects an exact snapshot, assembles a new data directory in private
-staging, checks SQLite integrity, and verifies every accepted manifest and
-inventoried raw object before publishing. A matching vault ID or bounded blob
-sample is insufficient. Restore upgrades an older database through the normal
-preserved-provider rebuild with every live provider disabled. Native extraction
-provides access to supplemental files too.
+staging, checks SQLite integrity, and verifies every accepted manifest,
+inventoried raw object and referenced message/tool image before publishing.
+Missing or corrupt referenced images also prevent backup. A matching vault ID or
+bounded blob sample is insufficient. Restore upgrades an older database through
+the normal preserved-provider rebuild with every live provider disabled. Native
+extraction provides access to supplemental files too.
 
 The original runtime config is omitted. Only content/image retention policy and
 the original display label return; local authentication is regenerated and the

@@ -33,6 +33,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
 	github.com/thlib/go-timezone-local v0.0.8
 	github.com/tidwall/gjson v1.19.0
+	github.com/yuin/goldmark v1.8.5
 	go.kenn.io/docbank v0.14.1-0.20261002225026-1fc83dc6a954
 	go.kenn.io/kit v0.30.2-0.20261002223014-711756d2a97d
 	go.yaml.in/yaml/v3 v3.0.5
@@ -165,7 +166,6 @@ require (
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	github.com/yuin/goldmark v1.8.5 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.8.0 // indirect
