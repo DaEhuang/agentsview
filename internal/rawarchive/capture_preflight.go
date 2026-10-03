@@ -53,17 +53,25 @@ func capturePreflight(ctx context.Context, path string) (CapturePreflight, error
 	return result, ctx.Err()
 }
 
-func (p CapturePreflight) projectionError() error {
+func (p CapturePreflight) importError(seed bool) error {
 	if p.DatabaseSHA256 == "" || len(p.Unknown) > 0 {
 		return errors.New("capture preflight is unknown; inspect the captured database before importing")
 	}
-	for _, key := range []string{"trashed", "deleted", "has_origin", "artifact_imports", "qualified_ids"} {
-		count, ok := p.Counts[key]
-		if !ok || count == nil {
+	for key := range captureCountQueries {
+		count := p.Counts[key]
+		if count == nil {
 			return errors.New("capture preflight is incomplete")
 		}
-		if *count != 0 {
-			return errors.New("capture contains deletion or artifact evidence; projection requires source mapping support before import")
+		if *count == 0 {
+			continue
+		}
+		switch key {
+		case "has_origin", "artifact_imports", "qualified_ids":
+			return errors.New("capture contains artifact evidence; artifact identity integration is required before import")
+		case "trashed", "deleted":
+			if !seed {
+				return errors.New("capture contains deletion evidence; foreign projection requires source mapping support before import")
+			}
 		}
 	}
 	return nil

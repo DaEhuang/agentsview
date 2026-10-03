@@ -6,8 +6,8 @@ command limits live in [the CLI reference](../commands.md#agentsview-archive).
 The approved
 [multi-machine archive design](../superpowers/specs/2026-09-30-multi-machine-session-archive-design.md)
 defines source attribution, artifact/raw identity matching and recovery.
-Portable capture, recovery and persisted archive-only mode are implemented here.
-Seed assembly and multi-machine source identity mapping remain unimplemented.
+Portable capture, seed assembly, recovery and persisted archive-only mode are
+implemented here. Multi-machine source identity mapping remains unimplemented.
 
 ## Source capture
 
@@ -21,9 +21,31 @@ A digest binds the inventory to its source and root identities. Import checks
 all captured files and rechecks each file against that inventory while storing
 it. The descriptor and exact inventory are retained as supplemental evidence.
 Curation counts come from the closed database, not its live predecessor. The
-current importer refuses unknown preflight, deletion evidence and artifact
+regular importer refuses unknown preflight, deletion evidence and artifact
 history until source mapping can honor those inputs. Ordinary-vault capture also
 remains blocked on upstream stopped-owner custody support.
+
+## Seed assembly
+
+`archive import --seed` builds a new data directory from the capture's complete
+application database, assets and installation identity. It verifies each copied
+stream against the inventory before opening the destination database. The source
+capture remains read-only. Seed trash and exclusions are allowed because their
+complete database state is preserved; unknown preflight and artifact history
+remain refusals.
+
+Assembly sets archive-only mode, retains raw originals through the existing
+importer, and uses recovery verification before the final no-replace rename. An
+older parser generation rebuilds from stored rows with live providers disabled.
+No source is automatically reparsed. Existing raw archive state in the seed is
+refused rather than cleared or detached from its vault.
+
+The seed preserves archive and session identities and machine aliases. A
+conflicting recorded installation owner is an error. Unresolved machine keys and
+counts are reported without assigning them to the seed installation. Runtime
+configuration comes from the same allowlist and fresh local authentication as
+restore. Foreign sources and their deletion mapping remain the next
+implementation slice.
 
 ## Storage and reuse
 

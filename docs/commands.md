@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-30
+last_edited: 2026-10-03
 title: CLI Reference
 description: All AgentsView commands, flags, and environment variables
 ---
@@ -15,11 +15,9 @@ reparse Claude and Codex sessions after the original directories are gone.
 reparse, backup or extraction. Those archive writes refuse to run while another process owns
 the database.
 
-Set `AGENTSVIEW_DATA_DIR` to an isolated working archive. Seed its `sessions.db`
-from a consistent backup of your main archive to retain existing history and
-curation. Keep `telemetry-install-id`, `assets`, and any existing `artifacts`
-with it. Older or alternate databases can be retained as supplemental files;
-these commands do not merge them into the main database.
+Use an isolated data directory for the receiving archive. Seed it from the
+capture of the installation being retired, as shown below. Older or alternate
+databases remain supplemental files; these commands do not merge databases.
 
 Create a capture on the source machine. Select roots explicitly; `files` retains
 supplemental trees without parsing them:
@@ -60,21 +58,45 @@ inventory and root-relative files; move the directory as a whole.
 Import verifies the generated descriptor and every file before accepting
 sources. Handwritten import specifications are no longer accepted. The capture
 and import reports include counts from the captured database. Missing or
-unsupported preflight data, deletions, artifact origins/imports or qualified
-session IDs currently block import pending source-mapping support. Other
-curation is retained in the captured database but is not merged by import.
+unsupported preflight data, artifact origins/imports or qualified session IDs
+block assembly pending identity integration.
+
+To preserve existing history and curation, create the archive with `--seed`:
 
 ```bash
-agentsview archive import --spec /media/backup/source-capture/capture.json
+AGENTSVIEW_DATA_DIR=/new/archive agentsview archive import --seed \
+  --spec /media/backup/source-capture/capture.json
+```
+
+The target must not exist and must be outside the capture. Seed import preserves
+the captured database, installation identity and assets, including session and
+message IDs, stars, pins, names, trash and permanent exclusions. It also retains
+the raw files. It checks the assembled archive before publishing the directory;
+a failed assembly leaves no partial destination. Allow space for the database,
+retained raw files and a temporary database copy if a rebuild is needed.
+
+Seed import enables archive-only mode before any rebuild or startup. It does
+not reparse sources or adopt historical machine names. The report's
+`unowned_machines` lists unresolved machine keys with session and worktree-rule
+counts; use `db adopt-machine` only for keys you explicitly own. An existing raw
+archive in the seed is refused; use its `archive backup` recovery point instead.
+
+Regular import adds custody to an existing archive. It does not merge curation,
+and currently refuses captures with deletions until source mapping can honor
+them. This version still accepts only one source installation per archive;
+foreign-machine import is not implemented yet.
+
+```bash
+export AGENTSVIEW_DATA_DIR=/new/archive
 agentsview archive sources
 agentsview archive verify
 agentsview archive backup /media/backup/repository
 # Use snapshot_id from the backup report for both commands:
 agentsview archive verify --repository /media/backup/repository --snapshot SNAPSHOT_ID
-agentsview archive restore /media/backup/repository /new/archive --snapshot SNAPSHOT_ID
-AGENTSVIEW_DATA_DIR=/new/archive agentsview archive verify
-AGENTSVIEW_DATA_DIR=/new/archive agentsview archive reparse --all
-AGENTSVIEW_DATA_DIR=/new/archive agentsview archive extract /new/native-files
+agentsview archive restore /media/backup/repository /restored/archive --snapshot SNAPSHOT_ID
+AGENTSVIEW_DATA_DIR=/restored/archive agentsview archive verify
+AGENTSVIEW_DATA_DIR=/restored/archive agentsview archive reparse --all
+AGENTSVIEW_DATA_DIR=/restored/archive agentsview archive extract /new/native-files
 ```
 
 Restore and extract require new destinations. Backup creates a repository or adds
@@ -120,9 +142,9 @@ rebuilt from its stored sessions with all live providers disabled. Allow space
 for the restored data and temporary complete copies of large extras.
 
 Original runtime configuration and connection credentials are not copied from
-configuration. Restore generates fresh local authentication and loopback settings.
+configuration. Seed import and restore generate fresh local authentication and loopback settings.
 Previously retained raw files are preserved without redaction and may contain
-credentials. Restored databases are permanently archive-only: foreground starts,
+credentials. Seeded and restored databases are permanently archive-only: foreground starts,
 background starts and restarts do not scan the receiving machine. Ordinary sync,
 source transfers, artifact exchange, mirror publication and raw-sync watch are
 refused. Browsing, curation, archive import, verification, extraction, backup and

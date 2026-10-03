@@ -39,11 +39,19 @@ type RootSpec struct {
 }
 
 func LoadImportSpec(ctx context.Context, path string) (ImportSpec, error) {
-	descriptor, inventory, err := readCapture(ctx, path)
+	spec, err := loadCaptureSpec(ctx, path)
 	if err != nil {
 		return ImportSpec{}, err
 	}
-	if err := descriptor.Preflight.projectionError(); err != nil {
+	if err := spec.capture.Preflight.importError(false); err != nil {
+		return ImportSpec{}, err
+	}
+	return spec, nil
+}
+
+func loadCaptureSpec(ctx context.Context, path string) (ImportSpec, error) {
+	descriptor, inventory, err := readCapture(ctx, path)
+	if err != nil {
 		return ImportSpec{}, err
 	}
 	spec := descriptor.Source

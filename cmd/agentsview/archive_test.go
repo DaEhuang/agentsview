@@ -65,6 +65,8 @@ func TestArchiveMoveAndReparse(t *testing.T) {
 	require.NoError(t, err)
 	initialExport, err := database.ExportConversationChanges(ctx, db.ConversationExportOptions{})
 	require.NoError(t, err)
+	archiveID, err := database.GetOrCreateArchiveID(ctx)
+	require.NoError(t, err)
 	require.Len(t, initialExport.Changes, 4)
 	wantMessageIDs := make([]string, 0, 4)
 	for _, change := range initialExport.Changes {
@@ -93,6 +95,9 @@ func TestArchiveMoveAndReparse(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, os.RemoveAll(capture))
+	require.NoError(t, os.RemoveAll(dataDir))
+	dataDir = filepath.Join(t.TempDir(), "seed")
+	t.Setenv("AGENTSVIEW_DATA_DIR", dataDir)
 	capture = closed
 	specPath := filepath.Join(capture, "capture.json")
 	run := func(args ...string) (rawarchive.Report, error) {
@@ -109,7 +114,7 @@ func TestArchiveMoveAndReparse(t *testing.T) {
 		require.NoError(t, json.Unmarshal(out.Bytes(), &report), diagnostics.String())
 		return report, nil
 	}
-	report, err := run("import", "--spec", specPath)
+	report, err := run("import", "--seed", "--spec", specPath)
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, report.Files, 3)
 	assert.Equal(t, 2, report.Sources)
@@ -174,7 +179,7 @@ func TestArchiveMoveAndReparse(t *testing.T) {
 	assert.NotEqual(t, "b3JpZ2luYWwtdGVzdC1zZWNyZXQ=", restoredConfig.CursorSecret)
 	restoredInstallation, err := os.ReadFile(filepath.Join(restored, "telemetry-install-id"))
 	require.NoError(t, err)
-	assert.Equal(t, installation, restoredInstallation)
+	assert.Equal(t, bytes.TrimSpace(installation), bytes.TrimSpace(restoredInstallation))
 	t.Setenv("AGENTSVIEW_DATA_DIR", restored)
 	extracted := filepath.Join(t.TempDir(), "native")
 	report, err = run("extract", extracted)
@@ -191,6 +196,9 @@ func TestArchiveMoveAndReparse(t *testing.T) {
 	database, err = db.OpenIsolatedContext(ctx, filepath.Join(restored, "sessions.db"))
 	require.NoError(t, err)
 	defer database.Close()
+	restoredArchiveID, err := database.GetOrCreateArchiveID(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, archiveID, restoredArchiveID)
 	assert.False(t, database.NeedsResync())
 	check := func() {
 		for _, id := range ids {

@@ -294,8 +294,7 @@ func loadRecovery(path string) (recoveryInventory, RecoverySettings, error) {
 	}
 	seen := map[string]bool{recoveryInventoryName: true}
 	for _, name := range inventory.Files {
-		allowed := name == "sessions.db" || name == "telemetry-install-id" || name == "telemetry-install-created" || name == "recovery-settings.json" || strings.HasPrefix(name, "assets/")
-		if !allowed || !fs.ValidPath(name) || strings.Contains(name, "\\") || seen[name] {
+		if !recoveryComponent(name) || !fs.ValidPath(name) || strings.Contains(name, "\\") || seen[name] {
 			return inventory, settings, errors.New("invalid or repeated recovery component")
 		}
 		seen[name] = true
@@ -331,6 +330,10 @@ func loadRecovery(path string) (recoveryInventory, RecoverySettings, error) {
 		return inventory, settings, err
 	}
 	return inventory, settings, errors.Join(settings.validate(), validateRecoveryIdentity(identity))
+}
+
+func recoveryComponent(name string) bool {
+	return name == "sessions.db" || name == "telemetry-install-id" || name == "telemetry-install-created" || name == "recovery-settings.json" || strings.HasPrefix(name, "assets/")
 }
 
 func validateRecoveryIdentity(data []byte) error {

@@ -45,9 +45,18 @@ func newArchiveCommand() *cobra.Command {
 	captureCmd.Flags().StringVar(&identityFrom, "identity-from", "", "Previous capture.json whose generated identities should be reused")
 	captureCmd.Flags().BoolVar(&writersStopped, "writers-stopped", false, "Record that the operator stopped source writers before capture")
 	var specPath string
+	var seed bool
 	importCmd := &cobra.Command{Use: "import", Short: "Import an immutable capture with explicit original device and root identities", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		if specPath == "" {
 			return errors.New("--spec is required")
+		}
+		if seed {
+			cfg, err := config.LoadReadOnly()
+			if err != nil {
+				return err
+			}
+			report, err := rawarchive.Seed(cmd.Context(), specPath, cfg.DataDir, archiveProgress(cmd))
+			return errors.Join(err, writeArchiveJSON(cmd.OutOrStdout(), report))
 		}
 		spec, err := rawarchive.LoadImportSpec(cmd.Context(), specPath)
 		if err != nil {
@@ -65,6 +74,7 @@ func newArchiveCommand() *cobra.Command {
 		})
 	}}
 	importCmd.Flags().StringVar(&specPath, "spec", "", "JSON capture root and original device mapping")
+	importCmd.Flags().BoolVar(&seed, "seed", false, "Preserve the captured database and identity in a new data directory")
 	var all bool
 	var ids []string
 	var budget int64
