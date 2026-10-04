@@ -22,7 +22,7 @@ func TestRejectedIdentityKeepsHistoryAndChangedImportKeepsHead(t *testing.T) {
 	valid := header + testjsonl.NewSessionBuilder().AddCodexMessage("2026-01-01T00:00:01Z", "user", "retained question").String()
 	dbtest.WriteTestFile(t, path, []byte(valid))
 	database := dbtest.OpenTestDB(t)
-	engine := syncer.NewEngine(ctx, database, syncer.EngineConfig{AgentDirs: map[parser.AgentType][]string{parser.AgentCodex: {root}}, Ephemeral: true, Machine: "origin-device", DisableFilesystemProjectDiscovery: true})
+	engine := syncer.NewEngine(ctx, database, syncer.EngineConfig{AgentDirs: map[parser.AgentType][]string{parser.AgentCodex: {root}}, Ephemeral: true, Machine: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", DisableFilesystemProjectDiscovery: true})
 	require.NoError(t, engine.SyncPathsContext(ctx, []string{path}))
 	engine.Close()
 	before, err := database.GetAllMessages(ctx, "codex:"+id)
@@ -30,10 +30,12 @@ func TestRejectedIdentityKeepsHistoryAndChangedImportKeepsHead(t *testing.T) {
 	require.Len(t, before, 1)
 	// The same native session ID belongs to a different original source path.
 	// Reject that collision after parsing without publishing scratch writes.
-	archive, err := Open(ctx, database, t.TempDir(), nil)
+	data := t.TempDir()
+	dbtest.WriteTestFile(t, filepath.Join(data, "telemetry-install-id"), []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
+	archive, err := Open(ctx, database, data, nil)
 	require.NoError(t, err)
 	defer archive.Close()
-	spec := ImportSpec{DeviceID: "origin", Machine: "origin-device", Roots: []RootSpec{{ID: "codex", Provider: "codex", Path: root, OriginalPath: filepath.Join(root, "different-origin")}}}
+	spec := ImportSpec{DeviceID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Machine: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Roots: []RootSpec{{ID: "codex", Provider: "codex", Path: root, OriginalPath: filepath.Join(root, "different-origin")}}}
 	report, err := archive.Import(ctx, spec)
 	require.NoError(t, err)
 	require.Empty(t, report.Gaps)
@@ -77,11 +79,13 @@ func TestRejectedIdentityKeepsHistoryAndChangedImportKeepsHead(t *testing.T) {
 func TestReparseRejectsBatchIdentityCollision(t *testing.T) {
 	ctx := t.Context()
 	database := dbtest.OpenTestDB(t)
-	archive, err := Open(ctx, database, t.TempDir(), nil)
+	data := t.TempDir()
+	dbtest.WriteTestFile(t, filepath.Join(data, "telemetry-install-id"), []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
+	archive, err := Open(ctx, database, data, nil)
 	require.NoError(t, err)
 	defer archive.Close()
 	const id = "019eb791-cf7d-75c1-8439-9ed74c122e02"
-	spec := ImportSpec{DeviceID: "device", Machine: "origin-device"}
+	spec := ImportSpec{DeviceID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Machine: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 	for _, name := range []string{"one", "two"} {
 		root := t.TempDir()
 		dbtest.WriteTestFile(t, filepath.Join(root, "project", id+".jsonl"), []byte(testjsonl.NewSessionBuilder().AddClaudeUserWithSessionID("2026-01-01T00:00:00Z", name, id).String()))

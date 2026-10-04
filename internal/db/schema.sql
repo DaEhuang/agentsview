@@ -1484,7 +1484,8 @@ CREATE INDEX IF NOT EXISTS idx_conversation_session_changes_revision ON conversa
 -- Durable local raw archive identity, inventory and accepted generations.
 CREATE TABLE IF NOT EXISTS raw_archive_roots (
     id TEXT PRIMARY KEY, device_id TEXT NOT NULL, machine TEXT NOT NULL,
-    provider TEXT NOT NULL, original_path TEXT NOT NULL
+    provider TEXT NOT NULL, original_path TEXT NOT NULL, configured_root_id TEXT NOT NULL,
+    UNIQUE(device_id,provider,configured_root_id)
 );
 CREATE TABLE IF NOT EXISTS raw_archive_files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1503,4 +1504,16 @@ CREATE TABLE IF NOT EXISTS raw_archive_heads (
     root_id TEXT NOT NULL REFERENCES raw_archive_roots(id), source_key TEXT NOT NULL,
     manifest_id TEXT NOT NULL REFERENCES raw_archive_sources(manifest_id),
     PRIMARY KEY(root_id,source_key)
+);
+
+-- Source deletion policy is frozen with the first imported capture. These
+-- records and mappings survive a projection rebuild independently of sessions.
+CREATE TABLE IF NOT EXISTS raw_archive_devices (
+    device_id TEXT PRIMARY KEY, suppressions BLOB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS raw_archive_sessions (
+    device_id TEXT NOT NULL, provider TEXT NOT NULL, parser_id TEXT NOT NULL,
+    session_id TEXT NOT NULL UNIQUE,
+    root_id TEXT NOT NULL REFERENCES raw_archive_roots(id), source_key TEXT NOT NULL,
+    PRIMARY KEY(device_id,provider,parser_id)
 );

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/agentsview/internal/db"
 	"go.kenn.io/agentsview/internal/rawcheckpoint"
 	"go.kenn.io/agentsview/internal/rawsync"
 )
@@ -52,9 +53,11 @@ type CaptureFile struct {
 	Method    string `json:"method"`
 }
 type CapturePreflight struct {
-	DatabaseSHA256 string            `json:"database_sha256"`
-	Counts         map[string]*int64 `json:"counts"`
-	Unknown        map[string]string `json:"unknown,omitempty"`
+	Deletions                []db.RawArchiveSuppression `json:"deletions,omitempty"`
+	DeletionAttributionError string                     `json:"deletion_attribution_error,omitempty"`
+	DatabaseSHA256           string                     `json:"database_sha256"`
+	Counts                   map[string]*int64          `json:"counts"`
+	Unknown                  map[string]string          `json:"unknown,omitempty"`
 }
 type captureInventory struct {
 	data    []byte

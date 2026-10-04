@@ -15,7 +15,7 @@ import (
 func TestRawArchiveAcceptanceAndCopy(t *testing.T) {
 	d := testDB(t)
 	ctx := t.Context()
-	root := RawArchiveRoot{ID: "root", DeviceID: "device", Machine: "example", Provider: "claude", OriginalPath: "/example/sessions"}
+	root := RawArchiveRoot{ID: "root", ConfiguredRootID: "root", DeviceID: "device", Machine: "example", Provider: "claude", OriginalPath: "/example/sessions"}
 	require.NoError(t, d.RegisterRawArchiveRoot(ctx, root))
 	require.NoError(t, d.RegisterRawArchiveRoot(ctx, root))
 	changed := root
@@ -24,7 +24,7 @@ func TestRawArchiveAcceptanceAndCopy(t *testing.T) {
 	changed = root
 	changed.ID = "other"
 	changed.DeviceID = "other"
-	require.Error(t, d.RegisterRawArchiveRoot(ctx, changed))
+	require.NoError(t, d.RegisterRawArchiveRoot(ctx, changed))
 	f := RawArchiveFile{RootID: root.ID, Path: "session.jsonl", SHA256: strings.Repeat("a", 64), Size: 2, ModTimeNS: 3}
 	require.NoError(t, d.RecordRawArchiveFile(ctx, f))
 	f.ModTimeNS++
@@ -60,7 +60,7 @@ func TestRawArchiveAcceptanceAndCopy(t *testing.T) {
 	require.NoError(t, target.CopySyncStateFrom(d.path))
 	roots, err := target.ListRawArchiveRoots(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, []RawArchiveRoot{root}, roots)
+	assert.Equal(t, []RawArchiveRoot{changed, root}, roots)
 	files, err := target.ListRawArchiveFiles(ctx, 0, 10)
 	require.NoError(t, err)
 	require.Len(t, files, 2)
@@ -81,7 +81,7 @@ func TestRawArchiveAcceptanceAndCopy(t *testing.T) {
 func TestRawArchiveSnapshot(t *testing.T) {
 	d := testDB(t)
 	ctx := t.Context()
-	root := RawArchiveRoot{ID: "root", DeviceID: "device", Machine: "example", Provider: "codex", OriginalPath: "/example"}
+	root := RawArchiveRoot{ID: "root", ConfiguredRootID: "root", DeviceID: "device", Machine: "example", Provider: "codex", OriginalPath: "/example"}
 	require.NoError(t, d.RegisterRawArchiveRoot(ctx, root))
 	insertSession(t, d, "session-a", "example")
 	path := filepath.Join(t.TempDir(), "snapshot.db")
@@ -112,7 +112,7 @@ func TestRawArchiveMigrationAndLegacyCopy(t *testing.T) {
 	ctx := t.Context()
 	legacy := testDB(t)
 	// Simulate an archive written before these additive tables existed.
-	for _, table := range []string{"raw_archive_heads", "raw_archive_sources", "raw_archive_files", "raw_archive_roots"} {
+	for _, table := range []string{"raw_archive_sessions", "raw_archive_devices", "raw_archive_heads", "raw_archive_sources", "raw_archive_files", "raw_archive_roots"} {
 		_, err := legacy.getWriter().ExecContext(ctx, "DROP TABLE "+table)
 		require.NoError(t, err)
 	}
@@ -126,13 +126,13 @@ func TestRawArchiveMigrationAndLegacyCopy(t *testing.T) {
 	reopened, err := Open(ctx, path)
 	require.NoError(t, err)
 	defer reopened.Close()
-	require.NoError(t, reopened.RegisterRawArchiveRoot(ctx, RawArchiveRoot{ID: "root", DeviceID: "device", Machine: "example", Provider: "claude", OriginalPath: "/example"}))
+	require.NoError(t, reopened.RegisterRawArchiveRoot(ctx, RawArchiveRoot{ID: "root", ConfiguredRootID: "root", DeviceID: "device", Machine: "example", Provider: "claude", OriginalPath: "/example"}))
 }
 
 func TestRawArchiveReadOnly(t *testing.T) {
 	d := testDB(t)
 	ctx := t.Context()
-	root := RawArchiveRoot{ID: "root", DeviceID: "device", Machine: "example", Provider: "claude", OriginalPath: "/example"}
+	root := RawArchiveRoot{ID: "root", ConfiguredRootID: "root", DeviceID: "device", Machine: "example", Provider: "claude", OriginalPath: "/example"}
 	require.NoError(t, d.RegisterRawArchiveRoot(ctx, root))
 	readOnly, err := OpenReadOnly(ctx, d.path)
 	require.NoError(t, err)

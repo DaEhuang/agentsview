@@ -64,6 +64,7 @@ type Report struct {
 	Files            int                           `json:"files"`
 	Bytes            int64                         `json:"bytes"`
 	Sources          int                           `json:"sources"`
+	Suppressed       int                           `json:"suppressed"`
 	Parsed           int                           `json:"parsed"`
 	Supplemental     int                           `json:"supplemental"`
 	Gaps             []string                      `json:"gaps,omitempty"`
@@ -129,7 +130,7 @@ func (a *Archive) canonical(ctx context.Context, source db.RawArchiveSource, roo
 	if err != nil {
 		return rawsync.CanonicalManifest{}, err
 	}
-	if manifest.Manifest.ConfiguredRootID != root.ID || string(manifest.Manifest.Provider) != root.Provider || manifest.Manifest.SourceKey != source.SourceKey {
+	if manifest.Manifest.ConfiguredRootID != root.ConfiguredRootID || string(manifest.Manifest.Provider) != root.Provider || manifest.Manifest.SourceKey != source.SourceKey {
 		return rawsync.CanonicalManifest{}, errors.New("accepted source differs from its root binding")
 	}
 	return manifest, nil

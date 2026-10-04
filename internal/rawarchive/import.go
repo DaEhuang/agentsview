@@ -2,6 +2,8 @@ package rawarchive
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -111,7 +113,7 @@ func (a *Archive) Import(ctx context.Context, spec ImportSpec) (Report, error) {
 			return report, err
 		}
 		opened[input.ID] = root
-		binding := db.RawArchiveRoot{ID: input.ID, DeviceID: spec.DeviceID, Machine: spec.Machine, Provider: input.Provider, OriginalPath: input.OriginalPath}
+		binding := db.RawArchiveRoot{ID: archiveRootID(spec.DeviceID, input.Provider, input.ID), ConfiguredRootID: input.ID, DeviceID: spec.DeviceID, Machine: spec.Machine, Provider: input.Provider, OriginalPath: input.OriginalPath}
 		if err := a.database.RegisterRawArchiveRoot(ctx, binding); err != nil {
 			return report, err
 		}
@@ -168,7 +170,7 @@ func (a *Archive) Import(ctx context.Context, spec ImportSpec) (Report, error) {
 			if final.Size() != info.Size() || !final.ModTime().Equal(info.ModTime()) {
 				return errors.New("capture changed while storing")
 			}
-			record := db.RawArchiveFile{RootID: input.ID, Path: filepath.ToSlash(rel), SHA256: ref.SHA256, Size: ref.Length, ModTimeNS: info.ModTime().UnixNano()}
+			record := db.RawArchiveFile{RootID: binding.ID, Path: filepath.ToSlash(rel), SHA256: ref.SHA256, Size: ref.Length, ModTimeNS: info.ModTime().UnixNano()}
 			if err := a.database.RecordRawArchiveFile(ctx, record); err != nil {
 				return err
 			}
@@ -191,6 +193,18 @@ func (a *Archive) Import(ctx context.Context, spec ImportSpec) (Report, error) {
 		if err := a.retainCaptureEvidence(ctx, spec); err != nil {
 			return report, err
 		}
+	}
+	var suppressions []db.RawArchiveSuppression
+	if spec.capture != nil {
+		suppressions = spec.capture.Preflight.Deletions
+	}
+	if err := a.database.RegisterRawArchiveDevice(ctx, spec.DeviceID, spec.Machine, suppressions); err != nil {
+		if !errors.Is(err, db.ErrRawArchiveDeletionConflict) {
+			return report, err
+		}
+		report.Gaps = append(report.Gaps, err.Error())
+		report.Supplemental = len(inventory)
+		return report, nil
 	}
 	for _, input := range spec.Roots {
 		if input.Provider == "files" {
@@ -274,7 +288,7 @@ func (a *Archive) Import(ctx context.Context, spec ImportSpec) (Report, error) {
 				report.Gaps = append(report.Gaps, fmt.Sprintf("root %s: source retained as supplemental: %v", input.ID, err))
 				continue
 			}
-			head, err := a.database.RawArchiveHead(ctx, input.ID, sourceKey)
+			head, err := a.database.RawArchiveHead(ctx, archiveRootID(spec.DeviceID, input.Provider, input.ID), sourceKey)
 			if err != nil {
 				return report, err
 			}
@@ -295,7 +309,7 @@ func (a *Archive) Import(ctx context.Context, spec ImportSpec) (Report, error) {
 				if _, err := a.objects.PutManifest(ctx, canonical); err != nil {
 					return report, err
 				}
-				if _, err := a.database.AcceptRawArchiveSource(ctx, db.RawArchiveSource{ManifestID: canonical.ManifestID, RootID: input.ID, SourceKey: sourceKey, OriginalPath: originalPath, CanonicalJSON: canonical.CanonicalJSON}); err != nil {
+				if _, err := a.database.AcceptRawArchiveSource(ctx, db.RawArchiveSource{ManifestID: canonical.ManifestID, RootID: archiveRootID(spec.DeviceID, input.Provider, input.ID), SourceKey: sourceKey, OriginalPath: originalPath, CanonicalJSON: canonical.CanonicalJSON}); err != nil {
 					return report, err
 				}
 			}
@@ -329,10 +343,16 @@ func maxTime(a, b time.Time) time.Time {
 
 func findInventoryPath(spec ImportSpec, record db.RawArchiveFile) string {
 	for _, root := range spec.Roots {
-		if root.ID == record.RootID {
+		if archiveRootID(spec.DeviceID, root.Provider, root.ID) == record.RootID {
 			path, _ := filepath.Abs(root.Path)
 			return filepath.Join(path, filepath.FromSlash(record.Path))
 		}
 	}
 	return ""
+}
+
+// Internal namespaces never change the configured root IDs in wire manifests.
+func archiveRootID(device, provider, root string) string {
+	sum := sha256.Sum256([]byte(device + "\x00" + provider + "\x00" + root))
+	return hex.EncodeToString(sum[:])
 }

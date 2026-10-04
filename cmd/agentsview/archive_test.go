@@ -44,9 +44,16 @@ func TestArchiveMoveAndReparse(t *testing.T) {
 	dbtest.WriteTestFile(t, filepath.Join(dataDir, "config.json"), []byte(`{"local_machine_name":"origin-device","auth_token":"original-test-token","cursor_secret":"b3JpZ2luYWwtdGVzdC1zZWNyZXQ="}`))
 	database, err := db.OpenIsolatedContext(ctx, filepath.Join(dataDir, "sessions.db"))
 	require.NoError(t, err)
+	installation, err := os.ReadFile(filepath.Join(dataDir, "telemetry-install-id"))
+	if os.IsNotExist(err) {
+		installation = []byte("019eb791cf7d75c184399ed74c122e04")
+		require.NoError(t, os.WriteFile(filepath.Join(dataDir, "telemetry-install-id"), installation, 0o600))
+	} else {
+		require.NoError(t, err)
+	}
 	engine := syncer.NewEngine(ctx, database, syncer.EngineConfig{
 		AgentDirs: map[parser.AgentType][]string{parser.AgentClaude: {filepath.Join(claudeRoot, "projects")}, parser.AgentCodex: {filepath.Join(codexRoot, "sessions")}},
-		Machine:   "origin-device", Ephemeral: true, DisableFilesystemProjectDiscovery: true,
+		Machine:   string(bytes.TrimSpace(installation)), Ephemeral: true, DisableFilesystemProjectDiscovery: true,
 	})
 	require.NoError(t, engine.SyncPathsContext(ctx, []string{claudePath, codexPath}))
 	engine.Close()
@@ -80,13 +87,6 @@ func TestArchiveMoveAndReparse(t *testing.T) {
 	_, err = raw.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", db.CurrentDataVersion()-1))
 	require.NoError(t, err)
 	require.NoError(t, raw.Close())
-	installation, err := os.ReadFile(filepath.Join(dataDir, "telemetry-install-id"))
-	if os.IsNotExist(err) {
-		installation = []byte("019eb791cf7d75c184399ed74c122e04")
-		require.NoError(t, os.WriteFile(filepath.Join(dataDir, "telemetry-install-id"), installation, 0o600))
-	} else {
-		require.NoError(t, err)
-	}
 	closed := filepath.Join(t.TempDir(), "capture")
 	captured, err := rawarchive.Capture(ctx, rawarchive.CaptureOptions{
 		Destination: closed, DataDir: dataDir,
@@ -185,10 +185,15 @@ func TestArchiveMoveAndReparse(t *testing.T) {
 	report, err = run("extract", extracted)
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, report.Files, 3)
-	extra, err := os.ReadFile(filepath.Join(extracted, captured.Source.Roots[0].ID, "file-history", "extra"))
+	extraPaths, err := filepath.Glob(filepath.Join(extracted, "*", "file-history", "extra"))
+	require.NoError(t, err)
+	require.Len(t, extraPaths, 1)
+	extra, err := os.ReadFile(extraPaths[0])
 	require.NoError(t, err)
 	assert.Equal(t, "supplemental history", string(extra))
-	assert.FileExists(t, filepath.Join(extracted, "capture-evidence", captured.CaptureID, "inventory.json"))
+	evidencePaths, err := filepath.Glob(filepath.Join(extracted, "*", captured.CaptureID, "inventory.json"))
+	require.NoError(t, err)
+	assert.Len(t, evidencePaths, 1)
 	require.NoError(t, os.RemoveAll(extracted))
 	report, err = run("reparse", "--all")
 	require.NoError(t, err)
@@ -205,7 +210,7 @@ func TestArchiveMoveAndReparse(t *testing.T) {
 			session, e := database.GetSessionFull(ctx, id)
 			require.NoError(t, e)
 			require.NotNil(t, session)
-			assert.Equal(t, "origin-device", session.Machine)
+			assert.Equal(t, string(bytes.TrimSpace(installation)), session.Machine)
 			messages, e := database.GetAllMessages(ctx, id)
 			require.NoError(t, e)
 			require.Len(t, messages, 2)

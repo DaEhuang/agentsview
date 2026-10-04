@@ -8,8 +8,8 @@ import (
 )
 
 func (a *Archive) retainCaptureEvidence(ctx context.Context, spec ImportSpec) error {
-	const rootID = "capture-evidence"
-	if err := a.database.RegisterRawArchiveRoot(ctx, db.RawArchiveRoot{ID: rootID, DeviceID: spec.DeviceID, Machine: spec.Machine, Provider: "files", OriginalPath: "capture-evidence"}); err != nil {
+	rootID := archiveRootID(spec.DeviceID, "files", "capture-evidence")
+	if err := a.database.RegisterRawArchiveRoot(ctx, db.RawArchiveRoot{ID: rootID, ConfiguredRootID: "capture-evidence", DeviceID: spec.DeviceID, Machine: spec.Machine, Provider: "files", OriginalPath: "capture-evidence"}); err != nil {
 		return err
 	}
 	for name, data := range map[string][]byte{"capture.json": spec.capture.data, "inventory.json": spec.inventoryData} {

@@ -441,6 +441,10 @@ type EngineConfig struct {
 	// ArchiveReparse permits only the verified materialized inputs supplied by
 	// rawderive.PrepareLocalSource. It is not exposed in runtime configuration.
 	ArchiveReparse bool
+	// ArchiveSessionPolicy binds the native parser ID to the rewritten session
+	// before any content is published. False preserves source deletion policy.
+	// Used only by the local archive's scratch-database reparse.
+	ArchiveSessionPolicy func(context.Context, *db.Session, string) (bool, error)
 
 	AgentDirs      map[parser.AgentType][]string
 	SourceMachines map[parser.AgentType]map[string]string
@@ -632,6 +636,7 @@ type Engine struct {
 	disableSignalRecompute  bool
 	disableProjectDiscovery bool
 	stableSourceSnapshots   bool
+	archiveSessionPolicy    func(context.Context, *db.Session, string) (bool, error)
 	idPrefix                string
 	pathRewriter            func(string) string
 	storedPathResolver      func(string) (string, bool)
@@ -1001,6 +1006,7 @@ func NewEngine(ctx context.Context,
 		disableProjectDiscovery: cfg.DisableFilesystemProjectDiscovery,
 		stableSourceSnapshots:   cfg.StableSourceSnapshots,
 		idPrefix:                cfg.IDPrefix,
+		archiveSessionPolicy:    cfg.ArchiveSessionPolicy,
 		pathRewriter:            cfg.PathRewriter,
 		storedPathResolver:      cfg.StoredPathResolver,
 		emitter:                 cfg.Emitter,
@@ -18225,6 +18231,12 @@ func (e *Engine) prepareSessionNormalizedContext(
 	s, msgs := candidate.Session, candidate.Messages
 	if err := e.applyRemoteRewritesContext(ctx, &s, msgs); err != nil {
 		return ingest.PreparedSession{}, sessionWritePreserved, err
+	}
+	if e.archiveSessionPolicy != nil {
+		keep, err := e.archiveSessionPolicy(ctx, &s, pw.sess.ID)
+		if err != nil || !keep {
+			return ingest.PreparedSession{}, sessionWritePreserved, err
+		}
 	}
 	applySourceCwdResolution(
 		&s, pw.sourceCwdResolution, pw.sourceCwdStored, pw.sourceCwdStoredOK,

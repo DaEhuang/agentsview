@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"go.kenn.io/agentsview/internal/db"
 	"go.kenn.io/agentsview/internal/rawderive"
@@ -31,6 +33,14 @@ func (a *Archive) Reparse(ctx context.Context, opts ReparseOptions) (report Repo
 	if opts.ScratchBytes <= 0 {
 		return report, errors.New("a positive scratch byte budget is required")
 	}
+	ownerData, err := os.ReadFile(filepath.Join(a.dataDir, "telemetry-install-id"))
+	if err != nil {
+		return report, err
+	}
+	if err := validateRecoveryIdentity(ownerData); err != nil {
+		return report, err
+	}
+	owner := strings.TrimSpace(string(ownerData))
 	roots, err := a.roots(ctx)
 	if err != nil {
 		return report, err
@@ -93,10 +103,24 @@ func (a *Archive) Reparse(ctx context.Context, opts ReparseOptions) (report Repo
 	scratch.SetArchiveContent(a.database.ArchiveContent())
 	scratch.SetToolResultImages(a.database.ToolResultImages())
 	scratch.SetAssetsDir(a.database.AssetsDir())
-	batchOwners := make(map[string]string)
+	suppressed := make(map[string]bool)
+	policies := make(map[string]map[string]db.RawArchiveSuppression)
 	for i, source := range selected {
+		device := roots[source.RootID].DeviceID
+		policy, ok := policies[device]
+		if !ok {
+			deletions, err := scratch.RawArchiveSuppressions(ctx, device)
+			if err != nil {
+				return report, err
+			}
+			policy = make(map[string]db.RawArchiveSuppression, len(deletions))
+			for _, d := range deletions {
+				policy[d.ParserID] = d
+			}
+			policies[device] = policy
+		}
 		a.report(fmt.Sprintf("Reparsing source %d of %d", i+1, len(selected)))
-		err = a.reparseSource(ctx, scratch, scratchDir, source, roots, batchOwners, opts.ScratchBytes)
+		err = a.reparseSource(ctx, scratch, scratchDir, source, roots, owner, policy, suppressed, opts.ScratchBytes)
 		if err != nil {
 			recordErr := a.database.RecordRawArchiveParse(context.WithoutCancel(ctx), source.ManifestID, strconv.Itoa(db.CurrentDataVersion()), err.Error())
 			return report, errors.Join(err, recordErr)
@@ -125,11 +149,12 @@ func (a *Archive) Reparse(ctx context.Context, opts ReparseOptions) (report Repo
 	installed, err := engine.SwapResyncDatabase(scratchPath)
 	if installed {
 		report.Parsed = len(selected)
+		report.Suppressed = len(suppressed)
 	}
 	return report, err
 }
 
-func (a *Archive) reparseSource(ctx context.Context, scratch *db.DB, scratchDir string, source db.RawArchiveSource, roots map[string]db.RawArchiveRoot, batchOwners map[string]string, budget int64) (retErr error) {
+func (a *Archive) reparseSource(ctx context.Context, scratch *db.DB, scratchDir string, source db.RawArchiveSource, roots map[string]db.RawArchiveRoot, owner string, policy map[string]db.RawArchiveSuppression, suppressed map[string]bool, budget int64) (retErr error) {
 	manifest, err := a.canonical(ctx, source, roots)
 	if err != nil {
 		return err
@@ -142,47 +167,70 @@ func (a *Archive) reparseSource(ctx context.Context, scratch *db.DB, scratchDir 
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, materialized.Cleanup()) }()
-	prepared, err := rawderive.PrepareLocalSource(ctx, manifest, materialized, roots[source.RootID].Machine, source.OriginalPath)
+	root := roots[source.RootID]
+	storedPath := source.OriginalPath
+	if root.DeviceID != owner {
+		storedPath = "archive://" + root.ID + "/" + url.PathEscape(source.SourceKey)
+	}
+	prepared, err := rawderive.PrepareLocalSource(ctx, manifest, materialized, root.DeviceID, storedPath)
 	if err != nil {
 		return err
+	}
+	if root.DeviceID != owner {
+		prepared.Config.IDPrefix = root.DeviceID + "~"
+	}
+	aliases, err := scratch.GetMachineAliases(ctx)
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]bool)
+	var policyError error
+	prepared.Config.ArchiveSessionPolicy = func(ctx context.Context, s *db.Session, native string) (keep bool, retErr error) {
+		defer func() { policyError = errors.Join(policyError, retErr) }()
+		if strings.Contains(native, "~") {
+			return false, errors.New("parser returned a transport-qualified session identity")
+		}
+		known, err := scratch.BindRawArchiveSession(ctx, root, source.SourceKey, native, s.ID)
+		if err != nil {
+			return false, err
+		}
+		existing, err := scratch.GetSessionFull(ctx, s.ID)
+		if err != nil {
+			return false, err
+		}
+		if existing != nil {
+			machineMatches := existing.Machine == root.DeviceID || (root.DeviceID == owner && aliases[existing.Machine] == owner)
+			if (!known && root.DeviceID != owner) || existing.Agent != root.Provider || !machineMatches || existing.FilePath == nil || s.FilePath == nil || *existing.FilePath != *s.FilePath {
+				return false, fmt.Errorf("session identity conflicts with a different source: %s", s.ID)
+			}
+		}
+		s.Machine = root.DeviceID
+		seen[s.ID] = true
+		if d, ok := policy[native]; ok && (d.Provider == "" || d.Provider == root.Provider) {
+			suppressed[s.ID] = true
+			return false, nil
+		}
+		return true, nil
 	}
 	engine := syncer.NewEngine(ctx, scratch, prepared.Config)
 	defer engine.Close()
-	if err := engine.ReparsePathsContext(ctx, []string{prepared.Path}); err != nil {
-		return err
+	if err := engine.ReparsePathsContext(ctx, []string{prepared.Path}); err != nil || policyError != nil {
+		return errors.Join(err, policyError)
 	}
-	if engine.LastSyncStats().Synced == 0 {
-		return errors.New("provider did not publish any reparsed sessions")
+	if len(seen) == 0 {
+		return errors.New("provider produced no archived sessions")
 	}
-	rows, err := scratch.Reader().Query(ctx, "SELECT id FROM sessions WHERE file_path = ?", source.OriginalPath)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	var count int
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return err
+	for id := range seen {
+		if suppressed[id] {
+			continue
 		}
-		count++
-		if owner, ok := batchOwners[id]; ok && owner != source.OriginalPath {
-			return fmt.Errorf("session identity conflicts with another selected source: %s", id)
-		}
-		batchOwners[id] = source.OriginalPath
-		existing, err := a.database.GetSessionFull(ctx, id)
+		session, err := scratch.GetSessionFull(ctx, id)
 		if err != nil {
 			return err
 		}
-		if existing != nil && (existing.FilePath == nil || *existing.FilePath != source.OriginalPath) {
-			return fmt.Errorf("session identity conflicts with a different source: %s", id)
+		if session == nil {
+			return fmt.Errorf("provider did not publish reparsed session %s", id)
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if count == 0 {
-		return errors.New("provider produced no archived sessions")
 	}
 	return nil
 }

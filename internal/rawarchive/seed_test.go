@@ -77,7 +77,7 @@ func TestSeedDoesNotPublishFailure(t *testing.T) {
 				case "owner":
 					require.NoError(t, database.SetSyncState(t.Context(), "artifact_local_installation_id", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"))
 				case "raw-state":
-					require.NoError(t, database.RegisterRawArchiveRoot(t.Context(), db.RawArchiveRoot{ID: "retained", DeviceID: "source", Machine: "source", Provider: "files", OriginalPath: "/example"}))
+					require.NoError(t, database.RegisterRawArchiveRoot(t.Context(), db.RawArchiveRoot{ID: "retained", ConfiguredRootID: "retained", DeviceID: "source", Machine: "source", Provider: "files", OriginalPath: "/example"}))
 				}
 				require.NoError(t, database.Close())
 			}

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-03
+last_edited: 2026-10-04
 title: CLI Reference
 description: All AgentsView commands, flags, and environment variables
 ---
@@ -9,7 +9,7 @@ description: All AgentsView commands, flags, and environment variables
 ### `agentsview archive`
 
 These commands are under development and are not in the latest release. They
-retain a closed capture from one machine, recover its original files, and
+retain closed captures from several machines, recover their original files, and
 reparse Claude and Codex sessions after the original directories are gone.
 `capture` can snapshot live sources. Stop the destination daemon before import,
 reparse, backup or extraction. Those archive writes refuse to run while another process owns
@@ -81,10 +81,22 @@ not reparse sources or adopt historical machine names. The report's
 counts; use `db adopt-machine` only for keys you explicitly own. An existing raw
 archive in the seed is refused; use its `archive backup` recovery point instead.
 
-Regular import adds custody to an existing archive. It does not merge curation,
-and currently refuses captures with deletions until source mapping can honor
-them. This version still accepts only one source installation per archive;
-foreign-machine import is not implemented yet.
+Add another machine's capture with `archive import --spec OTHER/capture.json`,
+then explicitly reparse its accepted sources. Sessions remain attributed to the
+source installation even if the archive moves or a display label changes.
+Foreign session IDs include that installation ID; equal native IDs or paths on
+different machines remain separate observations. The seed keeps its existing
+session IDs. Unrelated identity collisions stop the reparse without publishing
+its scratch database.
+
+Foreign stars, pins, names and project rules are retained in the captured
+database but are not merged. Source trash and permanent deletions suppress
+publication of those sessions; their original files remain recoverable. Reparse
+reports the intentional skips as `suppressed`. Deletion evidence with unresolved
+machine ownership blocks regular import; adopt only proven ownership on the
+source and recapture. The first import freezes its deletion policy. A later
+capture with changed deletion state retains the new files as evidence and
+reports a conflict; it does not change the accepted projection.
 
 ```bash
 export AGENTSVIEW_DATA_DIR=/new/archive
@@ -101,8 +113,10 @@ AGENTSVIEW_DATA_DIR=/restored/archive agentsview archive extract /new/native-fil
 
 Restore and extract require new destinations. Backup creates a repository or adds
 a snapshot to an existing one. Backup and restore reject overlapping source and
-destination directories. `extract` writes native files under their root IDs, including
-supplemental files that have no parser. If an inventory contains different
+destination directories. `extract` writes native files under their archive root IDs, including
+supplemental files that have no parser. These IDs distinguish source installations
+and providers; the original configured root IDs remain in the retained descriptors
+and manifests. If an inventory contains different
 versions of one path, extraction fails without choosing a version or leaving a
 partial output.
 

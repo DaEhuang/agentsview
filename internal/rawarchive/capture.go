@@ -275,7 +275,7 @@ func Capture(ctx context.Context, opts CaptureOptions) (d CaptureDescriptor, ret
 	if err := add("recovery-settings.json", opts.Settings); err != nil {
 		return d, err
 	}
-	d.Preflight, err = capturePreflight(ctx, filepath.Join(app, "sessions.db"))
+	d.Preflight, err = capturePreflight(ctx, filepath.Join(app, "sessions.db"), d.Source.DeviceID)
 	if err != nil {
 		return d, err
 	}

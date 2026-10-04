@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -12,7 +13,7 @@ import (
 )
 
 type (
-	RawArchiveRoot struct{ ID, DeviceID, Machine, Provider, OriginalPath string }
+	RawArchiveRoot struct{ ID, DeviceID, Machine, Provider, OriginalPath, ConfiguredRootID string }
 	RawArchiveFile struct {
 		ID                   int64
 		RootID, Path, SHA256 string
@@ -37,7 +38,7 @@ func rawArchiveFields(fields ...string) error {
 }
 
 func (d *DB) RegisterRawArchiveRoot(ctx context.Context, root RawArchiveRoot) error {
-	if err := rawArchiveFields(root.ID, root.DeviceID, root.Machine, root.Provider, root.OriginalPath); err != nil {
+	if err := rawArchiveFields(root.ID, root.DeviceID, root.Machine, root.Provider, root.OriginalPath, root.ConfiguredRootID); err != nil {
 		return err
 	}
 	d.mu.Lock()
@@ -47,19 +48,12 @@ func (d *DB) RegisterRawArchiveRoot(ctx context.Context, root RawArchiveRoot) er
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var count int
-	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM raw_archive_roots WHERE device_id != ?`, root.DeviceID).Scan(&count); err != nil {
-		return err
-	}
-	if count != 0 {
-		return errors.New("raw archive supports one original device")
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO raw_archive_roots(id,device_id,machine,provider,original_path) VALUES(?,?,?,?,?) ON CONFLICT(id) DO NOTHING`, root.ID, root.DeviceID, root.Machine, root.Provider, root.OriginalPath)
+	_, err = tx.ExecContext(ctx, `INSERT INTO raw_archive_roots(id,device_id,machine,provider,original_path,configured_root_id) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET machine=excluded.machine`, root.ID, root.DeviceID, root.Machine, root.Provider, root.OriginalPath, root.ConfiguredRootID)
 	if err != nil {
 		return err
 	}
 	var got RawArchiveRoot
-	err = tx.QueryRowContext(ctx, `SELECT id,device_id,machine,provider,original_path FROM raw_archive_roots WHERE id=?`, root.ID).Scan(&got.ID, &got.DeviceID, &got.Machine, &got.Provider, &got.OriginalPath)
+	err = tx.QueryRowContext(ctx, `SELECT id,device_id,machine,provider,original_path,configured_root_id FROM raw_archive_roots WHERE id=?`, root.ID).Scan(&got.ID, &got.DeviceID, &got.Machine, &got.Provider, &got.OriginalPath, &got.ConfiguredRootID)
 	if err != nil {
 		return err
 	}
@@ -70,7 +64,7 @@ func (d *DB) RegisterRawArchiveRoot(ctx context.Context, root RawArchiveRoot) er
 }
 
 func (d *DB) ListRawArchiveRoots(ctx context.Context) ([]RawArchiveRoot, error) {
-	rows, err := d.getReader().QueryContext(ctx, `SELECT id,device_id,machine,provider,original_path FROM raw_archive_roots ORDER BY id`)
+	rows, err := d.getReader().QueryContext(ctx, `SELECT id,device_id,machine,provider,original_path,configured_root_id FROM raw_archive_roots ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +72,7 @@ func (d *DB) ListRawArchiveRoots(ctx context.Context) ([]RawArchiveRoot, error) 
 	var out []RawArchiveRoot
 	for rows.Next() {
 		var r RawArchiveRoot
-		if err = rows.Scan(&r.ID, &r.DeviceID, &r.Machine, &r.Provider, &r.OriginalPath); err != nil {
+		if err = rows.Scan(&r.ID, &r.DeviceID, &r.Machine, &r.Provider, &r.OriginalPath, &r.ConfiguredRootID); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -264,4 +258,73 @@ func (d *DB) SnapshotTo(ctx context.Context, path string) (err error) {
 		return fmt.Errorf("snapshot archive: %w", err)
 	}
 	return nil
+}
+
+var ErrRawArchiveDeletionConflict = errors.New("source deletion state conflicts with its first accepted capture")
+
+// RawArchiveSuppression retains the source database's trash/permanent-delete
+// distinction. Empty Provider follows excluded_sessions' global native-ID scope.
+type RawArchiveSuppression struct {
+	ParserID string `json:"parser_id"`
+	Provider string `json:"provider,omitempty"`
+	Kind     string `json:"kind"`
+}
+
+// RegisterRawArchiveDevice freezes the source's deletion policy. A changed
+// capture cannot silently alter an already accepted projection.
+func (d *DB) RegisterRawArchiveDevice(ctx context.Context, device, label string, suppressions []RawArchiveSuppression) error {
+	data, err := json.Marshal(suppressions)
+	if err != nil {
+		return err
+	}
+	return d.Update(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO raw_archive_devices(device_id,suppressions) VALUES(?,?) ON CONFLICT(device_id) DO NOTHING`, device, data); err != nil {
+			return err
+		}
+		var existing []byte
+		if err := tx.QueryRowContext(ctx, `SELECT suppressions FROM raw_archive_devices WHERE device_id=?`, device).Scan(&existing); err != nil {
+			return err
+		}
+		if !bytes.Equal(existing, data) {
+			return ErrRawArchiveDeletionConflict
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO pg_sync_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, MachineLabelKeyPrefix+device, label)
+		return err
+	})
+}
+
+func (d *DB) RawArchiveSuppressions(ctx context.Context, device string) ([]RawArchiveSuppression, error) {
+	var data []byte
+	if err := d.getReader().QueryRowContext(ctx, `SELECT suppressions FROM raw_archive_devices WHERE device_id=?`, device).Scan(&data); err != nil {
+		return nil, err
+	}
+	var out []RawArchiveSuppression
+	err := json.Unmarshal(data, &out)
+	return out, err
+}
+
+// BindRawArchiveSession records both the provider-qualified parser identity
+// and its raw source alias. The caller publishes this with content via the
+// checked scratch-database swap; no session row is required for a suppression.
+func (d *DB) BindRawArchiveSession(ctx context.Context, root RawArchiveRoot, sourceKey, parserID, sessionID string) (known bool, err error) {
+	err = d.Update(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `INSERT INTO raw_archive_sessions(device_id,provider,parser_id,session_id,root_id,source_key) VALUES(?,?,?,?,?,?) ON CONFLICT(device_id,provider,parser_id) DO NOTHING`, root.DeviceID, root.Provider, parserID, sessionID, root.ID, sourceKey)
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		known = n == 0
+		var storedID, storedRoot, storedSource string
+		if err := tx.QueryRowContext(ctx, `SELECT session_id,root_id,source_key FROM raw_archive_sessions WHERE device_id=? AND provider=? AND parser_id=?`, root.DeviceID, root.Provider, parserID).Scan(&storedID, &storedRoot, &storedSource); err != nil {
+			return err
+		}
+		if storedID != sessionID || storedRoot != root.ID || storedSource != sourceKey {
+			return errors.New("session identity conflicts with another selected source or recorded raw alias")
+		}
+		return nil
+	})
+	return known, err
 }
