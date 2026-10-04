@@ -248,6 +248,27 @@ The latest published release is
   `history.jsonl` to say which sessions are active. AgentsView now also checks
   the files of Codex sessions active in the last 24 hours. A session you resume
   after more than 24 hours idle still waits until Codex closes its file.
+- Keep both transcripts when two Gemini CLI or Cursor files record the same
+  session ID. The stored file keeps its ID; the other becomes a linked session.
+  A new file can take over the original ID when the old file is gone and the
+  new transcript has at least as many messages. This covers folder moves and
+  renames of the original session. Remote imports also preserve the ID when
+  a complete mirror covers the old path; partial imports and paths outside
+  the exported roots stay separate. Provider-recognized moves, including Cursor
+  switching a transcript from `.txt` to `.jsonl`, retain IDs and saved names
+  locally and in complete remote mirrors, even for shorter replacements.
+  Already linked files need a provider-recognized move to keep their IDs.
+  Other shorter files stay separate so they cannot shorten the archive. The
+  first sync after upgrading re-reads the archive once, including unchanged
+  remote mirrors. Full resyncs preserve ownership and existing names, stars,
+  and pins, and skip ownership snapshots for providers without source roots.
+  On a first sync, parallel parse order decides which file gets the original
+  ID; it need not be the earliest segment. Trashing the base also hides its
+  linked sessions from the sidebar;
+  permanently deleting it promotes them. Cursor copies retain shared turns,
+  which search and usage count twice. A copied subagent links to the session
+  with the same ID, replacing its original parent link. Other agents sync as
+  before.
 - Recall no longer records work an agent only proposed as work it completed.
   When a stretch of a session ran no tools, extraction cannot produce a
   procedure entry for it and tells the model nothing there was executed.

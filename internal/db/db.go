@@ -557,7 +557,10 @@ CREATE INDEX IF NOT EXISTS idx_provider_freshness_updated_at
 // stored token_usage changes while source bytes do not.)
 // (124: OpenCode dispatch timestamps are retained as tool-execution events so
 // unchanged sessions gain dispatch-to-completion timing.)
-const dataVersion = 124
+// (125: Gemini and Cursor files that share a session ID remain separate
+// conversations. Re-parse unchanged sources, including cached remote mirrors,
+// to recover conversations previously collapsed into one archived session.)
+const dataVersion = 125
 
 const tokenCoverageRepairStatsKey = "token_coverage_repair_v1"
 
@@ -2168,6 +2171,7 @@ func legacySchemaColumnMigrations() []schemaColumnMigration {
 
 func schemaColumnMigrations() []schemaColumnMigration {
 	return []schemaColumnMigration{
+		{"excluded_sessions", "file_path", "ALTER TABLE excluded_sessions ADD COLUMN file_path TEXT"},
 		{
 			"session_project_assignments", "original_project",
 			"ALTER TABLE session_project_assignments ADD COLUMN original_project TEXT NOT NULL DEFAULT '';" +
