@@ -664,6 +664,7 @@
   $effect(() => {
     const sid = router.sessionId;
     const msgParam = router.params["msg"] ?? null;
+    const revParam = router.params["rev"] || undefined;
     untrack(() => {
       if (!sid || !msgParam) return;
       if (msgParam === "last") {
@@ -672,7 +673,7 @@
       } else {
         const ordinal = parseInt(msgParam, 10);
         if (Number.isFinite(ordinal)) {
-          ui.scrollToOrdinal(ordinal, sid);
+          ui.scrollToOrdinal(ordinal, sid, revParam);
         }
       }
     });
