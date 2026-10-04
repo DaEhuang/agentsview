@@ -155,7 +155,7 @@ func newArchiveCommand() *cobra.Command {
 		report, err := rawarchive.VerifyRecovery(cmd.Context(), verifyRepository, verifySnapshot)
 		return errors.Join(err, writeArchiveJSON(cmd.OutOrStdout(), report))
 	}
-	extractCmd := &cobra.Command{Use: "extract DESTINATION", Short: "Recover retained native files under their original root IDs", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	extractCmd := &cobra.Command{Use: "extract DESTINATION", Short: "Recover retained native files under their archive root IDs", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return withRawArchive(cmd, func(a *rawarchive.Archive) error {
 			report, err := a.Extract(cmd.Context(), args[0])
 			return errors.Join(err, writeArchiveJSON(cmd.OutOrStdout(), report))
