@@ -932,18 +932,23 @@ type chatGPTNodeSpec struct{ role, contentType, text string }
 
 // chatGPTChainConv renders one linear conversation "cg-tool" from nodes.
 func chatGPTChainConv(chain ...chatGPTNodeSpec) string {
+	return chatGPTChainConvID("cg-tool", chain...)
+}
+
+// chatGPTChainConvID renders one linear conversation id from nodes.
+func chatGPTChainConvID(id string, chain ...chatGPTNodeSpec) string {
 	nodes := make([]string, len(chain))
 	parent := "r"
 	for i, n := range chain {
-		id := fmt.Sprintf("n%d", i+1)
+		node := fmt.Sprintf("n%d", i+1)
 		child := ""
 		if i+1 < len(chain) {
 			child = fmt.Sprintf("n%d", i+2)
 		}
-		nodes[i] = chatGPTToolNode(id, parent, child, n.role, n.contentType, n.text, float64(1706745600+10*i))
-		parent = id
+		nodes[i] = chatGPTToolNode(node, parent, child, n.role, n.contentType, n.text, float64(1706745600+10*i))
+		parent = node
 	}
-	return `[{"id":"cg-tool","conversation_id":"cg-tool","title":"Tool",` +
+	return `[{"id":"` + id + `","conversation_id":"` + id + `","title":"Tool",` +
 		`"create_time":1706745600.0,"update_time":1706745710.0,` +
 		`"current_node":"` + parent + `","mapping":{` +
 		`"r":{"id":"r","parent":null,"children":["n1"],"message":null},` +
@@ -1723,5 +1728,246 @@ func TestImportChatGPTExtendsTruncatedText(t *testing.T) {
 		after, err := d.GetAllMessages(ctx, "chatgpt:cg-tool")
 		require.NoError(t, err)
 		assert.Equal(t, before, after)
+	})
+}
+
+// chatGPTTextConv renders conversation id as alternating user and assistant text turns.
+func chatGPTTextConv(id string, texts ...string) string {
+	chain := make([]chatGPTNodeSpec, len(texts))
+	for i, text := range texts {
+		chain[i] = chatGPTNodeSpec{[]string{"user", "assistant"}[i%2], "text", text}
+	}
+	return chatGPTChainConvID(id, chain...)
+}
+
+// chatGPTExport joins one-conversation exports into one conversations file.
+func chatGPTExport(convs ...string) string {
+	for i, c := range convs {
+		convs[i] = strings.TrimSuffix(strings.TrimPrefix(c, "["), "]")
+	}
+	return "[" + strings.Join(convs, ",") + "]"
+}
+
+var replaceFullBody = strings.Repeat("abcdefghij", 80)
+
+// truncatedChatGPTConv is the reported archived shape: a body cut at 500 characters and an extra row the export lacks.
+func truncatedChatGPTConv(id string) string {
+	return chatGPTTextConv(id, "Hello", replaceFullBody[:500], "metadata row")
+}
+
+func fullChatGPTConv(id string) string {
+	return chatGPTTextConv(id, "Hello", replaceFullBody)
+}
+
+type chatGPTReplaceFixture struct {
+	d              *db.DB
+	dir, assetsDir string
+}
+
+func newChatGPTReplaceFixture(t *testing.T, initial string) chatGPTReplaceFixture {
+	t.Helper()
+	f := chatGPTReplaceFixture{d: testDB(t), dir: t.TempDir(), assetsDir: t.TempDir()}
+	f.write(t, initial)
+	stats, err := ImportChatGPT(t.Context(), f.d, f.dir, f.assetsDir, nil)
+	require.NoError(t, err)
+	require.Zero(t, stats.Errors)
+	return f
+}
+
+func (f chatGPTReplaceFixture) write(t *testing.T, data string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(f.dir, "conversations-000.json"), []byte(data), 0o644))
+}
+
+func (f chatGPTReplaceFixture) importWith(t *testing.T, store db.Store, replace ...string) ImportStats {
+	t.Helper()
+	stats, err := ImportChatGPTWithOptions(t.Context(), store, f.dir, f.assetsDir, nil, ImportOptions{Replace: replace})
+	require.NoError(t, err)
+	return stats
+}
+
+// replacedCopies lists the trashed copies replace kept for id, or for every session when id is empty.
+func replacedCopies(t *testing.T, d *db.DB, id string) []db.Session {
+	t.Helper()
+	trashed, err := d.ListTrashedSessions(t.Context())
+	require.NoError(t, err)
+	var copies []db.Session
+	for _, s := range trashed {
+		if strings.Contains(s.ID, id+":replaced:") {
+			copies = append(copies, s)
+		}
+	}
+	return copies
+}
+
+func messageContents(msgs []db.Message) []string {
+	out := make([]string, len(msgs))
+	for i, m := range msgs {
+		out[i] = m.Content
+	}
+	return out
+}
+
+func TestImportChatGPTReplaceListedSession(t *testing.T) {
+	const id = "chatgpt:cg-1"
+	f := newChatGPTReplaceFixture(t, truncatedChatGPTConv("cg-1"))
+	ctx := t.Context()
+	name := "My saved title"
+	require.NoError(t, f.d.RenameSession(ctx, id, &name))
+	archived, err := f.d.GetAllMessages(ctx, id)
+	require.NoError(t, err)
+	for _, m := range archived[:2] {
+		_, err := f.d.PinMessage(ctx, id, m.ID, nil)
+		require.NoError(t, err)
+	}
+
+	f.write(t, fullChatGPTConv("cg-1"))
+	stats := f.importWith(t, f.d, id)
+	assert.Equal(t, 1, stats.Updated)
+	assert.Zero(t, stats.Errors)
+
+	live, err := f.d.GetAllMessages(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Hello", replaceFullBody}, messageContents(live))
+	session, err := f.d.GetSession(ctx, id)
+	require.NoError(t, err)
+	require.NotNil(t, session)
+	assert.Equal(t, name, *session.DisplayName)
+	pins, err := f.d.ListPinnedMessages(ctx, id, "")
+	require.NoError(t, err)
+	require.Len(t, pins, 1, "only the pin on the unchanged message stays")
+	assert.Equal(t, live[0].ID, pins[0].MessageID)
+
+	copies := replacedCopies(t, f.d, id)
+	require.Len(t, copies, 1)
+	old, err := f.d.GetAllMessages(ctx, copies[0].ID)
+	require.NoError(t, err)
+	assert.Equal(t, messageContents(archived), messageContents(old))
+}
+
+func TestImportChatGPTReplaceOnlyListedRefusals(t *testing.T) {
+	f := newChatGPTReplaceFixture(t, chatGPTExport(
+		truncatedChatGPTConv("cg-a"),
+		chatGPTTextConv("cg-b", "Hello", "Answer"),
+		chatGPTTextConv("cg-c", "Hello", "Answer", "More"),
+		chatGPTTextConv("cg-d", "Hello"),
+	))
+	ctx := t.Context()
+	appendBefore, err := f.d.GetAllMessages(ctx, "chatgpt:cg-d")
+	require.NoError(t, err)
+
+	f.write(t, chatGPTExport(
+		fullChatGPTConv("cg-a"),
+		chatGPTTextConv("cg-b", "Changed", "Answer"),
+		chatGPTTextConv("cg-c", "Hello", "Answer"),
+		chatGPTTextConv("cg-d", "Hello", "Answer"),
+	))
+	stats := f.importWith(t, f.d, "chatgpt:cg-a", "chatgpt:cg-d", "chatgpt:not-in-export")
+	assert.Equal(t, 2, stats.Updated, "the listed replacement and the listed append")
+	assert.Equal(t, []ImportRefusal{
+		{SessionID: "chatgpt:cg-b", Reason: RefusalDiverged},
+		{SessionID: "chatgpt:cg-c", Reason: RefusalShorterExport},
+	}, stats.Refusals)
+	copies := replacedCopies(t, f.d, "")
+	require.Len(t, copies, 1)
+	assert.True(t, strings.HasPrefix(copies[0].ID, "chatgpt:cg-a:replaced:"), copies[0].ID)
+	appendAfter, err := f.d.GetAllMessages(ctx, "chatgpt:cg-d")
+	require.NoError(t, err)
+	require.Len(t, appendAfter, 2)
+	assert.Equal(t, appendBefore[0].ID, appendAfter[0].ID, "an append keeps archived message IDs")
+}
+
+func TestImportChatGPTReplaceIsIdempotent(t *testing.T) {
+	f := newChatGPTReplaceFixture(t, truncatedChatGPTConv("cg-1"))
+	f.write(t, fullChatGPTConv("cg-1"))
+
+	assert.Equal(t, 1, f.importWith(t, f.d, "chatgpt:cg-1").Updated)
+	stats := f.importWith(t, f.d, "chatgpt:cg-1")
+	assert.Equal(t, 1, stats.Skipped)
+	assert.Zero(t, stats.Updated+stats.Errors)
+	assert.Len(t, replacedCopies(t, f.d, ""), 1)
+}
+
+func TestImportChatGPTReplaceRefusesOtherAgent(t *testing.T) {
+	f := chatGPTReplaceFixture{d: testDB(t), dir: t.TempDir(), assetsDir: t.TempDir()}
+	require.NoError(t, f.d.UpsertSession(t.Context(), db.Session{
+		ID: "chatgpt:cg-1", Project: "chatgpt.com", Machine: "local", Agent: "claude",
+	}))
+	f.write(t, fullChatGPTConv("cg-1"))
+
+	stats := f.importWith(t, f.d, "chatgpt:cg-1")
+	assert.Equal(t, 1, stats.Errors)
+	assert.Empty(t, replacedCopies(t, f.d, ""))
+}
+
+// diskFullStore fails every batch write and counts replace attempts.
+type diskFullStore struct {
+	*db.DB
+	replaces *int
+}
+
+func (diskFullStore) WriteSessionBatchAtomic(
+	context.Context, []db.SessionBatchWrite, ...func() error,
+) (db.SessionBatchResult, error) {
+	return db.SessionBatchResult{}, errors.New("disk full")
+}
+
+func (s diskFullStore) ReplaceSessionKeepingTrashedCopy(context.Context, db.SessionBatchWrite) (string, error) {
+	*s.replaces++
+	return "", errors.New("unexpected replace")
+}
+
+func TestImportChatGPTReplaceIgnoresTransientError(t *testing.T) {
+	f := newChatGPTReplaceFixture(t, testChatGPTConv)
+	f.write(t, testChatGPTConvWithAppend())
+
+	replaces := 0
+	stats := f.importWith(t, diskFullStore{DB: f.d, replaces: &replaces}, "chatgpt:cg-1")
+	assert.Equal(t, []ImportRefusal{{SessionID: "chatgpt:cg-1", Reason: RefusalTransient}}, stats.Refusals)
+	assert.Zero(t, replaces, "a transient write error must not trigger replace")
+}
+
+func TestImportClaudeAIReplace(t *testing.T) {
+	const id = "claude-ai:import-test-001"
+	seed := func(t *testing.T) *db.DB {
+		t.Helper()
+		d := testDB(t)
+		_, err := ImportClaudeAI(t.Context(), d, strings.NewReader(claudeAIConversationWithMessages(t, 3)), nil)
+		require.NoError(t, err)
+		return d
+	}
+	replace := func(t *testing.T, d *db.DB) ImportStats {
+		t.Helper()
+		stats, err := ImportClaudeAIWithOptions(t.Context(), d,
+			strings.NewReader(claudeAIConversationWithMessages(t, 2)), nil,
+			ImportOptions{Replace: []string{id}})
+		require.NoError(t, err)
+		return stats
+	}
+
+	t.Run("listed", func(t *testing.T) {
+		d := seed(t)
+		archived, err := d.GetAllMessages(t.Context(), id)
+		require.NoError(t, err)
+
+		stats := replace(t, d)
+		assert.Equal(t, 1, stats.Updated)
+		assert.Zero(t, stats.Errors)
+		live, err := d.GetAllMessages(t.Context(), id)
+		require.NoError(t, err)
+		assert.Len(t, live, 2)
+		copies := replacedCopies(t, d, id)
+		require.Len(t, copies, 1)
+		old, err := d.GetAllMessages(t.Context(), copies[0].ID)
+		require.NoError(t, err)
+		assert.Equal(t, messageContents(archived), messageContents(old))
+	})
+	t.Run("trashed", func(t *testing.T) {
+		d := seed(t)
+		require.NoError(t, d.SoftDeleteSession(t.Context(), id))
+
+		stats := replace(t, d)
+		assert.Equal(t, []ImportRefusal{{SessionID: id, Reason: RefusalTrashed}}, stats.Refusals)
+		assert.Empty(t, replacedCopies(t, d, ""))
 	})
 }

@@ -81,6 +81,7 @@ agentsview import --type gemini-apps ~/Downloads/takeout.zip
 | Flag | Description |
 |------|-------------|
 | `--type` | `claude-ai`, `chatgpt`, or `gemini-apps` (required) |
+| `--replace` | Session ID whose archived messages the import may replace when the normal import refuses them; repeat for more sessions (`claude-ai` and `chatgpt` only). See [Replacing archived history](#replacing-archived-history). |
 
 The path can be a `.zip` file, a `conversations.json` file
 (Claude.ai only), a Gemini Apps `MyActivity.html` file, or a
@@ -134,7 +135,8 @@ You can safely re-import the same export file:
 - **Claude.ai** — existing sessions are updated with any
   new messages. User-edited display names are preserved. An export
   with fewer messages than the archived session (for example an older
-  export) is reported as an error and leaves the stored session unchanged.
+  export) is reported as an error and leaves the stored session unchanged
+  unless you explicitly replace it with `--replace`.
   Equal-length or longer exports can refresh earlier messages, including
   attachment text; earlier turns do not have to match the archive.
 - **ChatGPT** — unchanged sessions are skipped. An export may add messages when
@@ -149,8 +151,9 @@ You can safely re-import the same export file:
   place and any pin. For example, you export during a code run, keep chatting,
   and export again: the re-import adds the run's output and the new turns. Other
   result differences keep the archived result. Shorter exports and other changes
-  are reported as errors and leave the archive unchanged. Trashed conversations
-  are skipped. User display names are preserved.
+  are reported as errors and leave the archive unchanged unless you explicitly
+  replace the session with `--replace`. Trashed conversations are skipped. User
+  display names are preserved.
 - **Gemini Apps** — existing sessions are matched by the canonical UTC
   timestamp and its zero-based occurrence among records sharing that
   timestamp. Inserting or reordering records with other timestamps doesn't
@@ -168,7 +171,45 @@ with the provider prefix) and a reason:
   first. A trashed ChatGPT conversation stays a skip.
 - `transient`: anything else. Importing again may work.
 
-The first three repeat on every import of the same export. Streamed progress
-events carry only the counts. The CLI summary shows the same reasons next to
-its error count. Gemini Apps records the parser rejects before they have a
-session ID are counted in `errors` without an entry.
+For `diverged` or `shorter_export`, you can explicitly
+[replace the archived history](#replacing-archived-history). Otherwise, these
+refusals repeat on every import of the same export. A `trashed` refusal repeats
+until you restore the session.
+
+Streamed progress events carry only the counts. The CLI summary shows the same
+reasons next to its error count. Gemini Apps records the parser rejects before
+they have a session ID are counted in `errors` without an entry.
+
+## Replacing archived history
+
+Use replace mode when a session's archived copy is wrong and every re-import
+refuses it, for example because messages were cut short or the export has a
+different set of messages than the archive. List each session to replace by
+its ID, `chatgpt:<conversation id>` or `claude-ai:<conversation uuid>`:
+
+```bash
+agentsview import --type chatgpt --replace 'chatgpt:<conversation-id>' ~/Downloads/chatgpt-export.zip
+```
+
+Repeat `--replace` for each session. The import API takes the same list as a
+repeatable query parameter:
+
+```text
+POST /api/v1/import/chatgpt?replace=<session-id>&replace=<session-id>
+POST /api/v1/import/claude-ai?replace=<session-id>
+```
+
+What happens to a listed session:
+
+- It's replaced only when the normal import would refuse it. An export that
+  adds messages or fills empty tool results still updates it in place.
+- Its messages become exactly the export's messages. The session keeps its
+  name, and pins stay on messages that still match.
+- The previous version moves to the trash as `<session-id>:replaced:<time>`
+  with its messages, name, and pins. Restore it from Trash if you need it back.
+- Importing the same export again changes nothing and adds no second copy.
+- A trashed session stays trashed and isn't replaced. A session that belongs
+  to a different agent is refused as before.
+
+Sessions you don't list are imported as usual. Gemini Apps imports don't
+support `--replace`.
