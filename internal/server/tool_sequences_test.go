@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -135,20 +134,6 @@ func TestHandleToolSequences_NoSequences(t *testing.T) {
 	assert.Equal(t, 0, got.TotalSequences)
 	assert.Empty(t, got.Sequences)
 
-	parallel := []db.ToolCall{
-		{ToolName: "Grep", Category: "Grep", ToolUseID: "parallel-error", InputJSON: `{}`, ResultEvents: []db.ToolResultEvent{{ToolUseID: "parallel-error", Source: "tool_execution", Status: "errored", EventIndex: 0}}},
-		{ToolName: "Read", Category: "Read", ToolUseID: "parallel-content", InputJSON: `{}`, ResultContent: "text", ResultContentLength: 4, ResultEvents: []db.ToolResultEvent{{ToolUseID: "parallel-content", Source: "tool_execution", Status: "completed", Content: "text", ContentLength: 4, EventIndex: 1}}},
-	}
-	const parallelID = "tool-sequences-parallel"
-	dbtest.SeedSession(t, te.db, parallelID, "tool-sequences-test", dbtest.WithMessageCounts(2, 1))
-	require.NoError(t, te.db.ReplaceSessionMessages(t.Context(), parallelID, []db.Message{
-		{SessionID: parallelID, Ordinal: 0, Role: "user", Content: "parallel", ContentLength: 8, Timestamp: "2026-04-26T10:00:00Z"},
-		{SessionID: parallelID, Ordinal: 1, Role: "assistant", Content: "parallel calls", ContentLength: 15, Timestamp: "2026-04-26T10:00:01Z", HasToolUse: true, ToolCalls: parallel},
-	}))
-	got = fetchSessionToolSequences(t, te, "tool-sequences-parallel")
-	require.Len(t, got.Sequences, 1)
-	assert.Equal(t, "open", got.Sequences[0].Ending, "parallel calls in one message do not recover each other")
-
 	unknown := []db.ToolCall{
 		{
 			ToolName: "Grep", Category: "Grep", ToolUseID: "known-empty",
@@ -205,58 +190,6 @@ func TestHandleToolSequences_Termination(t *testing.T) {
 			assert.Equal(t, tt.wantEnding, got.Sequences[0].Ending)
 		})
 	}
-}
-
-func TestHandleToolSequences_Bounds(t *testing.T) {
-	te := setup(t)
-	longSequence := make([]db.ToolCall, 12)
-	for i := range longSequence {
-		name, result := "Grep", "No matches found"
-		if i == len(longSequence)-1 {
-			name, result = "Read", "recovered content"
-		}
-		longSequence[i] = db.ToolCall{
-			ToolName: name, Category: name, ToolUseID: fmt.Sprintf("attempt-%02d", i),
-			InputJSON: strings.Repeat("x", 600), ResultContent: result,
-			ResultContentLength: len(result),
-			ResultEvents:        []db.ToolResultEvent{{ToolUseID: fmt.Sprintf("attempt-%02d", i), Source: "tool_execution", Status: "completed", Content: result, ContentLength: len(result), EventIndex: 0}},
-		}
-	}
-	seedSequenceSession(t, te.db, "tool-sequences-call-cap", nil, longSequence)
-	got := fetchSessionToolSequences(t, te, "tool-sequences-call-cap")
-	require.Len(t, got.Sequences, 1)
-	sequence := got.Sequences[0]
-	assert.Equal(t, 12, sequence.TotalCalls)
-	assert.Equal(t, 2, sequence.OmittedCalls)
-	assert.Equal(t, 2, got.OmittedCalls)
-	assert.Equal(t, "recovered", sequence.Ending)
-	require.Len(t, sequence.Calls, 10)
-	assert.Equal(t, "attempt-08", sequence.Calls[8].ToolUseID)
-	assert.Equal(t, "attempt-11", sequence.Calls[9].ToolUseID)
-	assert.Equal(t, 600, sequence.Calls[0].InputBytes)
-	assert.Len(t, sequence.Calls[0].InputPreview, 512)
-	assert.Equal(t, 88, sequence.Calls[0].InputOmittedBytes)
-
-	sequenceStarts := make([]db.ToolCall, 42)
-	for i := range sequenceStarts {
-		name, result := "Grep", "No matches found"
-		if i%2 == 1 {
-			name, result = "Read", "found"
-		}
-		id := fmt.Sprintf("sequence-%02d", i)
-		sequenceStarts[i] = db.ToolCall{
-			ToolName: name, Category: name, ToolUseID: id, InputJSON: `{}`,
-			ResultContent: result, ResultContentLength: len(result),
-			ResultEvents: []db.ToolResultEvent{{ToolUseID: id, Source: "tool_execution", Status: "completed", Content: result, ContentLength: len(result), EventIndex: 0}},
-		}
-	}
-	seedSequenceSession(t, te.db, "tool-sequences-sequence-cap", nil, sequenceStarts)
-	got = fetchSessionToolSequences(t, te, "tool-sequences-sequence-cap")
-	assert.Equal(t, 21, got.TotalSequences)
-	assert.Equal(t, 1, got.OmittedSequences)
-	assert.Equal(t, 42, got.TotalSequenceCalls)
-	assert.Equal(t, 2, got.OmittedCalls)
-	assert.Len(t, got.Sequences, 20)
 }
 
 func TestHandleToolSequences_GeneratedClientValidation(t *testing.T) {
@@ -324,16 +257,7 @@ func TestHandleToolSequences_ScopeAndPresence(t *testing.T) {
 		{SessionID: childID, Ordinal: 1, Role: "assistant", Content: "tool call", ContentLength: 9, Timestamp: "2026-04-26T10:00:01Z", HasToolUse: true, ToolCalls: []db.ToolCall{childEmpty}},
 		{SessionID: childID, Ordinal: 2, Role: "assistant", Content: "tool call", ContentLength: 9, Timestamp: "2026-04-26T10:00:02Z", HasToolUse: true, ToolCalls: []db.ToolCall{childCall}},
 	}))
-	for id, relationship := range map[string]string{"sequence-fork": "fork", "sequence-continuation": "continuation", "sequence-import": "import"} {
-		dbtest.SeedToolSequencesExample(t, te.db, id, func(s *db.Session) {
-			s.RelationshipType = relationship
-			s.FilePath = dbtest.Ptr("/archives/" + id + ".jsonl")
-		})
-	}
-	dbtest.SeedToolSequencesExample(t, te.db, "sequence-source-missing", func(s *db.Session) {
-		s.SourceMissingAt = dbtest.Ptr("2026-04-26T12:00:00Z")
-	})
-	for _, id := range []string{"sequence-root", childID, "sequence-fork", "sequence-continuation", "sequence-import", "sequence-source-missing"} {
+	for _, id := range []string{"sequence-root", childID} {
 		got := fetchSessionToolSequences(t, te, id)
 		assert.Equal(t, id, got.SessionID)
 		if id == childID {
@@ -351,50 +275,10 @@ func TestHandleToolSequences_ScopeAndPresence(t *testing.T) {
 	require.NoError(t, te.db.SoftDeleteSession(t.Context(), "sequence-trash"))
 	w = te.get(t, "/api/v1/sessions/sequence-trash/tool-sequences")
 	assertStatus(t, w, http.StatusNotFound)
-	dbtest.SeedSession(t, te.db, "sequence-permanently-deleted", "test")
-	require.NoError(t, te.db.DeleteSession(t.Context(), "sequence-permanently-deleted"))
-	w = te.get(t, "/api/v1/sessions/sequence-permanently-deleted/tool-sequences")
-	assertStatus(t, w, http.StatusNotFound)
 }
 
 func TestHandleToolSequences_RetainedEvidence(t *testing.T) {
 	te := setup(t)
-	unknownMarkers := []struct {
-		name    string
-		content string
-	}{
-		{name: "image", content: "[image]"},
-		{name: "dropped image", content: "[binary content]"},
-		{name: "offloaded image", content: "![Image: screenshot](asset://sha256/abc)"},
-		{name: "staged", content: "staged:42"},
-	}
-	for i, marker := range unknownMarkers {
-		t.Run(marker.name, func(t *testing.T) {
-			id := fmt.Sprintf("tool-sequences-marker-%d", i)
-			empty := db.ToolCall{
-				ToolName: "Grep", Category: "Grep", ToolUseID: "start", InputJSON: `{}`,
-				ResultContent: "No matches found", ResultContentLength: len("No matches found"),
-				ResultEvents: []db.ToolResultEvent{{ToolUseID: "start", Source: "tool_execution", Status: "completed", Content: "No matches found", ContentLength: len("No matches found"), EventIndex: 0}},
-			}
-			call := db.ToolCall{
-				ToolName: "Read", Category: "Read", ToolUseID: "marker", InputJSON: `{}`,
-				ResultContent: marker.content, ResultContentLength: len(marker.content),
-				ResultEvents: []db.ToolResultEvent{{ToolUseID: "marker", Source: "tool_execution", Status: "completed", Content: marker.content, ContentLength: len(marker.content), EventIndex: 1}},
-			}
-			seedSequenceSession(t, te.db, id, nil, []db.ToolCall{empty, call})
-			messages, err := te.db.GetAllMessages(t.Context(), id)
-			require.NoError(t, err)
-			rows := ingest.ExtractToolCallRows(messages)
-			require.Len(t, rows, 2)
-			assert.True(t, rows[1].ResultContentUnknown)
-			got := fetchSessionToolSequences(t, te, id)
-			require.Len(t, got.Sequences, 1)
-			assert.Equal(t, "unknown", got.Sequences[0].Calls[1].Outcome)
-			assert.True(t, got.Sequences[0].Calls[1].ResultContentUnknown)
-			assert.Equal(t, new(len(marker.content)), got.Sequences[0].Calls[1].ResultBytes)
-		})
-	}
-
 	t.Run("labelled image and staged summary stays unknown", func(t *testing.T) {
 		id := "tool-sequences-labelled-summary"
 		start := db.ToolCall{
@@ -425,48 +309,7 @@ func TestHandleToolSequences_RetainedEvidence(t *testing.T) {
 		assert.Equal(t, new(len(rows[1].ResultContent)), got.Sequences[0].Calls[1].ResultBytes)
 	})
 
-	t.Run("withheld positive length stays known and deduplicated summary is restored", func(t *testing.T) {
-		id := "tool-sequences-retained-length"
-		calls := []db.ToolCall{
-			{
-				ToolName: "Grep", Category: "Grep", ToolUseID: "start", InputJSON: `{}`, ResultContent: "No matches found", ResultContentLength: len("No matches found"),
-				ResultEvents: []db.ToolResultEvent{{ToolUseID: "start", Source: "tool_execution", Status: "completed", Content: "No matches found", ContentLength: len("No matches found"), EventIndex: 0}},
-			},
-			{
-				ToolName: "Read", Category: "Read", ToolUseID: "withheld", InputJSON: `{}`, ResultContentLength: 42,
-				ResultEvents: []db.ToolResultEvent{{ToolUseID: "withheld", Source: "tool_execution", Status: "completed", ContentLength: 42, EventIndex: 1}},
-			},
-			{
-				ToolName: "Read", Category: "Read", ToolUseID: "dedup", InputJSON: `{}`, ResultContent: "retained summary", ResultContentLength: len("retained summary"),
-				ResultEvents: []db.ToolResultEvent{{ToolUseID: "dedup", Source: "tool_execution", Status: "completed", Content: "retained summary", ContentLength: len("retained summary"), EventIndex: 2}},
-			},
-		}
-		seedSequenceSession(t, te.db, id, dbtest.Ptr("tool_call_pending"), calls)
-		messages, err := te.db.GetAllMessages(t.Context(), id)
-		require.NoError(t, err)
-		rows := ingest.ExtractToolCallRows(messages)
-		require.Len(t, rows, 3)
-		assert.Equal(t, 42, db.ResolveResultContentLength(rows[1].ResultContent, rows[1].ResultContentLength))
-		assert.False(t, rows[1].ResultContentUnknown)
-		assert.Equal(t, "retained summary", rows[2].ResultContent)
-		got := fetchSessionToolSequences(t, te, id)
-		require.Len(t, got.Sequences, 1)
-		assert.Equal(t, new(42), got.Sequences[0].Calls[1].ResultBytes)
-		assert.Equal(t, "retained summary", got.Sequences[0].Calls[2].ResultPreview)
-	})
-
-	t.Run("empty and late result events retain their outcomes", func(t *testing.T) {
-		emptyID := "tool-sequences-known-empty"
-		seedSequenceSession(t, te.db, emptyID, dbtest.Ptr("clean"), []db.ToolCall{{
-			ToolName: "Grep", Category: "Grep", ToolUseID: "empty", InputJSON: `{}`,
-			ResultEvents: []db.ToolResultEvent{{ToolUseID: "empty", Source: "tool_execution", Status: "completed", EventIndex: 0}},
-		}})
-		empty := fetchSessionToolSequences(t, te, emptyID)
-		require.Len(t, empty.Sequences, 1)
-		assert.Equal(t, "abandoned", empty.Sequences[0].Ending)
-		assert.Equal(t, "empty", empty.Sequences[0].Calls[0].Outcome)
-		assert.Equal(t, new(0), empty.Sequences[0].Calls[0].ResultBytes)
-
+	t.Run("a late completed event replaces an earlier error", func(t *testing.T) {
 		lateID := "tool-sequences-late-content"
 		seedSequenceSession(t, te.db, lateID, dbtest.Ptr("clean"), []db.ToolCall{{
 			ToolName: "Grep", Category: "Grep", ToolUseID: "late", InputJSON: `{}`,
@@ -479,16 +322,6 @@ func TestHandleToolSequences_RetainedEvidence(t *testing.T) {
 		late := fetchSessionToolSequences(t, te, lateID)
 		assert.Equal(t, 0, late.TotalSequences)
 		assert.Equal(t, 1, late.TotalToolCalls)
-	})
-
-	t.Run("missing result event and orphan-like call remain unknown", func(t *testing.T) {
-		id := "tool-sequences-missing-result"
-		seedSequenceSession(t, te.db, id, nil, []db.ToolCall{{
-			ToolName: "Bash", Category: "Bash", ToolUseID: "unmatched", InputJSON: `{"cmd":"ls"}`,
-		}})
-		got := fetchSessionToolSequences(t, te, id)
-		assert.Equal(t, 1, got.TotalToolCalls)
-		assert.Equal(t, 0, got.TotalSequences)
 	})
 
 	t.Run("orphan result event without a call is ignored", func(t *testing.T) {

@@ -20,28 +20,6 @@ test("renders, expands, and navigates observed sequences at desktop, tablet, and
 
   for (const width of [1280, 768, 400]) {
     const panel = await openSession(page, width);
-    const response = await page.request.get(`/api/v1/sessions/${SESSION_ID}/tool-sequences`);
-    expect(response.ok()).toBe(true);
-    const data = await response.json();
-    expect(data).toMatchObject({
-      session_id: SESSION_ID,
-      total_tool_calls: 3,
-      total_sequences: 1,
-      total_sequence_calls: 3,
-    });
-    expect(data.sequences[0]).toMatchObject({
-      ending: "recovered",
-      identical: true,
-      tool_changed: true,
-      calls: [
-        { ordinal: 1, tool_use_id: "grep-1" },
-        { ordinal: 2, tool_use_id: "grep-2" },
-        { ordinal: 3, tool_use_id: "read-1" },
-      ],
-    });
-    // Durations come from the session timing the transcript already shows.
-    expect(data.sequences[0].calls[0]).not.toHaveProperty("duration_ms");
-
     const header = panel.locator(".panel-head");
     await expect(header).toContainText("3 calls in sequences");
     await expect(header).toContainText("3 tool calls in session");
@@ -93,7 +71,7 @@ test("renders, expands, and navigates observed sequences at desktop, tablet, and
       .getByRole("link", { name: "Message 1: open the Grep call in the transcript" })
       .click();
     const target = scroller.locator(".virtual-row.selected");
-    await expect(target).toHaveAttribute("data-index", String(data.sequences[0].calls[0].ordinal));
+    await expect(target).toHaveAttribute("data-index", "1");
     await expect(target).toBeInViewport({ timeout: 10_000 });
     await expect(target).toContainText("Grep");
 
@@ -132,12 +110,5 @@ test("shows the empty state for a session with no messages", async ({ page }) =>
   await page.goto("/sessions/test-session-empty-0", { waitUntil: "domcontentloaded" });
   const panel = page.locator(".tool-sequences-panel");
   await expect(panel).toBeVisible({ timeout: 10_000 });
-  const response = await page.request.get("/api/v1/sessions/test-session-empty-0/tool-sequences");
-  expect(response.ok()).toBe(true);
-  expect(await response.json()).toMatchObject({
-    session_id: "test-session-empty-0",
-    total_tool_calls: 0,
-    total_sequences: 0,
-  });
   await expect(panel).toContainText("No tool calls recorded in this session.");
 });

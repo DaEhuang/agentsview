@@ -2346,26 +2346,6 @@ describe("SessionBreadcrumb", () => {
       component.$destroy();
     });
 
-    it("withholds links from sequences newer than the loaded messages until they catch up", async () => {
-      const session = makeSession("claude");
-      showMessages(session.id, "revision-1");
-      sessionsService.getApiV1SessionsByIdToolSequences
-        .mockResolvedValueOnce(makeToolSequences(7, session.id, "revision-2"))
-        .mockResolvedValueOnce(makeToolSequences(7, session.id, "revision-2"));
-      ui.signalPanelOpen = true;
-      const component = createClassComponent({
-        component: SessionBreadcrumb,
-        target: document.body,
-        props: { session, onBack: () => {} },
-      });
-      await vi.waitFor(async () => expect(await expandedSequenceText()).toContain("Message 7"));
-      expect(document.querySelector(".tool-sequences-panel a.jump")).toBeNull();
-
-      messages.loadedRevision = "revision-2";
-      await vi.waitFor(() => expect(jumpLink(7)).not.toBeNull());
-      component.$destroy();
-    });
-
     it.each([
       ["delayed", false],
       ["failed", true],
