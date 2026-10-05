@@ -45,8 +45,8 @@ func (s *RawProjectionStore) Project(ctx context.Context, lease rawderive.JobLea
 	if parsed.Tombstone != (m.Manifest.Kind == rawsync.ManifestTombstone) {
 		return errors.New("raw projection tombstone mismatch")
 	}
-	if parsed.Tombstone && len(parsed.Outcome.Results) > 0 {
-		return errors.New("tombstone cannot publish members")
+	if o := parsed.Outcome; parsed.Tombstone && (len(o.Results) > 0 || len(o.ExcludedSessionIDs) > 0 || len(o.SourceErrors) > 0 || o.ResultSetComplete || o.ForceReplace) {
+		return errors.New("tombstone cannot carry a parse outcome")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -243,7 +243,9 @@ func (s *RawProjectionStore) Project(ctx context.Context, lease rawderive.JobLea
 		changed = changed || !exists || !previous.Active || previous.CapturedSession != sessionID
 	}
 	// A complete archive snapshot can omit sessions that must remain retained.
-	replaceMembership := complete && (parsed.Tombstone || parsed.Outcome.ForceReplace)
+	// A tombstone reports that the source left its device, not that the user
+	// or the provider removed its sessions, so it withdraws no membership.
+	replaceMembership := complete && parsed.Outcome.ForceReplace
 	for _, b := range prior {
 		_, present := candidates[b.Group]
 		excluded := slices.Contains(parsed.Outcome.ExcludedSessionIDs, b.Member)
@@ -278,7 +280,11 @@ func (s *RawProjectionStore) Project(ctx context.Context, lease rawderive.JobLea
 		return err
 	}
 
-	_, err = tx.ExecContext(ctx, `UPDATE raw_source_projections SET last_attempt_manifest_id=$2,successful_manifest_id=CASE WHEN $5 THEN $2 ELSE successful_manifest_id END,membership_complete=$3,diagnostics=$4 WHERE source_id=$1`, source, m.ManifestID, complete, fmt.Sprintf("results=%d errors=%d complete=%t", len(parsed.Outcome.Results), len(parsed.Outcome.SourceErrors), complete), complete || len(candidates) > 0)
+	diagnostics := fmt.Sprintf("results=%d errors=%d complete=%t", len(parsed.Outcome.Results), len(parsed.Outcome.SourceErrors), complete)
+	if parsed.Tombstone {
+		diagnostics = "tombstone"
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE raw_source_projections SET last_attempt_manifest_id=$2,successful_manifest_id=CASE WHEN $5 THEN $2 ELSE successful_manifest_id END,membership_complete=$3,diagnostics=$4 WHERE source_id=$1`, source, m.ManifestID, complete, diagnostics, complete || len(candidates) > 0)
 	if err != nil {
 		return err
 	}

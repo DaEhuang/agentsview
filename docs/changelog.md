@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-01
+last_edited: 2026-10-05
 title: Changelog
 description: Release history for AgentsView
 ---
@@ -14,6 +14,18 @@ The latest published release is
 - The web UI reports an anonymous `app_opened` event through the server when it
   loads and on the first focus of each later UTC day.
   `AGENTSVIEW_TELEMETRY_ENABLED=0` turns it off with the daemon ping.
+- Upload existing Claude Code, Codex, and other supported local session roots
+  with `agentsview raw-sync backfill` before starting continuous raw sync. The
+  finite command saves resumable progress, reports incomplete work without
+  waiting through retry delays, and reuses completed migration proof without
+  uploading duplicate generations.
+- The web UI reports anonymous search, session-view, export, insight and
+  analytics-page events through the server, each with one value from a fixed
+  list. `AGENTSVIEW_TELEMETRY_ENABLED=0` turns them off.
+- Chat imports can replace sessions whose archived history is wrong. List them
+  with `agentsview import --replace <session-id>` or `replace=<session-id>` on
+  the import API. The old version moves to the trash with its messages, name,
+  and pins.
 - Sessions show the title their agent keeps for them, and a name you chose with
   `/rename` or the agent's equivalent wins over a generated title. Current
   Claude Code `/rename` names now appear, and Qwen Code, Gemini CLI, Kimi CLI,
@@ -101,6 +113,12 @@ The latest published release is
 
 **Improvements**
 
+- The Usage page stays fast after a pricing update. A changed price now
+  rebuilds only the sessions that used that model, instead of every session in
+  the archive, and a refresh that changes no rates rebuilds nothing. The daemon
+  rebuilds affected sessions in the background after its daily price refresh,
+  so the next Usage load doesn't wait for them. The first
+  Usage load after upgrading rebuilds the usage cache once.
 - The Usage page shows a **Total Input** card that adds uncached input, cache
   writes, and cache reads, so heavy prompt caching no longer looks like missing
   input. The input count that leaves out cached tokens is now labeled
@@ -134,6 +152,12 @@ The latest published release is
   stage starts, instead of leaving the previous subagent-repair label visible.
 - Full resync now shows how many queued sessions it has checked while repairing
   subagent relationships, then reports when it is saving those repairs.
+- Recall extraction can work through a large backlog faster against a hosted
+  or batching model endpoint. Set `concurrency` on a
+  `[recall.extract.servers.<name>]` entry to distill that many sessions at
+  once; each session's units still run in order. The default stays 1, which
+  suits a single local model, where parallel requests only share the same
+  compute.
 - Turning a session provider on or off, or adding or removing an alternate
   home, on the Settings page now takes effect without restarting the daemon.
   New sessions in a newly enabled provider or home are picked up as they are
@@ -185,11 +209,50 @@ The latest published release is
 
 **Bug fixes**
 
+- Hosted raw sync keeps a session listed and searchable after its source file
+  disappears from the device that uploaded it, matching the local archive.
+  Before, `raw-sync watch` reporting a missing file hid the session, emptied it
+  from the trash, and could swap in a shorter copy from another device. Deleting
+  a session yourself still removes it. Sessions already hidden this way stay
+  hidden until their file returns; see
+  [Hosted Raw Sync](/docs/hosted-raw-sync/#isolation-and-processing-limits).
+- On macOS, `agentsview serve` no longer hangs at `Running initial sync...`
+  when a session's working directory is on an external or network drive under
+  `/Volumes`. Reading Git metadata there made macOS ask for access to the
+  volume, and a `launchd` service on a Mac with nobody at the screen waited on
+  that prompt forever. AgentsView now leaves those directories untouched, so
+  sessions recorded there keep path-only project identity with no Git remote,
+  worktree, or branch. Set `scan_protected_paths = true` to read Git detail
+  from them again; see
+  [macOS Protected Folders](/docs/configuration/#macos-protected-folders).
+- On macOS, a reboot no longer makes the next sync re-read every session from
+  scratch. macOS can give a volume a different device number each time it is
+  mounted, which happens after a system update, and AgentsView took the changed
+  number to mean every session file had been replaced. Until that re-read
+  finished, `agentsview serve` did not start and `pg push --watch` could not
+  run. Saved file identity now follows the volume's own UUID, querying only
+  volumes that contain source files. Capture checks keep using the live device
+  and inode. The first sync after upgrading re-reads each session once, raw
+  capture re-captures each source once, and the first push to a DuckDB or
+  ClickHouse mirror re-sends each session once.
+- On Windows, `duckdb push` can now rebuild the mirror while `duckdb serve` has
+  it open, and serve switches to the rebuilt file without a restart, as on
+  macOS and Linux. Before, the push failed with "Access is denied" and asked
+  you to stop the server first.
+- Messages one Claude Code session sends to another no longer count as user
+  prompts. They no longer raise user-message counts or become a session's first
+  message, and the transcript shows each one as a "Message from another
+  session" card with the sender's name and full text. The first sync after
+  upgrading re-reads each session once.
 - Price Codex auto-review turns, recorded as `codex-auto-review`, at GPT-5.6
   Luna catalog rates instead of $0. Usage reports still list
   `codex-auto-review` as the reported model, and a custom pricing row for it
   still wins. Existing SQLite usage caches rebuild and the next ClickHouse push
   reprices the mirror. (#2078)
+- Codex sessions on GPT-5.6 and later price prompt-cache writes at the
+  cache-write rate instead of the input rate. A custom pricing row for such a
+  model needs `cache_creation_microdollars_per_mtok`, since omitted rates count
+  as zero. The first sync after upgrading re-reads each session once.
 - Sync continues importing local sessions and reachable remotes when another
   remote's hostname cannot resolve, such as while disconnected from a private
   network. This also applies during archive upgrades and full rebuilds, which
@@ -206,6 +269,10 @@ The latest published release is
   cores busy indefinitely. An empty write-ahead log no longer counts as a
   change for Cursor IDE or for other agents whose sessions live in SQLite
   databases; real writes still sync as before.
+- Re-importing a ChatGPT export now restores message text that an earlier import
+  stored cut short, when the archived text is the start of the export's text.
+  The message keeps its place and any pin, and search finds the restored text.
+  Any other difference from the archive is still refused.
 - Antigravity IDE and Antigravity CLI sessions stop re-syncing in a loop.
   Reading a session database rewrote its shared-memory (`-shm`) file, and
   AgentsView counted that as a change, so every pass re-read and re-uploaded
@@ -226,6 +293,27 @@ The latest published release is
   `history.jsonl` to say which sessions are active. AgentsView now also checks
   the files of Codex sessions active in the last 24 hours. A session you resume
   after more than 24 hours idle still waits until Codex closes its file.
+- Keep both transcripts when two Gemini CLI or Cursor files record the same
+  session ID. The stored file keeps its ID; the other becomes a linked session.
+  A new file can take over the original ID when the old file is gone and the
+  new transcript has at least as many messages. This covers folder moves and
+  renames of the original session. Remote imports also preserve the ID when
+  a complete mirror covers the old path; partial imports and paths outside
+  the exported roots stay separate. Provider-recognized moves, including Cursor
+  switching a transcript from `.txt` to `.jsonl`, retain IDs and saved names
+  locally and in complete remote mirrors, even for shorter replacements.
+  Already linked files need a provider-recognized move to keep their IDs.
+  Other shorter files stay separate so they cannot shorten the archive. The
+  first sync after upgrading re-reads the archive once, including unchanged
+  remote mirrors. Full resyncs preserve ownership and existing names, stars,
+  and pins, and skip ownership snapshots for providers without source roots.
+  On a first sync, parallel parse order decides which file gets the original
+  ID; it need not be the earliest segment. Trashing the base also hides its
+  linked sessions from the sidebar;
+  permanently deleting it promotes them. Cursor copies retain shared turns,
+  which search and usage count twice. A copied subagent links to the session
+  with the same ID, replacing its original parent link. Other agents sync as
+  before.
 - Recall no longer records work an agent only proposed as work it completed.
   When a stretch of a session ran no tools, extraction cannot produce a
   procedure entry for it and tells the model nothing there was executed.

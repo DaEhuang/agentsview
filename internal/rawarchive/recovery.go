@@ -243,7 +243,7 @@ func Restore(ctx context.Context, source, snapshot, target string, progress func
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return report, err
 		}
-		if err := os.Rename(filepath.Join(application, filepath.FromSlash(name)), path); err != nil {
+		if err := atomicfile.RenameNoReplace(filepath.Join(application, filepath.FromSlash(name)), path); err != nil {
 			return report, err
 		}
 	}
@@ -253,7 +253,7 @@ func Restore(ctx context.Context, source, snapshot, target string, progress func
 	if err := os.Mkdir(filepath.Join(assembled, Directory), 0o700); err != nil {
 		return report, err
 	}
-	if err := os.Rename(vaultPath, filepath.Join(assembled, Directory, "artifacts")); err != nil {
+	if err := atomicfile.RenameNoReplace(vaultPath, filepath.Join(assembled, Directory, "artifacts")); err != nil {
 		return report, err
 	}
 	if err := writeRecoveryConfig(assembled, settings); err != nil {

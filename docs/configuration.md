@@ -226,7 +226,7 @@ zoom_level = 120
 | `disabled_agents`                   | Session providers to exclude from local filesystem scanning — see [Disabling Session Providers](#disabling-session-providers)                                                                                                                                                                                                                                                                                                                                                    |
 | `[proxy]`                           | Managed proxy configuration table — see [Remote Access](/docs/remote-access/)                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `disable_update_check`              | Disable the automatic update check (see [Privacy](#privacy-and-telemetry))                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `scan_protected_paths`              | Allow Git discovery inside macOS privacy-protected folders, accepting one consent prompt per folder — see [macOS Protected Folders](#macos-protected-folders)                                                                                                                                                                                                                                                                                                                    |
+| `scan_protected_paths`              | Allow Git discovery inside macOS privacy-protected folders and volumes under `/Volumes`, accepting one consent prompt per location — see [macOS Protected Folders](#macos-protected-folders)                                                                                                                                                                                                                                                                                                                    |
 | `[pg]`                              | PostgreSQL sync configuration — see [PostgreSQL Sync](/docs/pg-sync/)                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `[duckdb]`                          | DuckDB mirror configuration — see [DuckDB Mirror](/docs/duckdb/)                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `[clickhouse]`                      | ClickHouse sync configuration — see [ClickHouse Sync](/docs/clickhouse-sync/)                                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -1657,6 +1657,13 @@ AgentsView no longer touches these locations during discovery:
 - `~/Library/CloudStorage` (Dropbox, OneDrive, Google Drive, Box) and
     `~/Dropbox`
 - `~/Library/Mobile Documents` (iCloud Drive)
+- Removable and network volumes mounted under `/Volumes`, such as
+    `/Volumes/External`
+
+The `/Volumes` rule matters most when AgentsView runs as a background service.
+macOS shows the consent prompt on the console, so a `launchd` agent on a Mac
+with nobody logged in at the screen waits on it forever and startup sync never
+finishes.
 
 Sessions whose working directory lives in one of these folders — including
 directories that only reach one through a symlink — keep **path-only project
@@ -1671,9 +1678,9 @@ If you keep code in one of these folders and want the Git detail, opt in:
 scan_protected_paths = true
 ```
 
-macOS then prompts once per folder on the next sync; granting access restores
-full identity for those sessions, and denying leaves them path-only. The option
-has no effect on other platforms.
+macOS then prompts once per folder or volume on the next sync; granting access
+restores full identity for those sessions, and denying leaves them path-only.
+The option has no effect on other platforms.
 
 Enabling the option applies to sessions parsed after the change. Sessions
 already in the archive keep their path-only identity until their session files
@@ -1788,12 +1795,32 @@ As of 0.33.0, the server sends an anonymous `daemon_active` liveness ping on
 startup and every 24 hours while running. The web UI also reports an anonymous
 `app_opened` event to the server when it loads and on the first focus of a later
 UTC day. The server sends it to PostHog with the same fields and opt-out as the
-ping. The browser never contacts PostHog. The ping contains only:
+ping. The browser never contacts PostHog.
+
+The web UI reports five core actions the same way. Each carries one property,
+and the server drops any value outside its fixed list. A search counts once per
+mode used during each command palette open. Typing pauses, sorting, and retries
+in the same mode do not add events. An insight counts once it finishes
+generating; opening a cached insight does not count.
+
+Downloads and Gist publishes count export attempts, including attempts that
+fail. Markdown links count after the link is copied successfully.
+
+| Event               | Property     | Allowed values                                                           |
+| ------------------- | ------------ | ------------------------------------------------------------------------ |
+| `search_run`        | `query_type` | `text`, `semantic`, `hybrid`                                             |
+| `session_viewed`    | `agent`      | the session's agent type                                                 |
+| `export_run`        | `format`     | `html`, `insight_html`, `csv`, `markdown_link`, `gist`, `insight_gist`   |
+| `insight_generated` | `kind`       | `daily_activity`, `agent_analysis`, or a generated-insight template name |
+| `analytics_viewed`  | `page`       | `usage`, `activity`, `trends`, `quality`                                 |
+
+Every event contains only:
 
 - app version and git commit
 - operating system and CPU architecture
 - the application-owned installation ID stored in
-    `~/.agentsview/telemetry-install-id`
+  `~/.agentsview/telemetry-install-id`
+- for the five UI actions, the one listed value above
 
 It contains no session data, prompts, project names, file paths, account
 information, or hostname, and the events are sent with person-profile processing

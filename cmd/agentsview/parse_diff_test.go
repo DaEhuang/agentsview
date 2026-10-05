@@ -17,6 +17,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/agentsview/internal/config"
 	"go.kenn.io/agentsview/internal/dbtest"
 	"go.kenn.io/agentsview/internal/importer"
 	"go.kenn.io/agentsview/internal/parser"
@@ -79,9 +80,53 @@ func TestGeminiAppsImportDispatchesDirectAndZipSources(t *testing.T) {
 	assert.Empty(t, formatImportFailureSummary(importer.ImportStats{}))
 }
 
-// isolateParseDiffEnv points the data dir, HOME, and every per-agent
-// directory override at empty temp dirs so end-to-end runs never
-// discover the developer machine's real session files.
+// claudeAIExportFile writes a one-conversation Claude.ai export with n messages.
+func claudeAIExportFile(t *testing.T, n int) string {
+	t.Helper()
+	msgs := make([]string, n)
+	for i := range msgs {
+		msgs[i] = fmt.Sprintf(`{"uuid":"m%d","text":"turn %d","sender":"human","content":[{"type":"text","text":"turn %d"}],"created_at":"2026-03-01T10:0%d:00.000000Z"}`, i, i, i, i)
+	}
+	path := filepath.Join(t.TempDir(), "conversations.json")
+	require.NoError(t, os.WriteFile(path, []byte(`[{"uuid":"replace-001","name":"Replace",`+
+		`"created_at":"2026-03-01T10:00:00.000000Z","updated_at":"2026-03-01T10:05:00.000000Z",`+
+		`"chat_messages":[`+strings.Join(msgs, ",")+`]}]`), 0o644))
+	return path
+}
+
+func TestImportSessionsReplace(t *testing.T) {
+	testDataDir(t)
+	require.NoError(t, importSessions(ImportConfig{Type: "claude-ai", Path: claudeAIExportFile(t, 2)}))
+	require.NoError(t, importSessions(ImportConfig{
+		Type: "claude-ai", Path: claudeAIExportFile(t, 1), Replace: []string{"claude-ai:replace-001"},
+	}))
+
+	cfg, err := config.LoadMinimal()
+	require.NoError(t, err)
+	database, err := openDB(t.Context(), cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+	msgs, err := database.GetAllMessages(t.Context(), "claude-ai:replace-001")
+	require.NoError(t, err)
+	assert.Len(t, msgs, 1)
+	trashed, err := database.ListTrashedSessions(t.Context())
+	require.NoError(t, err)
+	require.Len(t, trashed, 1)
+	assert.True(t, strings.HasPrefix(trashed[0].ID, "claude-ai:replace-001:replaced:"), trashed[0].ID)
+}
+
+func TestImportSessionsRejectsReplaceForGeminiApps(t *testing.T) {
+	dataDir := testDataDir(t)
+	err := importSessions(ImportConfig{
+		Type: "gemini-apps", Path: filepath.Join(t.TempDir(), "missing.html"),
+		Replace: []string{"x"},
+	})
+	require.ErrorContains(t, err, "--replace is not supported for gemini-apps imports")
+	entries, err := os.ReadDir(dataDir)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "the rejection must not create a database")
+}
+
 func isolateParseDiffEnv(t *testing.T) {
 	t.Helper()
 	testDataDir(t)

@@ -9,42 +9,49 @@ import (
 	"testing"
 	"time"
 
-	kittelemetry "go.kenn.io/kit/telemetry"
+	"go.kenn.io/kit/telemetry/posthog"
 )
 
 const (
-	EnabledEnv        = "AGENTSVIEW_TELEMETRY_ENABLED"
-	GenericEnabledEnv = kittelemetry.GenericTelemetryEnabledEnv
-	postHogAPIKey     = "phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf"
-	EventDaemonActive = "daemon_active"
-	EventAppOpened    = "app_opened"
-	application       = "agentsview"
-	envPrefix         = "AGENTSVIEW"
+	EnabledEnv            = "AGENTSVIEW_TELEMETRY_ENABLED"
+	GenericEnabledEnv     = posthog.GenericEnabledEnv
+	postHogAPIKey         = "phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf"
+	EventDaemonActive     = "daemon_active"
+	EventAppOpened        = "app_opened"
+	EventSearchRun        = "search_run"
+	EventSessionViewed    = "session_viewed"
+	EventExportRun        = "export_run"
+	EventInsightGenerated = "insight_generated"
+	EventAnalyticsViewed  = "analytics_viewed"
+	application           = "agentsview"
+	envPrefix             = "AGENTSVIEW"
 )
 
-var ErrUnsupportedEvent = kittelemetry.ErrUnsupportedTelemetryEvent
+var ErrUnsupportedEvent = posthog.ErrUnsupportedEvent
 
 type Reporter struct {
-	client *kittelemetry.PostHogReporter
+	client *posthog.Reporter
 }
 
 type Options struct {
 	InstallationID string
 	// InstalledAt is when InstallationID was created. Reports carry its age as
 	// install_age_hours; zero sends them without an age.
-	InstalledAt time.Time
-	Version     string
-	Commit      string
+	InstalledAt  time.Time
+	Version      string
+	Commit       string
+	AgentTypes   []string
+	InsightKinds []string
 }
 
 func EnabledFromEnv() bool {
-	return kittelemetry.PostHogTelemetryEnabledFromEnv(envPrefix)
+	return posthog.EnabledFromEnv(envPrefix)
 }
 
 func NewReporter(opts Options) (*Reporter, error) {
 	if !EnabledFromEnv() {
 		// kit keeps the allowlist on an opted-out reporter, so the UI route still rejects unknown events.
-		client, err := newKitReporter(opts.InstallationID, opts.InstalledAt, opts.Version, opts.Commit)
+		client, err := newKitReporter(opts)
 		if err != nil {
 			return nil, err
 		}
@@ -57,7 +64,7 @@ func NewReporter(opts Options) (*Reporter, error) {
 		return nil, errors.New("installation ID is required")
 	}
 
-	client, err := newKitReporter(opts.InstallationID, opts.InstalledAt, opts.Version, opts.Commit)
+	client, err := newKitReporter(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +72,7 @@ func NewReporter(opts Options) (*Reporter, error) {
 }
 
 func DisabledReporter() *Reporter {
-	return &Reporter{client: kittelemetry.DisabledPostHogReporter()}
+	return &Reporter{client: posthog.DisabledReporter()}
 }
 
 func NewReporterOrDisabled(opts Options) *Reporter {
@@ -100,11 +107,11 @@ func (r *Reporter) EventAllowed(event string) bool {
 
 // CaptureHandler lets the web UI report allowlisted events through this reporter.
 func (r *Reporter) CaptureHandler() http.Handler {
-	var client *kittelemetry.PostHogReporter
+	var client *posthog.Reporter
 	if r != nil {
 		client = r.client
 	}
-	return kittelemetry.NewPostHogCaptureHandler(client)
+	return posthog.NewCaptureHandler(client)
 }
 
 func (r *Reporter) SanitizeProperties(
@@ -128,24 +135,32 @@ func (r *Reporter) Close() error {
 	return r.client.Close()
 }
 
-func newKitReporter(
-	distinctID string, installedAt time.Time, version, commit string,
-) (*kittelemetry.PostHogReporter, error) {
-	return kittelemetry.NewPostHogReporter(kittelemetry.PostHogOptions{
+func newKitReporter(opts Options) (*posthog.Reporter, error) {
+	return posthog.NewReporter(posthog.Options{
 		APIKey:      postHogAPIKey,
 		Application: application,
 		EnvPrefix:   envPrefix,
-		DistinctID:  distinctID,
-		InstalledAt: installedAt,
-		Version:     version,
-		Commit:      commit,
+		DistinctID:  opts.InstallationID,
+		InstalledAt: opts.InstalledAt,
+		Version:     opts.Version,
+		Commit:      opts.Commit,
 		Source:      "daemon",
-	}, allowedEventOptions()...)
+	}, allowedEventOptions(opts)...)
 }
 
-func allowedEventOptions() []kittelemetry.PostHogOption {
-	return []kittelemetry.PostHogOption{
-		kittelemetry.WithAllowedEvent(EventDaemonActive),
-		kittelemetry.WithAllowedEvent(EventAppOpened),
+func allowedEventOptions(opts Options) []posthog.Option {
+	return []posthog.Option{
+		posthog.WithAllowedEvent(EventDaemonActive),
+		posthog.WithAllowedEvent(EventAppOpened),
+		oneOf(EventSearchRun, "query_type", "text", "semantic", "hybrid"),
+		oneOf(EventSessionViewed, "agent", opts.AgentTypes...),
+		oneOf(EventExportRun, "format", "html", "insight_html", "csv", "markdown_link", "gist", "insight_gist"),
+		oneOf(EventInsightGenerated, "kind", opts.InsightKinds...),
+		oneOf(EventAnalyticsViewed, "page", "usage", "activity", "trends", "quality"),
 	}
+}
+
+func oneOf(event, property string, values ...string) posthog.Option {
+	return posthog.WithAllowedEvent(event,
+		posthog.AllowProperty(property, posthog.AllowStringValues(values...)))
 }

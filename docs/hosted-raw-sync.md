@@ -209,10 +209,28 @@ provider identity, sources remain separate even when their content matches.
 
 A shorter transcript shares the longer copy's displayed session when every
 retained message and usage event matches its prefix and the source metadata
-agrees. Each source keeps its captured revision. Removing the longer source
-restores the shorter copy. Changed messages, conflicting metadata, or several
-divergent continuations remain separate variants; the bare session ID is then
-ambiguous. Source removal retracts only that source's proof.
+agrees. Each source keeps its captured revision. When a later snapshot of the
+longer source no longer contains the session, the shorter copy is displayed
+again. Changed messages, conflicting metadata, or several divergent
+continuations remain separate variants; the bare session ID is then ambiguous.
+Such a removal retracts only that source's proof.
+
+A source file that disappears from its device does not remove its sessions.
+`raw-sync watch` reports the disappearance as a tombstone, and the server
+records it as the source's current generation. The sessions that source last
+supplied stay listed and searchable with their names, stars, pins, and source
+proof. If the file returns, its new snapshot updates the same sessions. Only
+three things remove a hosted session: the user deletes it, the parser excludes
+it, or a later snapshot of a source that reports its full contents omits it.
+
+A departed source sends no further snapshot. If its copy of a session conflicts
+with another device's, the two stay separate variants and the bare session ID
+stays ambiguous. Deleting the departed variant resolves it.
+
+A departed source has nothing left to parse, so `pg raw-reparse` leaves its
+retained sessions as the earlier parser produced them. Sessions hidden by a
+tombstone that was processed before this rule took effect stay hidden until
+their source returns; their raw files and manifests remain in custody.
 
 Names, stars and pins survive compatible publication; ambiguous identity never
 silently picks a transcript. Owner imports that change legacy identity must
@@ -250,6 +268,10 @@ ID is bound to the executable's processing version. Equal manifest/version
 selection is idempotent: a new run ID does not resurrect completed or exhausted
 jobs for that same selection. Startup and idle polls perform no reparse scan.
 
+A source whose file has left its device has a tombstone as its current head.
+Reparsing it changes nothing, so its retained sessions keep the output of the
+parser that last read the file.
+
 To stop derivation, set `raw_derivation = false` and restart. Keep `raw_tenant`,
 authentication, the cursor secret and the tenant-bound runtime connection.
 Hosted public reads and raw custody remain available; accepted new manifests
@@ -261,6 +283,86 @@ Keep PostgreSQL metadata and the immutable raw repository together in backups.
 Automated retention and garbage collection of accepted generations, disaster
 rebuilds, enrollment UX, embedding consumption and migration cutover tooling
 remain outside this release.
+
+## Backfill existing laptop sources
+
+Run a finite backfill before starting the watcher on a laptop that already has
+session history. The command reads the same configured filesystem roots as local
+sync. It captures and uploads original provider files without opening, parsing,
+or changing the local SQLite archive. S3 roots are not accepted.
+
+Use a stable run ID and select every provider included in this migration:
+
+```bash
+export AGENTSVIEW_RAW_SYNC_URL=https://agents.example.com
+export AGENTSVIEW_RAW_SYNC_DEVICE_ID=device-id
+export AGENTSVIEW_RAW_SYNC_CREDENTIAL=device-credential
+
+agentsview raw-sync backfill \
+  --run-id laptop-history-1 \
+  --provider claude \
+  --provider codex \
+  --batch-size 128 \
+  --format json
+```
+
+Batch size may be 1–512 and can change between attempts. The run ID is bound to
+the device, server, selected providers, and the root entries as written in the
+configuration. Reordered or duplicate provider flags describe the same
+selection. A changed device, provider set, root entry, or root order needs a new
+run ID, because the order in the configuration decides which root owns a file
+that two overlapping roots both contain.
+
+The checkpoint is bound to one server URL, including any path prefix, for both
+backfill and watch. For example, `https://agents.example.com/team-a` and
+`https://agents.example.com/team-b` are separate destinations. A new run ID does
+not permit a different destination to reuse its receipts. To use another server,
+choose a separate `AGENTSVIEW_DATA_DIR` and enroll a device there. An older
+checkpoint with uploads but no recorded server also requires a separate data
+directory and a newly enrolled device; the client cannot establish where those
+uploads went. The original checkpoint and local archive remain intact.
+
+A run starts only when every configured root of the selected providers exists.
+If one is missing, such as a stale entry or an unmounted drive, the command
+exits with status 1 before saving the run. Mount the root or remove it from the
+configuration, then run the command again. A new Crush run also rejects an
+existing `projects.json` that cannot be read or decoded; repair the registry
+before retrying. A started run keeps the roots it resolved on its first attempt,
+so captured work still uploads after a source root is unmounted. It also saves
+Crush's registry-derived project paths, so later registry changes, including a
+broken registry, do not alter the attribution of resumed uploads.
+
+Each invocation is finite. It does not sleep until a failed or deferred upload
+becomes eligible. An incomplete attempt prints current aggregate progress and
+exits with status 2; repair the unavailable root, local spool capacity, device
+authorization, network, or server rejection, then run the same command again.
+
+Two failures end a run for good. Repeating the run can't finish it, so start a
+new run ID, which captures the affected source again:
+
+- `rejected`: the server permanently refused a capture in the run. Fix the
+  source first.
+- `capture_lost`: a capture was removed from the local spool before it uploaded,
+  for example by checkpoint recovery after a missing object.
+
+JSON output is one object with `captured`, `acknowledged`, `pending`, failure
+counters, and an explicit `complete` field. Human output states `complete` or
+`incomplete` directly. Output and errors do not include source paths, transcript
+content, credentials, receipts, or raw server responses.
+
+When the same immutable run reports `"complete":true`, its saved result is
+historical proof. Repeating it does not rediscover sources, contact the server,
+or create another generation, even if files were appended or the old root is no
+longer mounted. Start the watcher after that result to capture later changes:
+
+```bash
+agentsview raw-sync watch
+```
+
+Keep the same device ID, credential, server, and provider configuration for the
+handoff. The watcher owns the same checkpoint writer and continues from the
+acknowledged source heads left by the backfill, so do not run both commands at
+the same time.
 
 ## Laptop raw watch daemon
 
@@ -290,6 +392,11 @@ Captures and upload state are kept under `raw-sync/` in the configured
 AgentsView data directory. `agentsview raw-sync status` prints path-free JSON
 describing the local checkpoint, pending work, retry time, failures, and
 coverage.
+
+When a complete audit finds that a previously captured file is gone, the
+watcher uploads a tombstone for it. The server keeps the sessions already
+derived from that file; see
+[Isolation and processing limits](#isolation-and-processing-limits).
 
 The normal writable `agentsview serve` daemon has its own parser watcher. Run
 both only when local parsed sessions and hosted raw custody are both required;

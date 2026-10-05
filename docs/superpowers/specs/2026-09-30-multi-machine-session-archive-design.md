@@ -72,12 +72,11 @@ that the proposed behavior already exists:
 - Docbank #741 merged on September 30 as `4e9a5a0e`. The branch's pre-squash pin
   is not that merged revision; no fetched release tag contains the merge.
 
-The implementation baseline now merges main `1148d7f2` without rewriting the
-branch's history. Docbank is pinned to merged #764 (`1fc83dc6`). The retained
-retired-generation regressions pass after reconciliation. Main also requires
-Kit's pending #144 telemetry API, absent from v0.30.1; the local implementation
-uses its updated head `711756d2`, which includes the large-extras work. Replace
-that temporary pin with a tested tagged release before delivery.
+The implementation baseline now includes main `597a06ba` without rewriting the
+branch's history. It uses Docbank v0.15.0 and Kit v0.31.1, replacing the
+temporary commit pins. These releases include embedded backup, large recovery
+files and the telemetry API required by main. The recovery and
+retired-generation regressions must pass against these releases before delivery.
 
 [Hosted raw sync](../../hosted-raw-sync.md) retains originals and authenticated
 source generations. [Artifact folder sync](../../artifact-sync.md) exchanges

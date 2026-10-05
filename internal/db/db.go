@@ -551,7 +551,21 @@ CREATE INDEX IF NOT EXISTS idx_provider_freshness_updated_at
 // that second transcript's entries appended to the same sub-agent session.
 // Re-parse unchanged Claude sources so a sub-agent session reaches its later
 // run's last entry.)
-const dataVersion = 122
+// (123: Codex cache-write input tokens are split out of uncached input into
+// cache_creation_input_tokens so GPT-5.6 and later writes price at the
+// cache-write rate. Re-parse unchanged Codex-format sources because the
+// stored token_usage changes while source bytes do not.)
+// (124: OpenCode dispatch timestamps are retained as tool-execution events so
+// unchanged sessions gain dispatch-to-completion timing.)
+// (125: Gemini and Cursor files that share a session ID remain separate
+// conversations. Re-parse unchanged sources, including cached remote mirrors,
+// to recover conversations previously collapsed into one archived session.)
+// (126: Claude messages from another Claude Code session, persisted as
+// queued_command prompts wrapped in <cross-session-message>, are now system
+// rows with source_subtype peer_message instead of user prompts. Re-parse
+// unchanged Claude sources so user-message counts and first messages drop
+// them.)
+const dataVersion = 126
 
 const tokenCoverageRepairStatsKey = "token_coverage_repair_v1"
 
@@ -769,6 +783,7 @@ type DB struct {
 	usageBackfillDone    chan struct{}
 	usageBackfillErr     error
 	usageBackfillStarted func()
+	usageBackfillRerun   bool // queues one more pass after the active one
 	// usageBackfillEnabled records that this process explicitly started
 	// background backfill (the daemon lifecycle). Reopen restarts a pass
 	// only then, so CLI resyncs never trigger an unrequested archive scan.
@@ -2162,6 +2177,7 @@ func legacySchemaColumnMigrations() []schemaColumnMigration {
 
 func schemaColumnMigrations() []schemaColumnMigration {
 	return []schemaColumnMigration{
+		{"excluded_sessions", "file_path", "ALTER TABLE excluded_sessions ADD COLUMN file_path TEXT"},
 		{
 			"session_project_assignments", "original_project",
 			"ALTER TABLE session_project_assignments ADD COLUMN original_project TEXT NOT NULL DEFAULT '';" +
@@ -4544,14 +4560,11 @@ func (db *DB) startWALCheckpointLoop() {
 		defer close(done)
 		ticker := time.NewTicker(walCheckpointInterval)
 		defer ticker.Stop()
+		var diag walDiagnostics
 		for {
 			select {
 			case <-ticker.C:
-				attempted, err := db.MaybeCheckpointLargeWAL(context.Background())
-				if attempted && err != nil &&
-					!errors.Is(err, ErrWALCheckpointBusy) {
-					log.Printf("sqlite wal checkpoint: %v", err)
-				}
+				db.walMaintenanceTick(context.Background(), &diag)
 			case <-stop:
 				return
 			}

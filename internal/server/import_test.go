@@ -4,9 +4,11 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json/v2"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -251,8 +253,8 @@ const chatGPTRefusalConvWithAppend = `[{
   }
 }]`
 
-// postChatGPTExport posts conversations as a one-file export zip and decodes the JSON body.
-func postChatGPTExport(t *testing.T, srv *Server, conversations string) map[string]any {
+// chatGPTExportZip packs conversations as a one-file ChatGPT export zip.
+func chatGPTExportZip(t *testing.T, conversations string) []byte {
 	t.Helper()
 	var archive bytes.Buffer
 	zw := zip.NewWriter(&archive)
@@ -261,12 +263,17 @@ func postChatGPTExport(t *testing.T, srv *Server, conversations string) map[stri
 	_, err = entry.Write([]byte(conversations))
 	require.NoError(t, err)
 	require.NoError(t, zw.Close())
+	return archive.Bytes()
+}
 
+// postChatGPTExport posts conversations as a one-file export zip and decodes the JSON body.
+func postChatGPTExport(t *testing.T, srv *Server, conversations string) map[string]any {
+	t.Helper()
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	part, err := writer.CreateFormFile("file", "export.zip")
 	require.NoError(t, err)
-	_, err = part.Write(archive.Bytes())
+	_, err = part.Write(chatGPTExportZip(t, conversations))
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
 
@@ -362,4 +369,73 @@ func TestHandleImportClaudeAIStreamsRefusalsOnlyWhenDone(t *testing.T) {
 	assert.Equal(t, []importer.ImportRefusal{
 		{SessionID: "claude-ai:refusal-sse-001", Reason: importer.RefusalShorterExport},
 	}, done.Refusals)
+}
+
+// postImport posts data to an import route and decodes the stats from the JSON body or the stream's done event.
+func postImport(t *testing.T, srv *Server, path, filename string, data []byte, stream bool) importer.ImportStats {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", filename)
+	require.NoError(t, err)
+	_, _ = part.Write(data)
+	require.NoError(t, writer.Close())
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if stream {
+		req.Header.Set("Accept", "text/event-stream")
+	}
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	var stats importer.ImportStats
+	payload := rec.Body.String()
+	if stream {
+		_, done, ok := strings.Cut(payload, "event: done\ndata: ")
+		require.True(t, ok, "no done event in %s", payload)
+		payload, _, _ = strings.Cut(done, "\n")
+	}
+	require.NoError(t, json.Unmarshal([]byte(payload), &stats))
+	return stats
+}
+
+func TestHandleImportReplaceQuery(t *testing.T) {
+	const claudeAIMessage = `{"uuid":"m%d","text":"turn %d","sender":"human","content":[{"type":"text","text":"turn %d"}],"created_at":"2026-03-01T10:0%d:00.000000Z"}`
+	claudeAIExport := func(n int) []byte {
+		msgs := make([]string, n)
+		for i := range msgs {
+			msgs[i] = fmt.Sprintf(claudeAIMessage, i, i, i, i)
+		}
+		return []byte(`[{"uuid":"replace-001","name":"Replace","created_at":"2026-03-01T10:00:00.000000Z",` +
+			`"updated_at":"2026-03-01T10:05:00.000000Z","chat_messages":[` + strings.Join(msgs, ",") + `]}]`)
+	}
+	claudeAI := struct{ path, file, id string }{"/api/v1/import/claude-ai", "conversations.json", "claude-ai:replace-001"}
+	chatGPT := struct{ path, file, id string }{"/api/v1/import/chatgpt", "export.zip", "chatgpt:cg-1"}
+	for _, tt := range []struct {
+		name             string
+		route            struct{ path, file, id string }
+		initial, refused []byte
+		stream           bool
+	}{
+		{"claude-ai json", claudeAI, claudeAIExport(2), claudeAIExport(1), false},
+		{"claude-ai sse", claudeAI, claudeAIExport(2), claudeAIExport(1), true},
+		{"chatgpt json", chatGPT, chatGPTExportZip(t, chatGPTRefusalConvWithAppend), chatGPTExportZip(t, chatGPTRefusalConv), false},
+		{"chatgpt sse", chatGPT, chatGPTExportZip(t, chatGPTRefusalConvWithAppend), chatGPTExportZip(t, chatGPTRefusalConv), true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := testServer(t, 5*time.Second)
+			require.Equal(t, 1, postImport(t, srv, tt.route.path, tt.route.file, tt.initial, tt.stream).Imported)
+			require.Equal(t, 1, postImport(t, srv, tt.route.path, tt.route.file, tt.refused, tt.stream).Errors)
+
+			query := "?" + url.Values{"replace": {tt.route.id}}.Encode()
+			stats := postImport(t, srv, tt.route.path+query, tt.route.file, tt.refused, tt.stream)
+			assert.Equal(t, 1, stats.Updated)
+			assert.Zero(t, stats.Errors)
+			trashed, err := srv.db.(*db.DB).ListTrashedSessions(t.Context())
+			require.NoError(t, err)
+			require.Len(t, trashed, 1)
+			assert.True(t, strings.HasPrefix(trashed[0].ID, tt.route.id+":replaced:"), trashed[0].ID)
+		})
+	}
 }

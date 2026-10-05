@@ -4,11 +4,10 @@ import (
 	"context"
 	"runtime"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	kittelemetry "go.kenn.io/kit/telemetry"
+	"go.kenn.io/kit/telemetry/posthog"
 )
 
 func TestEnabledFromEnvHonorsAgentsViewAndGenericOptOut(t *testing.T) {
@@ -16,7 +15,7 @@ func TestEnabledFromEnvHonorsAgentsViewAndGenericOptOut(t *testing.T) {
 	assert.False(t, EnabledFromEnv())
 
 	t.Setenv(EnabledEnv, "1")
-	if kittelemetry.PostHogTelemetryDisabled() {
+	if posthog.ProcessDisabled() {
 		assert.False(t, EnabledFromEnv())
 		return
 	}
@@ -64,7 +63,7 @@ func TestNewReporterOptedOutKeepsAllowlist(t *testing.T) {
 	assert.False(t, reporter.Enabled())
 	assert.True(t, reporter.EventAllowed(EventAppOpened))
 	assert.True(t, reporter.EventAllowed(EventDaemonActive))
-	assert.False(t, reporter.EventAllowed("search_run"))
+	assert.False(t, reporter.EventAllowed("unknown_event"))
 	require.NoError(t, reporter.CaptureDaemonActive(t.Context()))
 }
 
@@ -72,9 +71,9 @@ func TestAllowedEventOptionsConfigureDaemonActiveShape(t *testing.T) {
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
 
-	client, err := newKitReporter(
-		"anonymous-install-id", time.Time{}, "v1.2.3", "abc123",
-	)
+	client, err := newKitReporter(Options{
+		InstallationID: "anonymous-install-id", Version: "v1.2.3", Commit: "abc123",
+	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, client.Close()) })
 
@@ -116,9 +115,9 @@ func TestReporterCaptureDaemonActiveNoopsDuringTests(t *testing.T) {
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
 
-	client, err := newKitReporter(
-		"anonymous-install-id", time.Time{}, "v1.2.3", "abc123",
-	)
+	client, err := newKitReporter(Options{
+		InstallationID: "anonymous-install-id", Version: "v1.2.3", Commit: "abc123",
+	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, client.Close()) })
 
@@ -130,7 +129,7 @@ func TestReporterCaptureDaemonActiveNoopsDuringTests(t *testing.T) {
 }
 
 func TestReporterCaptureDaemonActiveTestBlockerWinsOverCanceledContext(t *testing.T) {
-	client := kittelemetry.DisabledPostHogReporter()
+	client := posthog.DisabledReporter()
 	reporter := &Reporter{client: client}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

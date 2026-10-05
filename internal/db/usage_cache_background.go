@@ -26,6 +26,10 @@ const (
 // Installed session versions remain the source of truth, so restarting a pass
 // naturally skips completed work.
 func (db *DB) StartUsageCacheBackfill(ctx context.Context) error {
+	return db.startUsageCacheBackfill(ctx, false)
+}
+
+func (db *DB) startUsageCacheBackfill(ctx context.Context, rerunIfActive bool) error {
 	if db.readOnly {
 		return errors.New("usage cache background backfill requires a writable archive")
 	}
@@ -39,6 +43,9 @@ func (db *DB) StartUsageCacheBackfill(ctx context.Context) error {
 		case <-db.usageBackfillDone:
 			db.usageBackfillDone = nil
 		default:
+			if rerunIfActive {
+				db.usageBackfillRerun = true
+			}
 			db.usageBackfillMu.Unlock()
 			return nil
 		}
@@ -52,11 +59,19 @@ func (db *DB) StartUsageCacheBackfill(ctx context.Context) error {
 	db.usageBackfillMu.Unlock()
 
 	go func() {
-		err := db.runUsageCacheBackfill(workerCtx)
-		db.usageBackfillMu.Lock()
-		db.usageBackfillErr = err
-		close(done)
-		db.usageBackfillMu.Unlock()
+		for {
+			err := db.runUsageCacheBackfill(workerCtx)
+			db.usageBackfillMu.Lock()
+			rerun := db.usageBackfillRerun && err == nil
+			db.usageBackfillRerun = false
+			if !rerun {
+				db.usageBackfillErr = err
+				close(done)
+				db.usageBackfillMu.Unlock()
+				return
+			}
+			db.usageBackfillMu.Unlock()
+		}
 	}()
 	if started != nil {
 		started()
@@ -118,6 +133,26 @@ func (db *DB) restartUsageCacheBackfillIfEnabled() error {
 		return nil
 	}
 	return db.StartUsageCacheBackfill(context.Background())
+}
+
+// UsagePricingDigest identifies the stored pricing catalog, so callers can tell whether a refresh committed any write.
+func (db *DB) UsagePricingDigest(ctx context.Context) (string, error) {
+	rows, err := db.loadPricingMapFrom(ctx, db.getReader())
+	if err != nil {
+		return "", err
+	}
+	return usagePricingIdentity(rows)
+}
+
+// RewarmUsageCache rebuilds price-stale rollups; a call during a pass queues one rerun because passes pin their catalog.
+func (db *DB) RewarmUsageCache() error {
+	db.usageBackfillMu.Lock()
+	enabled := db.usageBackfillEnabled
+	db.usageBackfillMu.Unlock()
+	if !enabled {
+		return nil
+	}
+	return db.startUsageCacheBackfill(context.Background(), true)
 }
 
 // StopUsageCacheBackfill cancels and joins the active pass before cache handles
@@ -282,6 +317,13 @@ func usageBackfillLocations(
 	ctx context.Context, cache *usageCache, local *time.Location,
 ) ([]*time.Location, error) {
 	localIdentity := usageTimezoneIdentityFor(local, nil)
+	// Unnamed sets left behind by an earlier local zone resolution are never
+	// read again; the foreign keys cascade to their days and installs.
+	if _, err := cache.db.ExecContext(ctx, `DELETE FROM usage_rollup_timezones
+		WHERE timezone_name IN ('', 'Local') AND timezone_key != ?`,
+		localIdentity.Key); err != nil {
+		return nil, fmt.Errorf("pruning stale local usage timezones: %w", err)
+	}
 	rows, err := cache.db.QueryContext(ctx, `SELECT timezone_name
 		FROM usage_rollup_timezones
 		WHERE timezone_key != ? AND timezone_name NOT IN ('', 'Local')

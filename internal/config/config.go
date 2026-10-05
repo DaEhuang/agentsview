@@ -32,6 +32,7 @@ import (
 	"go.kenn.io/agentsview/internal/jsonutil"
 	"go.kenn.io/agentsview/internal/parser"
 	"go.kenn.io/agentsview/internal/pathutil"
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/embedconfig"
 )
 
@@ -936,8 +937,9 @@ type Config struct {
 
 	// ScanProtectedPaths allows local Git discovery to read working
 	// directories inside macOS locations guarded by a TCC consent prompt
-	// (Documents, Downloads, Desktop, iCloud Drive, and cloud-provider
-	// folders such as Dropbox). It defaults to false so a first sync never
+	// (Documents, Downloads, Desktop, iCloud Drive, cloud-provider folders
+	// such as Dropbox, and removable or network volumes under /Volumes). It
+	// defaults to false so a first sync never
 	// asks for access to folders the user did not point us at; sessions
 	// there keep path-only project identity instead of Git remote,
 	// worktree, and branch detail. Setting it accepts one macOS prompt per
@@ -1479,7 +1481,7 @@ func (c *Config) migrateJSONToTOML() error {
 		if err := os.WriteFile(tomlPath, buf.Bytes(), 0o600); err != nil {
 			return fmt.Errorf("writing config.toml: %w", err)
 		}
-		if err := os.Rename(jsonPath, jsonPath+".bak"); err != nil {
+		if err := atomicfile.Replace(jsonPath, jsonPath+".bak"); err != nil {
 			return fmt.Errorf("renaming config.json to .bak: %w", err)
 		}
 		return nil

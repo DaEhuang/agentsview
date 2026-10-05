@@ -734,7 +734,11 @@ func (db *DB) GetAllMessages(
 	ctx context.Context, sessionID string,
 ) ([]Message, error) {
 	db.messagesLoadCount.Add(1)
-	rows, err := db.getReader().QueryContext(ctx, fmt.Sprintf(`
+	return allMessagesWithQuerier(ctx, db.getReader(), sessionID)
+}
+
+func allMessagesWithQuerier(ctx context.Context, q messageRowsQuerier, sessionID string) ([]Message, error) {
+	rows, err := q.QueryContext(ctx, fmt.Sprintf(`
 		SELECT %s
 		FROM messages
 		WHERE session_id = ?
@@ -747,7 +751,7 @@ func (db *DB) GetAllMessages(
 	if err != nil {
 		return nil, err
 	}
-	if err := db.attachToolCalls(ctx, msgs); err != nil {
+	if err := attachToolCallsWithQuerier(ctx, q, msgs); err != nil {
 		return nil, err
 	}
 	return msgs, nil
@@ -873,13 +877,36 @@ func (db *DB) ScanEmbeddableUnits(
 	ctx context.Context, since string, includeAutomated bool,
 	fn func(EmbeddableUnit) error,
 ) (maxEnded string, err error) {
-	args := []any{}
+	return db.scanEmbeddableUnits(ctx, since, "", includeAutomated, fn)
+}
+
+// ScanEmbeddableUnitsForSession streams all embeddable units for one session,
+// without applying an ended_at watermark.
+func (db *DB) ScanEmbeddableUnitsForSession(
+	ctx context.Context, sessionID string, includeAutomated bool,
+	fn func(EmbeddableUnit) error,
+) error {
+	if sessionID == "" {
+		return errors.New("session ID is required")
+	}
+	_, err := db.scanEmbeddableUnits(ctx, "", sessionID, includeAutomated, fn)
+	return err
+}
+
+func (db *DB) scanEmbeddableUnits(
+	ctx context.Context, since, sessionID string, includeAutomated bool,
+	fn func(EmbeddableUnit) error,
+) (maxEnded string, err error) {
+	args := make([]any, 0, 2)
+	if sessionID != "" {
+		args = append(args, sessionID)
+	}
 	if since != "" {
 		args = append(args, since)
 	}
 
 	rows, err := db.getReader().QueryContext(
-		ctx, embeddableUnitsQuery(since, includeAutomated), args...)
+		ctx, embeddableUnitsQuery(since, sessionID, includeAutomated), args...)
 	if err != nil {
 		return "", fmt.Errorf("scanning embeddable units: %w", err)
 	}
@@ -1072,10 +1099,11 @@ func runUnit(members []unitRow) EmbeddableUnit {
 	}
 }
 
-// embeddableUnitsQuery builds ScanEmbeddableUnits' statement. It takes one
-// bound argument (since) when since is set and none otherwise, and always
-// emits rows in (session_id, ordinal) order, which unitReducer depends on.
-func embeddableUnitsQuery(since string, includeAutomated bool) string {
+// embeddableUnitsQuery builds the embeddable-unit scan statement. A scoped
+// scan takes sessionID first; an incremental scan takes since after it. The
+// query always emits rows in (session_id, ordinal) order, which unitReducer
+// depends on.
+func embeddableUnitsQuery(since, sessionID string, includeAutomated bool) string {
 	preds := []string{
 		"m.role IN ('user', 'assistant')",
 		"m.is_system = 0",
@@ -1084,6 +1112,9 @@ func embeddableUnitsQuery(since string, includeAutomated bool) string {
 	}
 	if !includeAutomated {
 		preds = append(preds, automatedScopePredicate("human", "s.is_automated"))
+	}
+	if sessionID != "" {
+		preds = append(preds, "m.session_id = ?")
 	}
 	return `
 		SELECT m.session_id, m.role, m.source_uuid, m.ordinal, m.content,
@@ -1422,16 +1453,19 @@ func (db *DB) insertMessages(ctx context.Context,
 		return nil
 	}
 	t := time.Now()
+	var lockWait time.Duration
 	defer func() {
 		if d := time.Since(t); d > slowOpThreshold {
 			log.Printf(
-				"db: InsertMessages (%d msgs): %s",
+				"db: InsertMessages (%d msgs): %s (lock wait %s)",
 				len(msgs), d.Round(time.Millisecond),
+				lockWait.Round(time.Millisecond),
 			)
 		}
 	}()
 
 	db.mu.Lock()
+	lockWait = time.Since(t)
 	defer db.mu.Unlock()
 
 	tx, err := db.getWriter().Begin(ctx)
@@ -1661,16 +1695,19 @@ func (db *DB) writeSessionIncremental(ctx context.Context,
 	}
 
 	t := time.Now()
+	var lockWait time.Duration
 	defer func() {
 		if d := time.Since(t); d > slowOpThreshold {
 			log.Printf(
-				"db: WriteSessionIncremental (%d msgs): %s",
+				"db: WriteSessionIncremental (%d msgs): %s (lock wait %s)",
 				len(msgs), d.Round(time.Millisecond),
+				lockWait.Round(time.Millisecond),
 			)
 		}
 	}()
 
 	db.mu.Lock()
+	lockWait = time.Since(t)
 	defer db.mu.Unlock()
 
 	tx, err := db.getWriter().Begin(ctx)
@@ -1950,17 +1987,20 @@ func (db *DB) replaceSessionMessages(ctx context.Context,
 	msgs = db.messagesForStorage(msgs)
 
 	t := time.Now()
+	var lockWait time.Duration
 	defer func() {
 		if d := time.Since(t); d > slowOpThreshold {
 			log.Printf(
-				"db: ReplaceSessionMessages %s (%d msgs): %s",
+				"db: ReplaceSessionMessages %s (%d msgs): %s (lock wait %s)",
 				sessionID, len(msgs),
 				d.Round(time.Millisecond),
+				lockWait.Round(time.Millisecond),
 			)
 		}
 	}()
 
 	db.mu.Lock()
+	lockWait = time.Since(t)
 	defer db.mu.Unlock()
 
 	// Prefer an in-place diff (append/merge shapes from streaming
@@ -3561,11 +3601,11 @@ func (db *DB) SetToolCallSubagentSession(ctx context.Context,
 
 // soleToolResultEventTx returns a one-element slice when the call
 // identified by (session, owning message ordinal, call index) has exactly
-// one stored result event, and nil for every other count, which never
+// one content-bearing result event, and nil for every other count, which never
 // dedups. The key is the same triple attachToolResultEvents and
 // ToolCallResultContentSQL use, so every site agrees on which event a
-// summary is compared against. Inspect at most two index entries before
-// loading content so repeated appends do not rescan the event history.
+// summary is compared against. Inspect at most two payload rows before
+// loading content so repeated appends do not load the event history.
 func soleToolResultEventTx(ctx context.Context,
 	tx *sql.Tx, sessionID string, messageOrdinal, callIndex int,
 	imagePolicy config.ToolResultImages,
@@ -3577,6 +3617,7 @@ func soleToolResultEventTx(ctx context.Context,
 			SELECT 1 FROM tool_result_events
 			WHERE session_id = ? AND tool_call_message_ordinal = ?
 			  AND call_index = ?
+			  AND COALESCE(content, '') <> ''
 			LIMIT 2
 		)`,
 		sessionID, messageOrdinal, callIndex,
@@ -3592,7 +3633,7 @@ func soleToolResultEventTx(ctx context.Context,
 	if err := tx.QueryRowContext(ctx,
 		`SELECT content FROM tool_result_events
 		 WHERE session_id = ? AND tool_call_message_ordinal = ?
-		   AND call_index = ?`,
+		   AND call_index = ? AND COALESCE(content, '') <> ''`,
 		sessionID, messageOrdinal, callIndex,
 	).Scan(&content); err != nil {
 		return nil, fmt.Errorf(
@@ -3972,7 +4013,11 @@ func (db *DB) ToolCallContentFingerprint(ctx context.Context, sessionID string) 
 // tool-call count. Used by PG push fast-paths to avoid skipping parser
 // changes that only affect tool metadata or inputs.
 func (db *DB) ToolCallFingerprint(ctx context.Context, sessionID string) (string, error) {
-	rows, err := db.getReader().Query(ctx,
+	return toolCallFingerprintWithQuerier(ctx, db.getReader(), sessionID)
+}
+
+func toolCallFingerprintWithQuerier(ctx context.Context, q messageRowsQuerier, sessionID string) (string, error) {
+	rows, err := q.QueryContext(ctx,
 		`SELECT m.ordinal, tc.tool_name, tc.category,
 			COALESCE(tc.tool_use_id, ''), COALESCE(tc.input_json, ''),
 			COALESCE(tc.skill_name, ''),

@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,6 +60,33 @@ func TestArchiveOnlyRefusesRawSyncWatch(t *testing.T) {
 	require.NoError(t, database.Close())
 	err = runRawSyncWatch(t.Context(), rawSyncWatchConfig{Server: "http://127.0.0.1:1", DeviceID: "original-device", AllowInsecureHTTP: true, Debounce: defaultRawSyncDebounce, Interval: defaultRawSyncAudit, AuditLimit: defaultRawSyncAuditLimit})
 	require.ErrorIs(t, err, db.ErrArchiveOnly)
+}
+
+func TestArchiveOnlyRefusesRawSyncBackfill(t *testing.T) {
+	cfg := testConfigWithClaudeFixture(t)
+	t.Setenv("AGENTSVIEW_DATA_DIR", cfg.DataDir)
+	t.Setenv("AGENTSVIEW_RAW_SYNC_CREDENTIAL", "test-credential")
+	require.NoError(t, os.WriteFile(filepath.Join(cfg.DataDir, "config.toml"),
+		[]byte(fmt.Sprintf("[agents.claude]\ndirs = [%q]\n", cfg.AgentDirs[parser.AgentClaude][0])), 0o600))
+	database, err := db.Open(t.Context(), cfg.DBPath)
+	require.NoError(t, err)
+	require.NoError(t, database.EnableArchiveOnly(t.Context()))
+	require.NoError(t, database.Close())
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		http.Error(w, "unexpected backfill request", http.StatusForbidden)
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	cmd := newRootCommand()
+	cmd.SetContext(ctx)
+	_, err = executeCommand(cmd, "raw-sync", "backfill", "--server", server.URL,
+		"--device-id", "original-device", "--allow-insecure-http", "--run-id", "archive-test", "--provider", "claude")
+	require.ErrorIs(t, err, db.ErrArchiveOnly)
+	assert.Zero(t, requests.Load())
+	assert.NoFileExists(t, rawSyncCheckpointPath(cfg.DataDir))
 }
 
 func TestArchiveOnlyConfigOnlyBackgroundStart(t *testing.T) {
