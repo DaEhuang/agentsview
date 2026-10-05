@@ -21,6 +21,120 @@ import (
 	"go.kenn.io/docbank"
 )
 
+func TestArchiveExtractCaptureAfterRestore(t *testing.T) {
+	ctx := t.Context()
+	run := func(args ...string) (string, error) {
+		root := newRootCommand()
+		var out, diagnostics bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&diagnostics)
+		root.SetArgs(args)
+		err := root.ExecuteContext(ctx)
+		return out.String(), err
+	}
+	sourceData := testDataDir(t)
+	database, err := db.OpenIsolatedContext(ctx, filepath.Join(sourceData, "sessions.db"))
+	require.NoError(t, err)
+	require.NoError(t, database.Close())
+	provider := t.TempDir()
+	const nativeID = "019eb791-cf7d-75c1-8439-9ed74c122e02"
+	rel := filepath.Join("projects", "project-a", nativeID+".jsonl")
+	firstBytes := testjsonl.NewSessionBuilder().AddClaudeUserWithSessionID("2026-01-01T00:00:00Z", "first capture", nativeID).String()
+	secondBytes := firstBytes + testjsonl.NewSessionBuilder().AddClaudeAssistant("2026-01-01T00:00:01Z", "later reply").String()
+	dbtest.WriteTestFile(t, filepath.Join(provider, rel), []byte(firstBytes))
+	dbtest.WriteTestFile(t, filepath.Join(provider, "file-history", "removed-later"), []byte("first-only history"))
+	opts := rawarchive.CaptureOptions{
+		DataDir: sourceData, Destination: filepath.Join(t.TempDir(), "first"),
+		Roots:    []rawarchive.RootSpec{{Provider: "claude", Path: provider}, {Provider: "files", Path: t.TempDir()}},
+		Settings: rawarchive.RecoverySettings{LocalMachineName: "source-device"},
+	}
+	first, err := rawarchive.Capture(ctx, opts)
+	require.NoError(t, err)
+	firstDir := opts.Destination
+	dbtest.WriteTestFile(t, filepath.Join(provider, rel), []byte(secondBytes))
+	require.NoError(t, os.Remove(filepath.Join(provider, "file-history", "removed-later")))
+	dbtest.WriteTestFile(t, filepath.Join(provider, "file-history", "added-later"), []byte("second-only history"))
+	opts.IdentityFrom = filepath.Join(firstDir, "capture.json")
+	opts.Destination = filepath.Join(t.TempDir(), "second")
+	second, err := rawarchive.Capture(ctx, opts)
+	require.NoError(t, err)
+	require.NotEqual(t, first.CaptureID, second.CaptureID)
+	archiveData := filepath.Join(t.TempDir(), "archive")
+	t.Setenv("AGENTSVIEW_DATA_DIR", archiveData)
+	_, err = run("archive", "import", "--seed", "--spec", filepath.Join(firstDir, "capture.json"))
+	require.NoError(t, err)
+	_, err = run("archive", "import", "--spec", filepath.Join(opts.Destination, "capture.json"))
+	require.ErrorContains(t, err, "coverage gaps")
+	repository := filepath.Join(t.TempDir(), "backup")
+	output, err := run("archive", "backup", repository)
+	require.NoError(t, err)
+	var backup rawarchive.Report
+	require.NoError(t, json.Unmarshal([]byte(output), &backup))
+	for _, path := range []string{sourceData, provider, opts.Roots[1].Path, firstDir, opts.Destination, archiveData} {
+		require.NoError(t, os.RemoveAll(path))
+	}
+	restored := filepath.Join(t.TempDir(), "restored")
+	_, err = run("archive", "restore", repository, restored, "--snapshot", backup.SnapshotID)
+	require.NoError(t, err)
+	t.Setenv("AGENTSVIEW_DATA_DIR", restored)
+	for _, tc := range []struct {
+		capture                         rawarchive.CaptureDescriptor
+		content, present, absent, extra string
+	}{
+		{first, firstBytes, "removed-later", "added-later", "first-only history"},
+		{second, secondBytes, "added-later", "removed-later", "second-only history"},
+	} {
+		t.Run(tc.capture.CaptureID, func(t *testing.T) {
+			target := filepath.Join(t.TempDir(), "capture")
+			output, err := run("archive", "extract", target, "--capture", tc.capture.CaptureID)
+			require.NoError(t, err)
+			var report rawarchive.Report
+			require.NoError(t, json.Unmarshal([]byte(output), &report))
+			assert.Equal(t, tc.capture.CaptureID, report.CaptureID)
+			descriptor := filepath.Join(target, "capture.json")
+			got, err := rawarchive.LoadCapture(ctx, descriptor)
+			require.NoError(t, err, "the recovered package must validate without any original files")
+			assert.Equal(t, tc.capture.CaptureID, got.CaptureID)
+			assert.Equal(t, tc.capture.Source, got.Source)
+			root := filepath.Join(target, got.Source.Roots[0].Path)
+			content, err := os.ReadFile(filepath.Join(root, rel))
+			require.NoError(t, err)
+			assert.Equal(t, tc.content, string(content))
+			extra, err := os.ReadFile(filepath.Join(root, "file-history", tc.present))
+			require.NoError(t, err)
+			assert.Equal(t, tc.extra, string(extra))
+			assert.NoFileExists(t, filepath.Join(root, "file-history", tc.absent))
+			// A conflicting capture remains usable as a portable source in its own
+			// archive; extracting it must not advance the first archive's head.
+			t.Setenv("AGENTSVIEW_DATA_DIR", filepath.Join(t.TempDir(), "seed"))
+			_, err = run("archive", "import", "--seed", "--spec", descriptor)
+			require.NoError(t, err)
+		})
+	}
+	_, err = run("archive", "reparse", "--all")
+	require.NoError(t, err)
+	database, err = db.OpenIsolatedContext(ctx, filepath.Join(restored, "sessions.db"))
+	require.NoError(t, err)
+	messages, err := database.GetAllMessages(ctx, nativeID)
+	require.NoError(t, err)
+	require.NoError(t, database.Close())
+	require.Len(t, messages, 1, "extraction must not advance the accepted source")
+	assert.Equal(t, "first capture", messages[0].Content)
+	for _, args := range [][]string{nil, {"--capture", "missing"}} {
+		target := filepath.Join(t.TempDir(), "rejected")
+		_, err = run(append([]string{"archive", "extract", target}, args...)...)
+		require.Error(t, err)
+		assert.NoDirExists(t, target)
+	}
+	existing := t.TempDir()
+	dbtest.WriteTestFile(t, filepath.Join(existing, "keep"), []byte("existing data"))
+	_, err = run("archive", "extract", existing, "--capture", first.CaptureID)
+	require.Error(t, err)
+	kept, err := os.ReadFile(filepath.Join(existing, "keep"))
+	require.NoError(t, err)
+	assert.Equal(t, "existing data", string(kept))
+}
+
 // Exercise the commands people use to leave a machine behind. Both original
 // source directories and the first archive are gone before restored reparsing.
 func TestArchiveMoveAndReparse(t *testing.T) {
@@ -274,6 +388,9 @@ func TestArchiveMoveAndReparse(t *testing.T) {
 	require.NoError(t, os.RemoveAll(filepath.Join(restored, rawarchive.Directory)))
 	_, err = run("verify")
 	require.Error(t, err)
+	_, err = run("extract", extracted, "--capture", captured.CaptureID)
+	require.Error(t, err)
+	assert.NoDirExists(t, extracted)
 	_, err = run("reparse", "--all")
 	require.Error(t, err)
 	database, err = db.OpenIsolatedContext(ctx, filepath.Join(restored, "sessions.db"))

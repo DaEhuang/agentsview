@@ -69,7 +69,7 @@ func TestRejectedIdentityKeepsHistoryAndChangedImportKeepsHead(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, files, 2)
 	target := filepath.Join(t.TempDir(), "native")
-	_, err = archive.Extract(ctx, target)
+	_, err = archive.Extract(ctx, target, "")
 	require.Error(t, err)
 	assert.NoDirExists(t, target)
 }

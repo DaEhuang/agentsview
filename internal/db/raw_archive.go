@@ -106,6 +106,20 @@ func (d *DB) ListRawArchiveFiles(ctx context.Context, afterID int64, limit int) 
 		return nil, errors.New("invalid raw archive page size")
 	}
 	rows, err := d.getReader().QueryContext(ctx, `SELECT id,root_id,path,sha256,size,mod_time_ns,covered FROM raw_archive_files WHERE id>? ORDER BY id LIMIT ?`, afterID, limit)
+	return readRawArchiveFiles(rows, err)
+}
+
+// RawArchiveCaptureEvidence finds the retained descriptor and inventory even
+// when no source from that capture was accepted. Three rows expose ambiguity
+// without reading every retained version.
+func (d *DB) RawArchiveCaptureEvidence(ctx context.Context, captureID string) ([]RawArchiveFile, error) {
+	rows, err := d.getReader().QueryContext(ctx, `SELECT id,root_id,path,sha256,size,mod_time_ns,covered FROM raw_archive_files
+		WHERE root_id IN (SELECT id FROM raw_archive_roots WHERE provider='files' AND configured_root_id='capture-evidence' AND original_path='capture-evidence')
+		AND path IN (?,?) LIMIT 3`, captureID+"/capture.json", captureID+"/inventory.json")
+	return readRawArchiveFiles(rows, err)
+}
+
+func readRawArchiveFiles(rows *sql.Rows, err error) ([]RawArchiveFile, error) {
 	if err != nil {
 		return nil, err
 	}

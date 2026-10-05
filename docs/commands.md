@@ -109,16 +109,23 @@ agentsview archive restore /media/backup/repository /restored/archive --snapshot
 AGENTSVIEW_DATA_DIR=/restored/archive agentsview archive verify
 AGENTSVIEW_DATA_DIR=/restored/archive agentsview archive reparse --all
 AGENTSVIEW_DATA_DIR=/restored/archive agentsview archive extract /new/native-files
+# Use capture_id from the capture or import report to recover one version:
+AGENTSVIEW_DATA_DIR=/restored/archive agentsview archive extract /new/capture --capture CAPTURE_ID
 ```
 
 Restore and extract require new destinations. Backup creates a repository or adds
 a snapshot to an existing one. Backup and restore reject overlapping source and
-destination directories. `extract` writes native files under their archive root IDs, including
-supplemental files that have no parser. These IDs distinguish source installations
-and providers; the original configured root IDs remain in the retained descriptors
-and manifests. If an inventory contains different
-versions of one path, extraction fails without choosing a version or leaving a
-partial output.
+destination directories. `extract --capture ID` recovers that capture's exact
+files, including supplemental files and versions that conflicted on import. It
+recreates `capture.json`, `inventory.json` and `roots/` under the original
+configured root IDs. The result passes the same complete-file verification as
+the original capture and can be imported using `--spec /new/capture/capture.json`.
+Extraction does not change accepted sources or browsable history.
+
+Without `--capture`, extraction writes all retained native files under their
+archive root IDs. These IDs distinguish installations and providers. If any
+path has different retained versions, this mode fails; select a capture to
+recover the version you want. Failed extraction removes its partial output.
 
 Import reports retained files and bytes separately from accepted provider
 sources. Files outside Claude and Codex capture plans remain supplemental. A

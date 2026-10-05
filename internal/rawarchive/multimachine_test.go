@@ -176,7 +176,7 @@ func TestForeignCaptureHonorsSourceDeletions(t *testing.T) {
 	assert.True(t, seeded.IsSessionTrashed(ctx, trashed))
 	assert.True(t, seeded.IsSessionExcluded(ctx, deleted))
 	// Suppressed content remains recoverable in the raw vault.
-	_, err = archive.Extract(ctx, filepath.Join(t.TempDir(), "extracted"))
+	_, err = archive.Extract(ctx, filepath.Join(t.TempDir(), "extracted"), "")
 	require.NoError(t, err)
 }
 
