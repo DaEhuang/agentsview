@@ -22,7 +22,8 @@ func (s *Store) SessionSourceChanged(err error) bool {
 
 // SessionSourceBinding names the push that published the visible session row
 // and refuses while any evidence row comes from another push, or while fewer
-// messages are readable than that push stored.
+// messages are readable than that push stored. A row with no stored count
+// reports db.ErrSessionRevisionUnavailable, since no retry can help it.
 func (s *Store) SessionSourceBinding(ctx context.Context, id string) (string, error) {
 	var published uint64
 	var stored sql.NullInt64
@@ -39,7 +40,7 @@ func (s *Store) SessionSourceBinding(ctx context.Context, id string) (string, er
 	}
 	if !stored.Valid {
 		// Rows pushed before the count existed say nothing about their evidence until a push republishes them.
-		return "", fmt.Errorf("%w: stored message count unknown", errEvidenceUnpublished)
+		return "", fmt.Errorf("%w until the next clickhouse push republishes this session", db.ErrSessionRevisionUnavailable)
 	}
 	rows, err := s.queryContext(ctx, `
 		SELECT 'messages', count(), min(push_version), max(push_version) FROM messages WHERE session_id = ?

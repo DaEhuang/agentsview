@@ -222,7 +222,8 @@ func TestToolSequencesAfterStoredCountUpgrade(t *testing.T) {
 		return res
 	}
 	res := get()
-	assert.Equal(t, http.StatusConflict, res.Code, "an unknown stored count is refused: %s", res.Body.String())
+	assert.Equal(t, http.StatusNotImplemented, res.Code, "an unknown stored count is unavailable: %s", res.Body.String())
+	assert.Contains(t, res.Body.String(), `"code":"revision_unavailable"`)
 
 	result, err := newTestSync(t, local, target, storage.PusherOptions{}).Push(ctx, false, nil)
 	require.NoError(t, err)
@@ -239,7 +240,7 @@ func TestToolSequencesAfterStoredCountUpgrade(t *testing.T) {
 	// An older writer republishes a session without the count.
 	_, err = conn.ExecContext(ctx, "ALTER TABLE sessions UPDATE stored_message_count = NULL WHERE id = ? SETTINGS mutations_sync = 2", fixtureAlphaID)
 	require.NoError(t, err)
-	assert.Equal(t, http.StatusConflict, get().Code)
+	assert.Equal(t, http.StatusNotImplemented, get().Code)
 	result, err = newTestSync(t, local, target, storage.PusherOptions{}).Push(ctx, false, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "publishing stored message counts", result.FullReason)
