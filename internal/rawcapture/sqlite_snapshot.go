@@ -59,6 +59,7 @@ func (c *Capturer) snapshotSQLitePlan(
 type sqliteSnapshotSource struct {
 	database         *sql.DB
 	connection       *sql.Conn
+	transaction      *sql.Tx
 	pathPin          *os.File
 	path             string
 	expectedInfo     os.FileInfo
@@ -131,6 +132,16 @@ func openSQLiteSnapshotSource(
 	if err := source.verifyCurrent(); err != nil {
 		return nil, errors.Join(err, source.Close())
 	}
+	// Keep one read view across backup steps. Otherwise a busy WAL writer can
+	// restart the backup after every commit until its deadline expires.
+	source.transaction, err = connection.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, errors.Join(err, source.Close())
+	}
+	var tables int
+	if err := source.transaction.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_schema`).Scan(&tables); err != nil {
+		return nil, errors.Join(err, source.Close())
+	}
 	return source, nil
 }
 
@@ -160,7 +171,14 @@ func (s *sqliteSnapshotSource) Close() error {
 	if s == nil {
 		return nil
 	}
-	return errors.Join(s.connection.Close(), s.database.Close(), s.pathPin.Close())
+	var rollbackErr error
+	if s.transaction != nil {
+		rollbackErr = s.transaction.Rollback()
+		if errors.Is(rollbackErr, sql.ErrTxDone) {
+			rollbackErr = nil
+		}
+	}
+	return errors.Join(rollbackErr, s.connection.Close(), s.database.Close(), s.pathPin.Close())
 }
 
 func pinSQLiteSnapshotPath(path string, expected os.FileInfo) (*os.File, error) {
