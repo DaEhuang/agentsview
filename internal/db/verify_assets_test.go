@@ -12,7 +12,7 @@ import (
 )
 
 func TestVerifyAssets(t *testing.T) {
-	for _, location := range []string{"message", "tool", "event", "quoted-code"} {
+	for _, location := range []string{"message", "tool", "event", "quoted-code", "example-reference"} {
 		t.Run(location, func(t *testing.T) {
 			database := testDB(t)
 			ctx := t.Context()
@@ -27,6 +27,8 @@ func TestVerifyAssets(t *testing.T) {
 				message.Content = content
 			case "quoted-code":
 				message.Content = "`" + content + "`\n\n```\n" + content + "\n```"
+			case "example-reference":
+				message.Content = "![example](asset://nested/example)"
 			case "tool":
 				message.ToolCalls = []ToolCall{{ToolName: "Read", ResultContent: "agent-a:\n" + toolContent}}
 			case "event":
@@ -37,11 +39,11 @@ func TestVerifyAssets(t *testing.T) {
 			require.NoError(t, database.VerifyAssets(ctx, dir))
 			path := filepath.Join(dir, strings.TrimPrefix(ref, "asset://"))
 			require.NoError(t, os.WriteFile(path, []byte("corrupt"), 0o600))
-			if location != "quoted-code" {
+			if location != "quoted-code" && location != "example-reference" {
 				require.ErrorContains(t, database.VerifyAssets(ctx, dir), "asset")
 			}
 			require.NoError(t, os.Remove(path))
-			if location == "quoted-code" {
+			if location == "quoted-code" || location == "example-reference" {
 				assert.NoError(t, database.VerifyAssets(ctx, dir))
 			} else {
 				assert.ErrorContains(t, database.VerifyAssets(ctx, dir), "asset")

@@ -18,7 +18,7 @@ import (
 	"github.com/yuin/goldmark/text"
 )
 
-// VerifyAssets checks image references in retained messages and tool results.
+// VerifyAssets checks content-addressed image references in retained messages and tool results.
 // The caller holds the offline writer lock so the references cannot change.
 func (d *DB) VerifyAssets(ctx context.Context, directory string) error {
 	rows, err := d.getReader().QueryContext(ctx, `
@@ -49,7 +49,9 @@ func (d *DB) VerifyAssets(ctx context.Context, directory string) error {
 		want := strings.TrimSuffix(name, filepath.Ext(name))
 		decoded, err := hex.DecodeString(want)
 		if err != nil || len(decoded) != sha256.Size || filepath.Base(name) != name {
-			return errors.New("invalid stored asset reference")
+			// Transcript examples can use this scheme without naming a stored
+			// object. Only content-addressed references create dependencies.
+			return nil //nolint:nilerr // Invalid transcript URLs do not name stored objects.
 		}
 		if root == nil {
 			root, err = os.OpenRoot(directory)
