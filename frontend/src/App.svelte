@@ -930,6 +930,7 @@
         <SessionVitals
           sessionId={sessions.activeSessionId}
           session={sessions.activeSession}
+          onFilterLabel={(label) => sessions.addLabelFilter(label)}
         />
       {/if}
     {/snippet}

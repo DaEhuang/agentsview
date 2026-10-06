@@ -11,6 +11,24 @@ The latest published release is
 
 **New features**
 
+- Sessions show the pull requests Claude Code linked them to. Find them on the
+  session page, in `session get`, and in session JSON, and filter with
+  `session list --pr owner/repo#123` or the `pr` API parameter. The first sync
+  after upgrading re-reads Claude sessions once to pick up existing links.
+- Label sessions by ticket, role, or kind of run with
+  `agentsview session label <id> ticket=ABC-123` or
+  `PUT /api/v1/sessions/{id}/labels`, then filter with `--label`, the `label`
+  API parameter, the web UI, or the MCP `list_sessions` tool. Labels survive
+  reparses and resyncs. Label and pull request filters also find child and
+  headless sessions, such as orchestrator workers; the web UI shows the tree
+  that contains them.
+- An orchestrator can record which session launched a worker with
+  `agentsview session parent <worker-id> <manager-id>` or
+  `PUT /api/v1/sessions/{id}/parent`. The worker then appears under its
+  launcher in the session tree, and its cost counts toward the launcher's
+  usage. Links that the transcript itself records still take precedence. Labels
+  and parent links can be recorded before the session has synced.
+
 - The web UI reports an anonymous `app_opened` event through the server when it
   loads and on the first focus of each later UTC day.
   `AGENTSVIEW_TELEMETRY_ENABLED=0` turns it off with the daemon ping.

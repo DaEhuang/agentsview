@@ -35,6 +35,7 @@ const approvedIconNames = [
   "FileXIcon",
   "FolderIcon",
   "FunnelIcon",
+  "GitPullRequestIcon",
   "GlobeIcon",
   "Grid2x2Icon",
   "LayoutGridIcon",
