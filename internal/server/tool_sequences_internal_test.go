@@ -79,6 +79,15 @@ func TestBuildSessionToolSequences_ResultLengthSemantics(t *testing.T) {
 			wantBytes: new(0), wantOmit: new(0),
 		},
 		{
+			name:      "success status known empty",
+			row:       signals.ToolCallRow{EventStatus: "success"},
+			wantBytes: new(0), wantOmit: new(0),
+		},
+		{
+			name: "running status stays unknown",
+			row:  signals.ToolCallRow{EventStatus: "running"},
+		},
+		{
 			name:      "failed known empty",
 			row:       signals.ToolCallRow{EventStatus: "errored"},
 			wantBytes: new(0), wantOmit: new(0),

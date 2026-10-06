@@ -586,7 +586,7 @@ func projectSessionToolSequenceCall(
 	}
 	resultLength := db.ResolveResultContentLength(row.ResultContent, row.ResultContentLength)
 	knownEmpty := !row.ResultContentUnknown &&
-		(row.EventStatus == "completed" || row.EventStatus == "success" ||
+		(signals.IsCompletedToolStatus(row.EventStatus) ||
 			(row.EventStatus != "" && signals.IsFailure(row)))
 	if resultLength > 0 || knownEmpty {
 		call.ResultBytes = &resultLength
