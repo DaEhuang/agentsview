@@ -1247,6 +1247,51 @@ describe("MessagesStore", () => {
       expect(messages.messages).toHaveLength(1500);
     });
 
+    it("gives a later reload request its own passes after a busy burst used them up", async () => {
+      vi.mocked(api.getSession).mockResolvedValue(makeSession("s1", 1500));
+      vi.mocked(api.getMessages)
+        .mockResolvedValueOnce(page(range(0, 1000), "r1"))
+        .mockResolvedValueOnce(page(range(1000, 1500), "r1"));
+      await messages.loadSession("s1");
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const conflict = () => new ApiError(409, "transcript revision does not match");
+      vi.mocked(api.getMessages)
+        .mockResolvedValueOnce(page(range(0, 1000), "r2"))
+        .mockRejectedValueOnce(conflict())
+        .mockResolvedValueOnce(page(range(0, 1000), "r3"))
+        .mockRejectedValueOnce(conflict())
+        .mockResolvedValueOnce(page(range(0, 1000), "r4"))
+        .mockRejectedValueOnce(conflict());
+      await messages.reload();
+      expect(messages.loadedRevision).toBe("r1");
+
+      // The transcript settles; one more interrupted pass is followed by a clean one.
+      vi.mocked(api.getMessages)
+        .mockResolvedValueOnce(page(range(0, 1000), "r5"))
+        .mockRejectedValueOnce(conflict())
+        .mockResolvedValueOnce(page(range(0, 1000), "r6"))
+        .mockResolvedValueOnce(page(range(1000, 1500), "r6"));
+      await messages.reload();
+      expect(messages.loadedRevision).toBe("r6");
+      expect(messages.messages).toHaveLength(1500);
+    });
+
+    it("reloads an empty session without another message read", async () => {
+      vi.mocked(api.getSession).mockResolvedValue(makeSession("s1", 0));
+      vi.mocked(api.getMessages).mockResolvedValueOnce(page([], "r1"));
+      await messages.loadSession("s1");
+      const messageReads = vi.mocked(api.getMessages).mock.calls.length;
+
+      const reload = messages.reload();
+      await Promise.resolve();
+      expect(messages.loading).toBe(false);
+      await reload;
+
+      expect(vi.mocked(api.getMessages).mock.calls.length).toBe(messageReads);
+      expect(messages.messages).toEqual([]);
+      expect(messages.loading).toBe(false);
+    });
+
     it("clears rows when an unchanged count hides a transcript emptied under the window", async () => {
       vi.mocked(api.getSession).mockResolvedValue(makeSession("s1", 3));
       vi.mocked(api.getMessages).mockResolvedValueOnce(page([0, 1, 2], "r1"));

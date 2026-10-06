@@ -74,7 +74,7 @@ export class MessagesStore {
   private reloadPromise: Promise<void> | null = null;
   private reloadSessionId: string | null = null;
   private pendingReload: boolean = false;
-  // Back-to-back reloads a moving transcript refused; bounded so a busy session can't reload forever.
+  // Passes a moving transcript refused since the last outside reload request; bounded so a busy session can't reload forever.
   private revisionConflicts: number = 0;
   // Each window load takes a ticket when it starts; a replacement lands only if no later-started load already replaced the window.
   private loadTicket: number = 0;
@@ -170,6 +170,14 @@ export class MessagesStore {
 
   reload(): Promise<void> {
     if (!this.sessionId) return Promise.resolve();
+    // Each outside request gets a fresh budget of passes a moving transcript may refuse.
+    this.revisionConflicts = 0;
+    return this.queueReload();
+  }
+
+  /** Reload, or queue one more pass behind a reload already running for this session. */
+  private queueReload(): Promise<void> {
+    if (!this.sessionId) return Promise.resolve();
 
     if (this.reloadPromise && this.reloadSessionId === this.sessionId) {
       this.pendingReload = true;
@@ -188,7 +196,7 @@ export class MessagesStore {
       const shouldReload = this.pendingReload && this.sessionId === id;
       if (shouldReload) {
         this.pendingReload = false;
-        await this.reload();
+        await this.queueReload();
       } else if (this.sessionId === id) {
         this.reloading = false;
       }
@@ -260,8 +268,7 @@ export class MessagesStore {
     return { messages: res.messages, revision: res.transcript_revision ?? "" };
   }
 
-  /** Take a refreshed window that starts at the loaded window's oldest row. */
-  /** False when a load that started later already replaced the window. */
+  /** Take a refreshed window that starts at the loaded window's oldest row; false when a later-started load already replaced it. */
   private acceptWindow(page: MessagePage, append: boolean, ticket: number): boolean {
     if (page.revision !== this.loadedRevision && ticket < this.windowTicket) return false;
     clearContentCaches();
@@ -516,7 +523,7 @@ export class MessagesStore {
     } catch (err) {
       if (isAbortError(err)) return;
       if (this.sessionId === id && isRevisionChange(err)) {
-        void this.reload();
+        void this.queueReload();
         return;
       }
       if (this.sessionId === id) this.historyComplete = false;
@@ -576,18 +583,35 @@ export class MessagesStore {
     await pending;
   }
 
-  /** Resume the missing tail without removing already loaded rows or their cursor. */
-  private async loadRemainingMessages(id: string, signal: AbortSignal): Promise<void> {
+  /** Run a read bound to the loaded revision, catching the window up and trying again when the transcript moves under it. */
+  private async retryBoundRead(
+    id: string,
+    read: () => Promise<RevisionedRead>,
+    stillNeeded: () => boolean,
+  ): Promise<void> {
     for (let attempt = 1; ; attempt++) {
-      const outcome = await this.loadRemainingMessagesOnce(id, signal);
+      const outcome = await read();
       if (outcome === "done" || attempt >= MAX_LOAD_ATTEMPTS) return;
-      // The transcript moved underneath this read; catch the window up and try again.
-      if (outcome === "reload") await this.reload();
-      if (this.sessionId !== id || signal.aborted || this.historyComplete) return;
-      // The reload may have dropped back to the newest page, so the prefix needs loading again first.
-      if (this.hasOlder) await this.doEnsureOrdinal(id, 0);
-      if (this.sessionId !== id || signal.aborted || this.historyComplete) return;
+      if (outcome === "reload") await this.queueReload();
+      if (this.sessionId !== id || !stillNeeded()) return;
     }
+  }
+
+  /** Resume the missing tail without removing already loaded rows or their cursor. */
+  private loadRemainingMessages(id: string, signal: AbortSignal): Promise<void> {
+    const needed = () => !signal.aborted && !this.historyComplete;
+    return this.retryBoundRead(
+      id,
+      async () => {
+        // A reload may have dropped back to the newest page, so the prefix needs loading again first.
+        if (this.hasOlder) {
+          await this.doEnsureOrdinal(id, 0);
+          if (this.sessionId !== id || !needed()) return "done";
+        }
+        return this.loadRemainingMessagesOnce(id, signal);
+      },
+      needed,
+    );
   }
 
   private async loadRemainingMessagesOnce(
@@ -648,22 +672,15 @@ export class MessagesStore {
     }
   }
 
-  private async doEnsureOrdinal(id: string, targetOrdinal: number): Promise<void> {
-    for (let attempt = 1; ; attempt++) {
-      const outcome = await this.ensureOrdinalOnce(id, targetOrdinal);
-      if (outcome === "done" || attempt >= MAX_LOAD_ATTEMPTS) return;
-      // The transcript moved underneath this read; catch the window up and try again.
-      if (outcome === "reload") await this.reload();
-      const oldest = this.messages[0]?.ordinal;
-      if (
-        this.sessionId !== id ||
-        oldest === undefined ||
-        oldest <= targetOrdinal ||
-        !this.hasOlder
-      ) {
-        return;
-      }
-    }
+  private doEnsureOrdinal(id: string, targetOrdinal: number): Promise<void> {
+    return this.retryBoundRead(
+      id,
+      () => this.ensureOrdinalOnce(id, targetOrdinal),
+      () => {
+        const oldest = this.messages[0]?.ordinal;
+        return oldest !== undefined && oldest > targetOrdinal && this.hasOlder;
+      },
+    );
   }
 
   private async ensureOrdinalOnce(id: string, targetOrdinal: number): Promise<RevisionedRead> {
@@ -760,7 +777,10 @@ export class MessagesStore {
           landed = false;
         } else if (refreshed === "empty") {
           // No window to refresh, or it came back empty because the transcript shrank underneath it.
-          landed = await this.fullReload(id, signal, newCount);
+          // An empty session with no rows has nothing to reload, so it skips the full load and its loading state.
+          if (newCount > 0 || this.messages.length > 0) {
+            landed = await this.fullReload(id, signal, newCount);
+          }
         } else {
           const newest = this.messages[this.messages.length - 1];
           this.historyComplete =
@@ -791,7 +811,6 @@ export class MessagesStore {
         const unreadOrdinal =
           token !== previousToken ? earliestChangedOrdinal(previousMessages, this.messages) : null;
         this.publishOrDeferSessionToken(token, unreadOrdinal);
-        this.revisionConflicts = 0;
       }
     } catch (err) {
       if (isAbortError(err)) return;
