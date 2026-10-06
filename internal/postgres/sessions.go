@@ -559,7 +559,7 @@ func (s *Store) GetSidebarSessionIndex(
 	f.Cursor = ""
 	rootFilter := f
 	rootFilter.IncludeChildren = false
-	rootWhere, rootArgs := buildPGSessionBaseFilter(rootFilter)
+	rootWhere, rootArgs := db.BuildSessionBaseFilterSQL(rootFilter, s.sessionDialect())
 	canonicalRootWhere := db.BuildCanonicalRootWhere(
 		s.sessionDialect(), "sessions", f.IncludeOrphans,
 	)
@@ -632,7 +632,7 @@ func (s *Store) getSidebarSessionIndexPage(
 	rootFilter.IncludeChildren = false
 	rootFilter.Cursor = ""
 	rootFilter.Starred = false
-	rootWhere, rootArgs := buildPGSessionBaseFilter(rootFilter)
+	rootWhere, rootArgs := db.BuildSessionBaseFilterSQL(rootFilter, s.sessionDialect())
 	canonicalRootWhere := db.BuildCanonicalRootWhere(s.sessionDialect(), "sessions", f.IncludeOrphans)
 	childAutomationPred := pgAutomatedScopePredicate(
 		normalizePGAutomatedScope(f.AutomatedScope, f.ExcludeAutomated),
