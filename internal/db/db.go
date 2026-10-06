@@ -565,7 +565,10 @@ CREATE INDEX IF NOT EXISTS idx_provider_freshness_updated_at
 // rows with source_subtype peer_message instead of user prompts. Re-parse
 // unchanged Claude sources so user-message counts and first messages drop
 // them.)
-const dataVersion = 126
+// (127: Claude pr-link records populate the new sessions.pr_links column.
+// Re-parse unchanged Claude sources so existing sessions gain their pull
+// request links.)
+const dataVersion = 127
 
 const tokenCoverageRepairStatsKey = "token_coverage_repair_v1"
 
@@ -1827,6 +1830,8 @@ var readOnlyRequiredTables = []string{
 	"excluded_sessions",
 	"worktree_project_mappings",
 	"session_project_assignments",
+	"session_labels",
+	"session_external_parents",
 	"archive_metadata",
 	"background_migrations",
 	"project_identity_observations",
@@ -2177,6 +2182,10 @@ func legacySchemaColumnMigrations() []schemaColumnMigration {
 
 func schemaColumnMigrations() []schemaColumnMigration {
 	return []schemaColumnMigration{
+		{
+			"sessions", "pr_links",
+			"ALTER TABLE sessions ADD COLUMN pr_links TEXT NOT NULL DEFAULT ''",
+		},
 		{"excluded_sessions", "file_path", "ALTER TABLE excluded_sessions ADD COLUMN file_path TEXT"},
 		{
 			"session_project_assignments", "original_project",
@@ -2877,6 +2886,7 @@ WHEN (
     OLD.data_version IS NOT NEW.data_version OR
     OLD.cwd IS NOT NEW.cwd OR
     OLD.git_branch IS NOT NEW.git_branch OR
+    OLD.pr_links IS NOT NEW.pr_links OR
     OLD.source_session_id IS NOT NEW.source_session_id OR
     OLD.source_version IS NOT NEW.source_version OR
     OLD.transcript_fidelity IS NOT NEW.transcript_fidelity OR
