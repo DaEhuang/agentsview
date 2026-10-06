@@ -473,7 +473,7 @@ describe("ToolSequencesPanel", () => {
     unmount(component);
   });
 
-  it("links a call with a blank tool ID by its position alone", async () => {
+  it("links a call with a blank tool ID by its position and the transcript revision", async () => {
     const data = makeData({
       sequences: [makeSequence({ calls: [makeCall({ call_index: 2, tool_use_id: "" })] })],
     });
@@ -483,9 +483,14 @@ describe("ToolSequencesPanel", () => {
     const link = document.querySelector<HTMLAnchorElement>("a.jump")!;
     const params = new URL(link.getAttribute("href")!, "http://localhost").searchParams;
     expect(params.get("call")).toBe("2");
+    expect(params.get("rev")).toBe("revision-1");
     expect(params.has("tool_use_id")).toBe(false);
     link.click();
-    expect(jump).toHaveBeenCalledWith(4, "session-a", { index: 2, toolUseId: "" });
+    expect(jump).toHaveBeenCalledWith(4, "session-a", {
+      index: 2,
+      toolUseId: "",
+      revision: "revision-1",
+    });
     jump.mockRestore();
     unmount(component);
   });

@@ -522,6 +522,10 @@
     // A rewrite can renumber messages, so a jump to a tool call stops once its ordinal holds a different message.
     const targetHolds = () => {
       if (call === undefined) return true;
+      // Without a tool ID, a position can name another call after a rewrite, so the revision must still match.
+      if (!call.toolUseId && call.revision !== undefined && messages.loadedRevision !== call.revision) {
+        return false;
+      }
       const message = messages.messages.find((m) => m.ordinal === ordinal);
       if (message === undefined) return true;
       const held = message.tool_calls?.[call.index];

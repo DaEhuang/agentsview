@@ -166,8 +166,12 @@
   }
 
   // The link names the call so the transcript can refuse a message that no longer holds it.
+  // A call with no tool ID also carries the revision, since its position alone can't identify it.
   function scrollCall(call: SessionToolSequenceCall): ScrollCall {
-    return { index: call.call_index, toolUseId: call.tool_use_id };
+    const revision = data?.transcript_revision;
+    return call.tool_use_id || !revision
+      ? { index: call.call_index, toolUseId: call.tool_use_id }
+      : { index: call.call_index, toolUseId: "", revision };
   }
 
   function jumpHref(call: SessionToolSequenceCall): string {

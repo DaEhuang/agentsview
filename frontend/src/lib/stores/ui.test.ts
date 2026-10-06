@@ -164,13 +164,18 @@ describe("UIStore", () => {
       });
     });
 
-    it("leaves a blank tool ID out of the link and reads it back as blank", () => {
-      const params = scrollCallParams({ index: 0, toolUseId: "" });
-      expect(params).toEqual({ call: "0" });
-      expect(parseScrollCall(params["call"], params["tool_use_id"])).toEqual({
+    it("carries the revision instead of a blank tool ID and reads both back", () => {
+      const params = scrollCallParams({ index: 0, toolUseId: "", revision: "r7" });
+      expect(params).toEqual({ call: "0", rev: "r7" });
+      expect(parseScrollCall(params["call"], params["tool_use_id"], params["rev"])).toEqual({
         index: 0,
         toolUseId: "",
+        revision: "r7",
       });
+    });
+
+    it("ignores a revision when the link names the call's tool ID", () => {
+      expect(parseScrollCall("2", "toolu_1", "r7")).toEqual({ index: 2, toolUseId: "toolu_1" });
     });
 
     it.each([undefined, "", "-1", "1.5", "two"])(

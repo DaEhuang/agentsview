@@ -660,7 +660,11 @@
   $effect(() => {
     const sid = router.sessionId;
     const msgParam = router.params["msg"] ?? null;
-    const call = parseScrollCall(router.params["call"], router.params["tool_use_id"]);
+    const call = parseScrollCall(
+      router.params["call"],
+      router.params["tool_use_id"],
+      router.params["rev"],
+    );
     untrack(() => {
       if (!sid || !msgParam) return;
       if (msgParam === "last") {
