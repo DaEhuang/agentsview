@@ -2324,7 +2324,6 @@
   "analytics_outcome_filters_unsupported": "결과 합계를 보려면 머신, 모델, 종료 상태, 최소 메시지 수, 최근 활동, 시간대 필터를 해제하세요.",
   "analytics_outcome_partial": "집계되지 않음:",
   "analytics_outcome_partial_entry": "{repo} ({op}): {reason}",
-  "activity_next_sessions_page": "다음 세션",
   "session_breadcrumb_session_health_and_tool_sequences": "세션 상태 및 도구 시퀀스",
   "tool_sequences_title": "관찰된 도구 시퀀스",
   "tool_sequences_loading": "도구 시퀀스를 불러오는 중…",

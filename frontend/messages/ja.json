@@ -2395,7 +2395,6 @@
   "analytics_outcome_filters_unsupported": "成果の合計を表示するには、マシン、モデル、終了状態、最小メッセージ数、最近のアクティビティ、時間帯のフィルターを解除してください。",
   "analytics_outcome_partial": "未集計:",
   "analytics_outcome_partial_entry": "{repo} ({op}): {reason}",
-  "activity_next_sessions_page": "次のセッション",
   "session_breadcrumb_session_health_and_tool_sequences": "セッションの状態とツールシーケンス",
   "tool_sequences_title": "観測されたツールシーケンス",
   "tool_sequences_loading": "ツールシーケンスを読み込み中…",

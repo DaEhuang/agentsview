@@ -2406,7 +2406,6 @@
   "analytics_outcome_filters_unsupported": "Supprimez les filtres de machine, modèle, fin de session, nombre minimal de messages, activité récente et heure pour afficher les totaux des résultats.",
   "analytics_outcome_partial": "Non comptabilisé :",
   "analytics_outcome_partial_entry": "{repo} ({op}) : {reason}",
-  "activity_next_sessions_page": "Sessions suivantes",
   "session_breadcrumb_session_health_and_tool_sequences": "État de la session et séquences d’outils",
   "tool_sequences_title": "Séquences d’outils observées",
   "tool_sequences_loading": "Chargement des séquences d’outils…",

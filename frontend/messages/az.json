@@ -2409,7 +2409,6 @@
   "analytics_outcome_filters_unsupported": "Nəticə cəmlərini görmək üçün maşın, model, bitmə, minimum mesaj sayı, son fəaliyyət və günün vaxtı filtrlərini təmizləyin.",
   "analytics_outcome_partial": "Hesaba alınmayan:",
   "analytics_outcome_partial_entry": "{repo} ({op}): {reason}",
-  "activity_next_sessions_page": "Növbəti sessiyalar",
   "session_breadcrumb_session_health_and_tool_sequences": "Sessiyanın vəziyyəti və alət ardıcıllıqları",
   "tool_sequences_title": "Müşahidə edilən alət ardıcıllıqları",
   "tool_sequences_loading": "Alət ardıcıllıqları yüklənir…",
