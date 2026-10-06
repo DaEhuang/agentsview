@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -199,6 +200,11 @@ func (a *Archive) reparseSource(ctx context.Context, scratch *db.DB, scratchDir 
 			return false, err
 		}
 		if existing != nil {
+			// A joined continuation may have been stored under either verified
+			// transcript on the source machine. Keep that spelling and identity.
+			if root.DeviceID == owner && existing.FilePath != nil && slices.Contains(prepared.SourcePaths, *existing.FilePath) {
+				s.FilePath = existing.FilePath
+			}
 			machineMatches := existing.Machine == root.DeviceID || (root.DeviceID == owner && aliases[existing.Machine] == owner)
 			if (!known && root.DeviceID != owner) || existing.Agent != root.Provider || !machineMatches || existing.FilePath == nil || s.FilePath == nil || *existing.FilePath != *s.FilePath {
 				return false, fmt.Errorf("session identity conflicts with a different source: %s", s.ID)
@@ -209,6 +215,17 @@ func (a *Archive) reparseSource(ctx context.Context, scratch *db.DB, scratchDir 
 		if d, ok := policy[native]; ok && (d.Provider == "" || d.Provider == root.Provider) {
 			suppressed[s.ID] = true
 			return false, nil
+		}
+		if root.DeviceID == owner && root.Provider == "claude" {
+			recorded, err := scratch.GetClaudeSubagentSources(ctx, s.ID)
+			if err != nil {
+				return false, err
+			}
+			for _, path := range recorded {
+				if !slices.Contains(prepared.SourcePaths, path) {
+					return false, fmt.Errorf("missing recorded Claude continuation for %s", s.ID)
+				}
+			}
 		}
 		return true, nil
 	}
@@ -229,6 +246,16 @@ func (a *Archive) reparseSource(ctx context.Context, scratch *db.DB, scratchDir 
 			return err
 		}
 		if session == nil {
+			var excluded bool
+			if err := scratch.Reader().QueryRow(ctx,
+				"SELECT EXISTS(SELECT 1 FROM excluded_sessions WHERE id = ?)", id,
+			).Scan(&excluded); err != nil {
+				return fmt.Errorf("checking receiving archive deletion for %s: %w", id, err)
+			}
+			if excluded {
+				suppressed[id] = true
+				continue
+			}
 			return fmt.Errorf("provider did not publish reparsed session %s", id)
 		}
 	}

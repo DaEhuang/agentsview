@@ -18,6 +18,7 @@ import (
 
 	"go.kenn.io/agentsview/internal/db"
 	"go.kenn.io/agentsview/internal/parser"
+	"go.kenn.io/agentsview/internal/rawderive"
 	"go.kenn.io/agentsview/internal/rawsync"
 )
 
@@ -237,15 +238,15 @@ func (a *Archive) Import(ctx context.Context, spec ImportSpec) (Report, error) {
 		if !discovery.Complete {
 			return report, errors.New("capture discovery is incomplete")
 		}
-		planner, ok := provider.(parser.RawCaptureProvider)
-		if !ok {
-			return report, errors.New("provider does not support raw capture")
-		}
+		grouped := make(map[string]bool)
 		for _, source := range discovery.Sources {
+			if grouped[source.Key] {
+				continue
+			}
 			if err := ctx.Err(); err != nil {
 				return report, err
 			}
-			plan, err := planner.PlanRawCapture(parseCtx, source)
+			plan, members, err := rawderive.PlanLocalCapture(parseCtx, provider, source, discovery.Sources)
 			if err != nil {
 				report.Gaps = append(report.Gaps, fmt.Sprintf("root %s: capture plan: %v", input.ID, err))
 				continue
@@ -319,6 +320,9 @@ func (a *Archive) Import(ctx context.Context, spec ImportSpec) (Report, error) {
 					return report, err
 				}
 				inventory[findInventoryPath(spec, record)] = record
+			}
+			for _, member := range members {
+				grouped[member.Key] = true
 			}
 			report.Sources++
 			if report.Sources%100 == 0 {

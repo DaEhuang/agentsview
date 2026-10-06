@@ -84,7 +84,7 @@ func (p *ProviderParser) Parse(
 	// server's filesystem or read its .git metadata from an attacker-chosen
 	// cwd.
 	ctx = parser.WithoutFilesystemProjectDiscovery(ctx)
-	provider, source, paths, err := p.prepareSource(ctx, manifest, materialized)
+	provider, source, paths, err := p.prepareSource(ctx, manifest, materialized, false)
 	if err != nil {
 		return ParsedManifest{}, err
 	}
@@ -129,7 +129,7 @@ func (p *ProviderParser) Parse(
 }
 
 func (p *ProviderParser) prepareSource(
-	ctx context.Context, manifest rawsync.CanonicalManifest, materialized *Materialization,
+	ctx context.Context, manifest rawsync.CanonicalManifest, materialized *Materialization, localArchive bool,
 ) (parser.Provider, parser.SourceRef, *stablePathMap, error) {
 	factory, ok := p.factories[manifest.Manifest.Provider]
 	if !ok {
@@ -166,7 +166,7 @@ func (p *ProviderParser) prepareSource(
 	if !discovery.Complete {
 		return nil, parser.SourceRef{}, nil, errors.New("provider raw-capture discovery is incomplete")
 	}
-	source, err := matchProviderSource(ctx, provider, discovery.Sources, manifest, materialized)
+	source, err := matchProviderSource(ctx, provider, discovery.Sources, manifest, materialized, localArchive)
 	if err != nil {
 		return nil, parser.SourceRef{}, nil, err
 	}
@@ -383,6 +383,7 @@ func matchProviderSource(
 	sources []parser.SourceRef,
 	manifest rawsync.CanonicalManifest,
 	materialized *Materialization,
+	localArchive bool,
 ) (parser.SourceRef, error) {
 	wantPaths := make([]string, 0, len(manifest.Manifest.Entries))
 	// The manifest's primary entry is the relative entry its source key ends
@@ -395,7 +396,15 @@ func matchProviderSource(
 	slices.Sort(wantPaths)
 	var matches, primaryMatches []parser.SourceRef
 	for _, source := range sources {
-		plan, supported, err := parser.ResolveRawCapturePlan(ctx, provider, source)
+		var plan parser.RawCapturePlan
+		var supported bool
+		var err error
+		if localArchive {
+			plan, _, err = PlanLocalCapture(ctx, provider, source, sources)
+			supported = err == nil
+		} else {
+			plan, supported, err = parser.ResolveRawCapturePlan(ctx, provider, source)
+		}
 		if err != nil {
 			return parser.SourceRef{}, redactMaterializedError(
 				"resolving provider raw-capture plan", err, materialized.Root(),

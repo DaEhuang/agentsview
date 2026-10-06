@@ -79,6 +79,7 @@ func TestArchiveCapturePortableSource(t *testing.T) {
 	var stars int
 	require.NoError(t, snapshot.QueryRowContext(t.Context(), "SELECT count(*) FROM starred_sessions").Scan(&stars))
 	assert.Equal(t, 1, stars, "capture includes committed WAL state")
+	require.NoError(t, snapshot.Close())
 	assert.FileExists(t, filepath.Join(applicationPath, "assets", "kept.bin"))
 	assert.NoFileExists(t, filepath.Join(applicationPath, "config.toml"))
 	// Moving the whole capture does not require editing paths or identities.

@@ -3,6 +3,8 @@ package rawderive
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"strings"
 
 	"go.kenn.io/agentsview/internal/parser"
 	"go.kenn.io/agentsview/internal/rawsync"
@@ -14,10 +16,13 @@ import (
 type LocalSource struct {
 	Path   string
 	Config syncer.EngineConfig
+	// SourcePaths are the verified original continuation paths. A seeded session
+	// may retain any of these spellings without changing its source ownership.
+	SourcePaths []string
 }
 
-// PrepareLocalSource shares hosted source validation without collecting parsed
-// messages. The local engine can therefore retain its streaming Codex path.
+// PrepareLocalSource validates a local capture through provider-owned plans.
+// Claude continuation membership is parsed; Codex keeps its streaming sync path.
 func PrepareLocalSource(
 	ctx context.Context, manifest rawsync.CanonicalManifest,
 	materialized *Materialization, machine, storedPath string,
@@ -33,16 +38,43 @@ func PrepareLocalSource(
 	if err != nil {
 		return LocalSource{}, err
 	}
-	_, source, paths, err := dispatch.prepareSource(
-		parser.WithoutFilesystemProjectDiscovery(ctx), manifest, materialized,
+	provider, source, paths, err := dispatch.prepareSource(
+		parser.WithoutFilesystemProjectDiscovery(ctx), manifest, materialized, true,
 	)
 	if err != nil {
 		return LocalSource{}, err
 	}
+	sourcePaths := []string{storedPath}
+	// Reconstruct the same verified group used at import. Preserve original
+	// member paths for a seed, including forks parsed from companion files.
+	discovery, err := parser.DiscoverRawCaptureSources(ctx, provider)
+	if err != nil {
+		return LocalSource{}, err
+	}
+	_, members, err := PlanLocalCapture(ctx, provider, source, discovery.Sources)
+	if err != nil {
+		return LocalSource{}, err
+	}
+	if len(members) > 1 && storedPath == manifest.Manifest.SourceKey {
+		sourcePaths = nil
+		clientRoot, separator := clientSourceRoot(manifest.Manifest.SourceKey, manifestPrimaryEntry(manifest))
+		if clientRoot == "" {
+			return LocalSource{}, errors.New("continuation source has no original root")
+		}
+		for _, member := range members {
+			rel, err := filepath.Rel(materialized.Root(), member.DisplayPath)
+			if err != nil || !filepath.IsLocal(rel) {
+				return LocalSource{}, errors.New("continuation source is outside materialization")
+			}
+			original := clientRoot + separator + strings.ReplaceAll(filepath.ToSlash(rel), "/", separator)
+			paths.bindSource(member, original)
+			sourcePaths = append(sourcePaths, original)
+		}
+	}
 	paths.bindSource(source, storedPath)
 	roots := materializedProviderRoots(manifest, materialized)
 	agent := manifest.Manifest.Provider
-	return LocalSource{Path: source.DisplayPath, Config: syncer.EngineConfig{
+	return LocalSource{Path: source.DisplayPath, SourcePaths: sourcePaths, Config: syncer.EngineConfig{
 		AgentDirs: map[parser.AgentType][]string{agent: roots},
 		ProviderMetadata: map[parser.AgentType]map[string][]string{
 			agent: materializedProviderMetadataDirs(manifest, materialized, roots),
