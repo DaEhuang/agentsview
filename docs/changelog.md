@@ -110,6 +110,11 @@ The latest published release is
   sessions somewhere else. Subagent and workflow runs StepCode spawns are
   tagged as subagents, so they stay out of the session list the way they stay
   out of StepCode's own resume picker.
+- An orchestrator that launches agents as separate sessions can record the
+  manager with `PUT /api/v1/sessions/{id}/parent`. The worker then appears
+  under its manager in the sidebar tree and child lists, and the link survives
+  re-syncs and rebuilds. A parent found in the transcript still wins. See
+  [Session API](/docs/session-api/).
 
 **Improvements**
 

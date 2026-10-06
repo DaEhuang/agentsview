@@ -736,12 +736,7 @@ func ensureRecallImportSessionTx(
 	); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(
-		ctx, insertSessionIfAbsentSQL, upsertSessionArgs(session)...,
-	); err != nil {
-		return fmt.Errorf("inserting session %s if absent: %w", session.ID, err)
-	}
-	return nil
+	return insertSessionIfAbsentExec(ctx, tx.ExecContext, txQueryRow(tx), session)
 }
 
 func validateRecallImportPlaceholderSessionStateWithQueryer(

@@ -502,3 +502,35 @@ func TestParseDiffTraePartialRemovalUsesContainerPresenceSweep(t *testing.T) {
 	assert.True(t, report.HasFailures(),
 		"partial Trae removal must trip --fail-on-change")
 }
+
+// TestParseDiffComparesLinkedSubagentAgainstParserRelationship: StepCode
+// writes spawned children as parentless subagents, so a linked child must
+// compare against that relationship rather than an empty one.
+func TestParseDiffComparesLinkedSubagentAgainstParserRelationship(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+	root := t.TempDir()
+	project := filepath.Join(root, "--Users-alice-code-step-project--")
+	require.NoError(t, os.MkdirAll(project, 0o755))
+	writeStepCodeSession(t, project, "2026-09-01T12-00-05-000Z_subagent-0199e4c2.jsonl", "subagent-0199e4c2")
+	cfg := sync.EngineConfig{
+		AgentDirs: map[parser.AgentType][]string{parser.AgentStepCode: {root}},
+		Machine:   "local",
+	}
+	database := dbtest.OpenTestDB(t)
+	engine := sync.NewEngine(t.Context(), database, cfg)
+	require.Equal(t, 0, engine.SyncAll(t.Context(), nil).Failed)
+	link, err := engine.SetSessionParentLink(
+		t.Context(), "stepcode:subagent-0199e4c2", "manager", "fork",
+	)
+	require.NoError(t, err)
+	require.True(t, link.Applied)
+
+	report, err := sync.NewDiffEngine(t.Context(), database, cfg).ParseDiff(
+		t.Context(), sync.ParseDiffOptions{Agents: []parser.AgentType{parser.AgentStepCode}},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, sync.ParseDiffTotals{Examined: 1, Identical: 1},
+		report.Totals, "linked subagent keeps its parser relationship")
+}

@@ -484,6 +484,69 @@ directory. Message-point forks are Claude-only, require `fork_session`, reject
 
 ______________________________________________________________________
 
+### `PUT /api/v1/sessions/{id}/parent`
+
+Record the session that launched this one when the transcript can't say so,
+such as an orchestrator that starts each worker as a separate `claude` process.
+The worker then appears under the manager in the sidebar tree, the breadcrumb,
+`GET /api/v1/sessions/{id}/children`, and `?subagents=true` usage.
+
+`{id}` and `parent_session_id` are AgentsView session IDs: the `id` the API
+returns and the UI shows, including any remote host prefix. That isn't always
+the raw Claude session UUID.
+
+Request body:
+
+```json
+{
+  "parent_session_id": "manager-session",
+  "relationship_type": "subagent"
+}
+```
+
+`relationship_type` is optional and defaults to `subagent`. `fork` and
+`continuation` are the only other values it accepts; `delegated` and any
+other value return `400`. The response echoes the stored link, with `applied`
+saying whether the session row now carries it.
+
+- A parent the parser finds, from the transcript path or a subagent spawn
+  record, wins over this link. `applied` is `false` in that case.
+- You can call this before the worker is synced. The link is stored and applies
+  when the session is first imported.
+- The link survives re-syncs and full archive rebuilds. A second `PUT` replaces
+  it, and a `PUT` with an empty or `null` `parent_session_id` removes it.
+- A `subagent` link moves the worker out of the root session list and out of
+  session counts that leave subagents out, the same as any other subagent. Its
+  usage and cost still count in analytics totals.
+  A worker whose project differs from its manager's drops out of that
+  project's session list, sidebar filter, and project counts. Map the worker's
+  worktree to the manager's project, or use `continuation`, to keep it listed.
+- If the parent never syncs, a `subagent` worker drops out of session lists
+  that leave subagents out. The sidebar still shows it as an orphan root.
+- A session can't be its own parent. A link that would close a loop through
+  stored parents or other links returns `400`. When the loop runs through a
+  stored link, the message says so; clear that link first.
+- A transcript synced later can still contradict a link, for example when the
+  manager's transcript names the worker as its parent. The archive keeps both
+  parents, so the sessions in that loop drop out of the sidebar tree and
+  session lists, though they still open by URL. A `PUT` with `null` on the
+  linked session restores what the parser wrote and breaks the loop.
+- The route writes the local archive only. Remote and read-only serving return
+  `501`.
+
+Like every mutating route, `PUT` needs an `Origin` header that matches the
+server URL. A server started with `--require-auth` takes
+`Authorization: Bearer <token>` instead. A scripted call looks like this:
+
+```bash
+curl -X PUT http://127.0.0.1:8080/api/v1/sessions/worker-session/parent \
+  -H 'Origin: http://127.0.0.1:8080' \
+  -H 'Content-Type: application/json' \
+  -d '{"parent_session_id": "manager-session"}'
+```
+
+______________________________________________________________________
+
 ### The `agentsview://` URL scheme
 
 The desktop app registers the `agentsview://` URL scheme, letting

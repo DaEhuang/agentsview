@@ -58,6 +58,7 @@ func (s *Server) registerSessionRoutes() {
 	s.post(group, "/sessions/{id}/open", "Open session directory", s.humaOpenSession)
 	s.post(group, "/sessions/upload", "Upload a session export", s.humaUploadSession)
 	s.patch(group, "/sessions/{id}/rename", "Rename session", s.humaRenameSession)
+	s.put(group, "/sessions/{id}/parent", "Set external parent session", s.humaSetSessionParent)
 	s.post(group, "/sessions/batch-delete", "Batch delete sessions", s.humaBatchDeleteSessions)
 	s.deleteRoute(group, "/sessions/{id}", "Delete session", s.humaDeleteSession)
 	s.post(group, "/sessions/{id}/restore", "Restore session", s.humaRestoreSession)
@@ -691,6 +692,16 @@ type renameRequest struct {
 	DisplayName *string `json:"display_name"`
 }
 
+type sessionParentInput struct {
+	ID   string `path:"id" required:"true" doc:"Session ID"`
+	Body sessionParentRequest
+}
+
+type sessionParentRequest struct {
+	ParentSessionID  *string `json:"parent_session_id" doc:"Session that launched this one; empty or null removes the link"`
+	RelationshipType string  `json:"relationship_type,omitempty" doc:"subagent (default), fork, or continuation"`
+}
+
 type trashResponse struct {
 	Sessions []db.Session `json:"sessions"`
 }
@@ -803,6 +814,30 @@ func (s *Server) humaPublishSession(
 
 func urlPathEscape(s string) string {
 	return url.PathEscape(s)
+}
+
+func (s *Server) humaSetSessionParent(
+	ctx context.Context,
+	in *sessionParentInput,
+) (*jsonOutput[db.SessionParentLink], error) {
+	localDB, _, err := s.localWorktreeMappingHumaDB()
+	if err != nil {
+		return nil, err
+	}
+	var parentID string
+	if in.Body.ParentSessionID != nil {
+		parentID = *in.Body.ParentSessionID
+	}
+	link, err := s.syncEngineForLocal(ctx, localDB).SetSessionParentLink(
+		ctx, in.ID, parentID, in.Body.RelationshipType,
+	)
+	if err != nil {
+		if errors.Is(err, db.ErrSessionParentLinkInvalid) {
+			return nil, apiError(http.StatusBadRequest, err.Error())
+		}
+		return nil, internalError("set session parent", err)
+	}
+	return &jsonOutput[db.SessionParentLink]{Body: link}, nil
 }
 
 func (s *Server) humaRenameSession(

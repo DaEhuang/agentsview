@@ -1413,7 +1413,8 @@ const insertSessionSQL = `
 			started_at, ended_at, message_count,
 			user_message_count, parent_session_id,
 			parser_parent_session_id,
-			relationship_type,
+			relationship_type, parser_relationship_type,
+			parent_from_link,
 			total_output_tokens, peak_context_tokens,
 			has_total_output_tokens, has_peak_context_tokens,
 			is_automated,
@@ -1426,7 +1427,7 @@ const insertSessionSQL = `
 			file_path, file_size, file_mtime,
 			next_ordinal, last_entry_uuid, claude_linear_parse,
 			file_inode, file_device, file_hash
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 // insertSessionIfAbsentSQL inserts a session only when its id does not already
 // exist, leaving an existing row untouched.
@@ -1454,6 +1455,8 @@ const upsertSessionBaseSQL = insertSessionSQL + `
 			parent_session_id = excluded.parent_session_id,
 			parser_parent_session_id = excluded.parser_parent_session_id,
 			relationship_type = excluded.relationship_type,
+			parser_relationship_type = excluded.parser_relationship_type,
+			parent_from_link = excluded.parent_from_link,
 			total_output_tokens = excluded.total_output_tokens,
 			peak_context_tokens = excluded.peak_context_tokens,
 			has_total_output_tokens = excluded.has_total_output_tokens,
@@ -1507,13 +1510,19 @@ func parserParentSessionID(s Session) *string {
 	return s.ParentSessionID
 }
 
-func upsertSessionArgs(s Session) []any {
+// upsertSessionArgs binds s for insertSessionSQL. A non-nil link replaces
+// the effective parent pair while the parser columns keep what s carries.
+func upsertSessionArgs(s Session, link *SessionParentLink) []any {
+	parent, rel := s.ParentSessionID, s.RelationshipType
+	if link != nil {
+		parent, rel = &link.ParentSessionID, link.RelationshipType
+	}
 	return []any{
 		s.ID, s.Project, s.Machine, s.Agent, s.FirstMessage, s.SessionName,
 		s.AgentLabel, s.Entrypoint, s.SessionKind,
 		s.StartedAt, s.EndedAt, s.MessageCount,
-		s.UserMessageCount, s.ParentSessionID, parserParentSessionID(s),
-		s.RelationshipType,
+		s.UserMessageCount, parent, parserParentSessionID(s),
+		rel, s.RelationshipType, link != nil,
 		s.TotalOutputTokens, s.PeakContextTokens,
 		s.HasTotalOutputTokens, s.HasPeakContextTokens,
 		sessionIsAutomated(s),
@@ -1578,9 +1587,7 @@ func (db *DB) upsertSession(ctx context.Context,
 	result, err := upsertSessionExec(
 		ctx,
 		tx.ExecContext,
-		func(ctx context.Context, query string, args ...any) rowScanner {
-			return tx.QueryRowContext(ctx, query, args...)
-		},
+		txQueryRow(tx),
 		s,
 		reviveSourceMissing,
 	)
@@ -1595,6 +1602,15 @@ func (db *DB) upsertSession(ctx context.Context,
 	}
 	return result, nil
 }
+
+// upsertPreviousRowSQL reads the stored row an upsert replaces. The parent
+// link rides on it so a re-parse of an unlinked session costs no extra
+// statement.
+const upsertPreviousRowSQL = `
+	SELECT s.project, s.session_name, s.deleted_at, s.source_missing_at, s.is_automated,
+		l.parent_session_id, l.relationship_type
+	FROM sessions s LEFT JOIN session_parent_links l ON l.session_id = s.id
+	WHERE s.id = ?`
 
 type sessionUpsertResult struct {
 	inserted        bool
@@ -1629,11 +1645,10 @@ func upsertSessionExec(
 	var previousSessionName sql.NullString
 	var previousAutomated bool
 	var deletedAt, sourceMissingAt sql.NullString
-	err = queryRow(ctx,
-		"SELECT project, session_name, deleted_at, source_missing_at, is_automated "+
-			"FROM sessions WHERE id = ?", s.ID,
-	).Scan(
+	var linkParent, linkRel sql.NullString
+	err = queryRow(ctx, upsertPreviousRowSQL, s.ID).Scan(
 		&previousProject, &previousSessionName, &deletedAt, &sourceMissingAt, &previousAutomated,
+		&linkParent, &linkRel,
 	)
 	result := sessionUpsertResult{
 		inserted:        errors.Is(err, sql.ErrNoRows),
@@ -1667,13 +1682,25 @@ func upsertSessionExec(
 	// up-to-date and starve the rewrite on the next sync.
 	// New rows are seeded with 0 (the default) and bumped to
 	// the current version once their messages land.
+	var link *SessionParentLink
+	switch {
+	case result.inserted:
+		link, err = linkedParent(ctx, queryRow, s)
+	case linkParent.Valid && !parserNamesParent(s):
+		link, err = linkUnlessSpawned(ctx, queryRow, s.ID, &SessionParentLink{
+			ParentSessionID: linkParent.String, RelationshipType: linkRel.String,
+		})
+	}
+	if err != nil {
+		return sessionUpsertResult{}, err
+	}
 	query := upsertSessionBaseSQL
 	if reviveSourceMissing {
 		query = upsertSessionSQL
 	}
 	_, err = exec(ctx,
 		query,
-		upsertSessionArgs(s)...,
+		upsertSessionArgs(s, link)...,
 	)
 	if err != nil {
 		return sessionUpsertResult{},
@@ -1726,9 +1753,29 @@ func (db *DB) insertSessionIfAbsent(ctx context.Context, s Session) error {
 		return ErrSessionTrashed
 	}
 
-	if _, err := db.getWriter().ExecContext(
-		ctx, insertSessionIfAbsentSQL, upsertSessionArgs(s)...,
-	); err != nil {
+	writer := db.getWriter()
+	return insertSessionIfAbsentExec(ctx, writer.ExecContext, writer.QueryRowContext, s)
+}
+
+func txQueryRow(tx *sql.Tx) func(context.Context, string, ...any) rowScanner {
+	return func(ctx context.Context, query string, args ...any) rowScanner {
+		return tx.QueryRowContext(ctx, query, args...)
+	}
+}
+
+// insertSessionIfAbsentExec inserts a placeholder row carrying any pending
+// parent link.
+func insertSessionIfAbsentExec(
+	ctx context.Context,
+	exec func(context.Context, string, ...any) (sql.Result, error),
+	queryRow func(context.Context, string, ...any) rowScanner,
+	s Session,
+) error {
+	link, err := linkedParent(ctx, queryRow, s)
+	if err != nil {
+		return err
+	}
+	if _, err := exec(ctx, insertSessionIfAbsentSQL, upsertSessionArgs(s, link)...); err != nil {
 		return fmt.Errorf("inserting session %s if absent: %w", s.ID, err)
 	}
 	return nil
@@ -1833,6 +1880,8 @@ const subagentSpawnerExpr = `
 
 // linkSubagentSessionsQuery re-points every session that carries a spawn edge
 // at the spawner subagentSpawnerExpr resolves for it.
+// It also claims a row whose parent came from an external link, even when
+// both name the same parent, so clearing the link keeps the spawn parent.
 //
 // The statement is driven from the edges rather than from sessions: `s.id IN
 // (SELECT tc.subagent_session_id ...)` lets SQLite seek the partial index
@@ -1849,6 +1898,7 @@ const linkSubagentSessionsQuery = `
 	SET parent_session_id = (` + subagentSpawnerExpr + `
 	),
 	relationship_type = 'subagent',
+	parent_from_link = 0,
 	local_modified_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
 	-- The tool_calls edge (from toolUseResult.agentId) records the actual
 	-- spawn, authoritative over the path-derived parent set at parse time.
@@ -1870,6 +1920,7 @@ const linkSubagentSessionsQuery = `
 	)
 	AND (
 		relationship_type != 'subagent'
+		OR parent_from_link
 		OR parent_session_id IS NOT (` + subagentSpawnerExpr + `
 		)
 	)`
@@ -2016,6 +2067,7 @@ func linkSubagentSessionsForSessionsQuery(ph string) string {
 	SET parent_session_id = (` + subagentSpawnerExpr + `
 	),
 	relationship_type = 'subagent',
+	parent_from_link = 0,
 	local_modified_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
 	WHERE s.id IN (
 		SELECT tc.subagent_session_id FROM tool_calls tc
@@ -2029,6 +2081,7 @@ func linkSubagentSessionsForSessionsQuery(ph string) string {
 	)
 	AND (
 		relationship_type != 'subagent'
+		OR parent_from_link
 		OR parent_session_id IS NOT (` + subagentSpawnerExpr + `
 		)
 	)`
@@ -2053,6 +2106,7 @@ func clearDanglingSubagentParentQuery(ph string) string {
 	WHERE s.id IN ` + ph + `
 	AND s.relationship_type = 'subagent'
 	AND s.parent_session_id IS NOT NULL
+	AND NOT s.parent_from_link
 	AND NOT EXISTS (
 		SELECT 1 FROM tool_calls tc WHERE tc.subagent_session_id = s.id
 		AND tc.session_id IS NOT tc.subagent_session_id
@@ -2312,6 +2366,16 @@ func (db *DB) RepairQueuedSubagentParentsContext(
 			return 0, fmt.Errorf("counting queued dangling-parent repairs: %w", err)
 		}
 		updated += int(cleared)
+		// A row released from a dangling spawn parent falls back to its link.
+		res, err = tx.ExecContext(ctx, applyParentLinksSQL("l.session_id IN "+ph), args...)
+		if err != nil {
+			return 0, fmt.Errorf("applying queued parent links: %w", err)
+		}
+		applied, err := res.RowsAffected()
+		if err != nil {
+			return 0, fmt.Errorf("counting queued parent links: %w", err)
+		}
+		updated += int(applied)
 		if _, err := tx.ExecContext(ctx,
 			"DELETE FROM subagent_parent_cleanup_queue WHERE session_id IN "+ph,
 			args...,

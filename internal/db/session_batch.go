@@ -484,9 +484,7 @@ func writeOneSessionBatchTx(
 	upsertResult, err := upsertSessionExec(
 		ctx,
 		tx.ExecContext,
-		func(ctx context.Context, query string, args ...any) rowScanner {
-			return tx.QueryRowContext(ctx, query, args...)
-		},
+		txQueryRow(tx),
 		write.Session,
 		true,
 	)

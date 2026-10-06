@@ -1151,7 +1151,8 @@ func (d *DB) CopyExcludedSessionsFrom(
 // source DB into sessions that were re-synced into this DB.
 // This preserves display_name, deleted_at, starred_sessions, pinned_messages,
 // archive metadata, project identity observations, worktree project mappings,
-// and explicit session project assignments across full DB rebuilds. Immutable
+// explicit session project assignments, and external session parent links
+// across full DB rebuilds. Immutable
 // project snapshots are restored only from source versions that recorded
 // parser-source labels reliably.
 func (d *DB) CopySessionMetadataFrom(
@@ -1726,6 +1727,30 @@ func (d *DB) CopySessionMetadataFrom(
 		}
 	}
 
+	// External parent links are copied even for sessions not synced yet, so a
+	// worker that lands later still picks up its parent when it is linked.
+	if oldDBHasTable(ctx, tx, "session_parent_links") {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO main.session_parent_links
+				(session_id, parent_session_id, relationship_type,
+				 created_at, updated_at)
+			SELECT session_id, parent_session_id, relationship_type,
+				created_at, updated_at
+			FROM old_db.session_parent_links
+			WHERE true
+			ON CONFLICT(session_id) DO UPDATE SET
+				parent_session_id = excluded.parent_session_id,
+				relationship_type = excluded.relationship_type,
+				created_at = excluded.created_at,
+				updated_at = excluded.updated_at`); err != nil {
+			return fmt.Errorf("copying session parent links: %w", err)
+		}
+		// Rows re-synced before the links landed here pick them up now.
+		if _, err := tx.ExecContext(ctx, applyParentLinksSQL("")); err != nil {
+			return fmt.Errorf("applying session parent links: %w", err)
+		}
+	}
+
 	// Copy persistent worktree project mappings. Omit id so
 	// primary-key values from old_db cannot shadow existing
 	// destination rows. ResyncAll may pre-copy mappings into
@@ -1819,8 +1844,12 @@ func orphanSessionCols(ctx context.Context, tx *sql.Tx) string {
 		"file_mtime", "file_hash", "parent_session_id",
 		"relationship_type",
 	)
-	if oldDBHasColumn(ctx, tx, "sessions", "parser_parent_session_id") {
-		cols = append(cols, "parser_parent_session_id")
+	for _, c := range []string{
+		"parser_parent_session_id", "parser_relationship_type", "parent_from_link",
+	} {
+		if oldDBHasColumn(ctx, tx, "sessions", c) {
+			cols = append(cols, c)
+		}
 	}
 	for _, c := range []string{"agent_label", "entrypoint", "session_kind"} {
 		if oldDBHasColumn(ctx, tx, "sessions", c) {

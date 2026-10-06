@@ -103,10 +103,20 @@ func (e *Engine) ParseDiff(ctx context.Context, opts ParseDiffOptions) (*ParseDi
 	if err != nil {
 		return nil, fmt.Errorf("parse-diff: list stored sessions: %w", err)
 	}
+	linked, err := e.db.SessionIDsWithLinkedParent(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("parse-diff: list linked sessions: %w", err)
+	}
 	storedByID := make(map[string]*db.Session, len(storedSessions))
 	storedByPath := make(map[string][]*db.Session)
 	for i := range storedSessions {
 		s := &storedSessions[i]
+		// An external parent link is not parser output; compare what the
+		// parser wrote: no parent, and its own relationship.
+		if parserRel, ok := linked[s.ID]; ok {
+			s.ParentSessionID = nil
+			s.RelationshipType = parserRel
+		}
 		storedByID[s.ID] = s
 		if s.FilePath != nil && *s.FilePath != "" {
 			base := parseDiffSourceKey(

@@ -4886,6 +4886,26 @@ func (e *Engine) ClearSessionProjectAssignment(
 	return cleared, err
 }
 
+// SetSessionParentLink serializes an externally supplied parent link with
+// parser and watcher writes, then publishes the changed session inventory.
+func (e *Engine) SetSessionParentLink(
+	ctx context.Context,
+	sessionID string,
+	parentID string,
+	relationship string,
+) (db.SessionParentLink, error) {
+	var link db.SessionParentLink
+	err := e.RunExclusive(func() error {
+		var err error
+		link, err = e.db.SetSessionParentLink(ctx, sessionID, parentID, relationship)
+		return err
+	})
+	if err == nil {
+		e.emit("sessions")
+	}
+	return link, err
+}
+
 // SyncAll discovers and syncs all session files from all agents.
 func (e *Engine) SyncAll(
 	ctx context.Context, onProgress ProgressFunc,

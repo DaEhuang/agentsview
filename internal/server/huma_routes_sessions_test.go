@@ -25,3 +25,27 @@ func TestGetSessionIncludesTranscriptFidelity(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	assert.Contains(t, w.Body.String(), `"transcript_fidelity":"summary"`)
 }
+
+func TestSessionParentLinkAPILocalNoSyncMode(t *testing.T) {
+	te := setupNoSyncMode(t)
+	for _, id := range []string{"manager", "worker"} {
+		require.NoError(t, te.db.UpsertSession(t.Context(), db.Session{
+			ID: id, Machine: "test", Agent: "claude", Project: "example",
+		}))
+	}
+
+	w := te.put(t, "/api/v1/sessions/worker/parent",
+		`{"parent_session_id":"manager","relationship_type":"teammate"}`)
+	assertStatus(t, w, http.StatusBadRequest)
+
+	w = te.put(t, "/api/v1/sessions/worker/parent",
+		`{"parent_session_id":"manager"}`)
+	assertStatus(t, w, http.StatusOK)
+	link := decode[db.SessionParentLink](t, w)
+	assert.Equal(t, "manager", link.ParentSessionID)
+	assert.True(t, link.Applied)
+
+	w = te.put(t, "/api/v1/sessions/worker/parent", `{"parent_session_id":null}`)
+	assertStatus(t, w, http.StatusOK)
+	assert.False(t, decode[db.SessionParentLink](t, w).Applied)
+}

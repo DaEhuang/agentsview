@@ -5,6 +5,7 @@ import type {
   BatchDeleteInputBody,
   DbSession,
   DbSessionActivityResponse,
+  DbSessionParentLink,
   DbSessionTiming,
   DbSidebarSessionIndex,
   DeleteApiV1SessionsByIdPathParameters,
@@ -41,6 +42,7 @@ import type {
   PostApiV1SessionsUploadBody,
   PostApiV1SessionsUploadParams,
   PublishResponse,
+  PutApiV1SessionsByIdParentPathParameters,
   RenameRequest,
   ResolveSessionIDsResponse,
   ResumeRequest,
@@ -50,6 +52,7 @@ import type {
   ServiceSessionList,
   ServiceToolCallList,
   SessionDirectoryResponse,
+  SessionParentRequest,
   SessionUsageResponse,
   TrashResponse,
   UploadSessionResponse,
@@ -449,6 +452,47 @@ export const postApiV1SessionsByIdOpen = async (
     method: "POST",
     headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
     body: JSON.stringify(openRequest),
+  });
+};
+
+export const getPutApiV1SessionsByIdParentUrl = ({
+  id,
+}: PutApiV1SessionsByIdParentPathParameters) => {
+  return `/api/v1/sessions/${encodeURIComponent(String(id))}/parent`;
+};
+
+/**
+ * @summary Set external parent session
+ */
+export const putApiV1SessionsByIdParent = async (
+  { id }: PutApiV1SessionsByIdParentPathParameters,
+  sessionParentRequest: SessionParentRequest,
+  options?: Parameters<typeof orvalFetch>[1],
+): Promise<DbSessionParentLink> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return orvalFetch<DbSessionParentLink>(getPutApiV1SessionsByIdParentUrl({ id }), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(sessionParentRequest),
   });
 };
 

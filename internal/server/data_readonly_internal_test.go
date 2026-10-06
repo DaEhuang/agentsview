@@ -75,3 +75,10 @@ func TestDataHandlers_ReturnNotImplementedOnReadOnlyStore(
 		})
 	}
 }
+
+func TestSetSessionParentReturnsNotImplementedOnRemoteStore(t *testing.T) {
+	s := newRoutedTestServerWithStore(t, readOnlyDataSpy{})
+	w := serveJSON(t, s.mux, http.MethodPut, "/api/v1/sessions/worker/parent",
+		map[string]string{"parent_session_id": "manager"})
+	assertRecorderStatus(t, w, http.StatusNotImplemented)
+}

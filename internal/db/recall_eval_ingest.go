@@ -307,9 +307,7 @@ func (db *DB) ingestEvalTrajectoryChunks(
 	); err != nil {
 		return 0, fmt.Errorf("preparing eval session: %w", err)
 	}
-	if _, err := tx.ExecContext(
-		ctx, insertSessionIfAbsentSQL, upsertSessionArgs(session)...,
-	); err != nil {
+	if err := insertSessionIfAbsentExec(ctx, tx.ExecContext, txQueryRow(tx), session); err != nil {
 		return 0, fmt.Errorf("preparing eval session: %w", err)
 	}
 	indexed := 0

@@ -36,6 +36,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     parent_session_id TEXT,
     parser_parent_session_id TEXT,
     relationship_type TEXT NOT NULL DEFAULT '',
+    parser_relationship_type TEXT NOT NULL DEFAULT '',
+    -- 1 while parent_session_id/relationship_type came from session_parent_links.
+    parent_from_link INTEGER NOT NULL DEFAULT 0,
     total_output_tokens INTEGER NOT NULL DEFAULT 0,
     peak_context_tokens INTEGER NOT NULL DEFAULT 0,
     has_total_output_tokens INTEGER NOT NULL DEFAULT 0,
@@ -846,6 +849,16 @@ BEGIN
     )
     WHERE id = NEW.id;
 END;
+
+-- A parent recorded by an outside process (PUT /sessions/{id}/parent). The
+-- session row carries it only while the parser and spawn edges name none.
+CREATE TABLE IF NOT EXISTS session_parent_links (
+    session_id        TEXT PRIMARY KEY,
+    parent_session_id TEXT NOT NULL,
+    relationship_type TEXT NOT NULL,
+    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
 
 CREATE TABLE IF NOT EXISTS archive_metadata (
     key        TEXT PRIMARY KEY,

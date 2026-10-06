@@ -12,6 +12,14 @@ import (
 	"go.kenn.io/agentsview/internal/sync"
 )
 
+func writeStepCodeSession(t *testing.T, project, name, id string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(project, name), []byte(`{"type":"session","version":3,"id":"`+id+`","timestamp":"2026-09-01T12:00:00Z","cwd":"/Users/alice/code/step-project"}
+{"type":"message","id":"m1","timestamp":"2026-09-01T12:00:01Z","message":{"role":"user","content":[{"type":"text","text":"Inspect the source."}]}}
+{"type":"message","id":"m2","timestamp":"2026-09-01T12:00:02Z","message":{"role":"assistant","content":[{"type":"text","text":"Looks ready."}],"model":"step-3"}}
+`), 0o644))
+}
+
 func TestStepCodeSyncIndexesSessionsAndTagsSpawnedChildren(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test")
@@ -19,17 +27,9 @@ func TestStepCodeSyncIndexesSessionsAndTagsSpawnedChildren(t *testing.T) {
 	root := t.TempDir()
 	project := filepath.Join(root, "--Users-alice-code-step-project--")
 	require.NoError(t, os.MkdirAll(project, 0o755))
-	write := func(name, id string) string {
-		path := filepath.Join(project, name)
-		require.NoError(t, os.WriteFile(path, []byte(`{"type":"session","version":3,"id":"`+id+`","timestamp":"2026-09-01T12:00:00Z","cwd":"/Users/alice/code/step-project"}
-{"type":"message","id":"m1","timestamp":"2026-09-01T12:00:01Z","message":{"role":"user","content":[{"type":"text","text":"Inspect the source."}]}}
-{"type":"message","id":"m2","timestamp":"2026-09-01T12:00:02Z","message":{"role":"assistant","content":[{"type":"text","text":"Looks ready."}],"model":"step-3"}}
-`), 0o644))
-		return path
-	}
-	write("2026-09-01T12-00-00-000Z_step-parent.jsonl", "step-parent")
-	write("2026-09-01T12-00-05-000Z_subagent-0199e4c2.jsonl", "subagent-0199e4c2")
-	write("2026-09-01T12-00-06-000Z_workflow-run1-agent1.jsonl", "workflow-run1-agent1")
+	writeStepCodeSession(t, project, "2026-09-01T12-00-00-000Z_step-parent.jsonl", "step-parent")
+	writeStepCodeSession(t, project, "2026-09-01T12-00-05-000Z_subagent-0199e4c2.jsonl", "subagent-0199e4c2")
+	writeStepCodeSession(t, project, "2026-09-01T12-00-06-000Z_workflow-run1-agent1.jsonl", "workflow-run1-agent1")
 
 	database := dbtest.OpenTestDB(t)
 	engine := sync.NewEngine(t.Context(), database, sync.EngineConfig{

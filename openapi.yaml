@@ -2658,6 +2658,29 @@ components:
         - sessions
         - total
       type: object
+    DbSessionParentLink:
+      additionalProperties: false
+      properties:
+        applied:
+          type: boolean
+        created_at:
+          type: string
+        parent_session_id:
+          type: string
+        relationship_type:
+          type: string
+        session_id:
+          type: string
+        updated_at:
+          type: string
+      required:
+        - session_id
+        - parent_session_id
+        - relationship_type
+        - created_at
+        - updated_at
+        - applied
+      type: object
     DbSessionProjectAssignment:
       additionalProperties: false
       properties:
@@ -6790,6 +6813,20 @@ components:
           type: string
       required:
         - path
+      type: object
+    SessionParentRequest:
+      additionalProperties: false
+      properties:
+        parent_session_id:
+          description: Session that launched this one; empty or null removes the link
+          type:
+            - string
+            - "null"
+        relationship_type:
+          description: subagent (default), fork, or continuation
+          type: string
+      required:
+        - parent_session_id
       type: object
     SessionProjectAssignmentRequest:
       additionalProperties: false
@@ -19162,6 +19199,99 @@ paths:
                 $ref: "#/components/schemas/ApiErrorResponse"
           description: Gateway Timeout
       summary: Open session directory
+      tags:
+        - Sessions
+  /api/v1/sessions/{id}/parent:
+    put:
+      operationId: put-api-v1-sessions-id-parent
+      parameters:
+        - description: Session ID
+          in: path
+          name: id
+          required: true
+          schema:
+            description: Session ID
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SessionParentRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DbSessionParentLink"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Service Unavailable
+        "504":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Gateway Timeout
+      summary: Set external parent session
       tags:
         - Sessions
   /api/v1/sessions/{id}/permanent:

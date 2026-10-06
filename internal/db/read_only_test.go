@@ -237,6 +237,10 @@ func TestOpenReadOnlyWriteMethodsReturnErrReadOnly(t *testing.T) {
 	requireReadOnlyOp(t, "InsertMessages", func() error {
 		return readonly.InsertMessages(t.Context(), nil)
 	})
+	requireReadOnlyOp(t, "SetSessionParentLink", func() error {
+		_, err := readonly.SetSessionParentLink(t.Context(), "worker", "manager", "")
+		return err
+	})
 	requireReadOnlyOp(t, "BulkStarSessions", func() error {
 		return readonly.BulkStarSessions(t.Context(), nil)
 	})

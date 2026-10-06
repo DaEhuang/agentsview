@@ -2243,6 +2243,20 @@ func schemaColumnMigrations() []schemaColumnMigration {
 				" UPDATE sessions SET parser_parent_session_id = parent_session_id",
 		},
 		{
+			// Backfilled once, like parser_parent_session_id above, except where
+			// a spawn edge means the linker wrote relationship_type; the next
+			// parse fills those.
+			"sessions", "parser_relationship_type",
+			"ALTER TABLE sessions ADD COLUMN parser_relationship_type TEXT NOT NULL DEFAULT '';" +
+				" UPDATE sessions SET parser_relationship_type = relationship_type" +
+				" WHERE NOT EXISTS (SELECT 1 FROM tool_calls tc" +
+				" WHERE tc.subagent_session_id = sessions.id AND tc.session_id IS NOT sessions.id)",
+		},
+		{
+			"sessions", "parent_from_link",
+			"ALTER TABLE sessions ADD COLUMN parent_from_link INTEGER NOT NULL DEFAULT 0",
+		},
+		{
 			"sessions", "session_name",
 			"ALTER TABLE sessions ADD COLUMN session_name TEXT",
 		},
