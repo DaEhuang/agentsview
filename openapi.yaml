@@ -7071,8 +7071,6 @@ components:
           description: Relationship to the parent; defaults to subagent
           enum:
             - subagent
-            - fork
-            - continuation
           type: string
       required:
         - parent_session_id

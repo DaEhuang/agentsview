@@ -2120,15 +2120,6 @@ func sessionLabelsFingerprint(labels []string) string {
 	return b.String()
 }
 
-// pgSessionLabelsArg binds labels for the NOT NULL TEXT[] column. A nil
-// slice would bind SQL NULL, so an unlabeled session binds an empty array.
-func pgSessionLabelsArg(labels []string) []string {
-	if labels == nil {
-		return []string{}
-	}
-	return labels
-}
-
 // pushedSessionMachine resolves the machine field for a PG row. Old rows
 // pushed before this fix with machine="local" will be repaired gradually as
 // each session is modified (message count change, etc.) and re-fingerprinted.
@@ -2572,7 +2563,7 @@ func writePGSession(ctx context.Context, tx *sql.Tx, sess db.Session, markerID s
 		string(legacyMarkerMachinesJSON),
 		options.UsageOnly,
 		db.EncodePRLinks(sess.PRLinks),
-		pgSessionLabelsArg(sess.Labels),
+		db.LabelsArg(sess.Labels),
 	)
 	if err != nil {
 		return err
