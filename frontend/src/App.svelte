@@ -72,7 +72,7 @@
   import { sessions, filtersToParams } from "./lib/stores/sessions.svelte.js";
   import { messages } from "./lib/stores/messages.svelte.js";
   import { sync } from "./lib/stores/sync.svelte.js";
-  import { ui } from "./lib/stores/ui.svelte.js";
+  import { parseScrollCall, ui, type ScrollCall } from "./lib/stores/ui.svelte.js";
   import { router } from "./lib/stores/router.svelte.js";
   import { starred } from "./lib/stores/starred.svelte.js";
   import { pins } from "./lib/stores/pins.svelte.js";
@@ -119,7 +119,7 @@
 
   let messageListRef:
     | {
-        scrollToOrdinal: (o: number, revision?: string) => void;
+        scrollToOrdinal: (o: number, call?: ScrollCall) => void;
         getDisplayItems: () => DisplayItem[];
         getNormalDisplayItems: () => DisplayItem[];
       }
@@ -269,19 +269,15 @@
         }
       }
 
-      const revision = ui.pendingScrollRevision;
+      const call = ui.pendingScrollCall;
       ui.pendingScrollOrdinal = null;
       ui.pendingScrollSession = null;
-      ui.pendingScrollRevision = null;
-      // A jump made for another transcript revision could name a different message here.
-      if (revision !== null && messages.loadedRevision !== revision) {
-        ui.selectedOrdinal = null;
-        return;
-      }
-      messageListRef.scrollToOrdinal(ordinal, revision ?? undefined);
+      ui.pendingScrollCall = null;
       // Ensure highlight is set (the session-change effect
-      // may have cleared it before this effect ran).
+      // may have cleared it before this effect ran). The list clears it
+      // again when the message no longer holds the expected call.
       ui.selectedOrdinal = ordinal;
+      messageListRef.scrollToOrdinal(ordinal, call ?? undefined);
     });
   });
 
@@ -664,7 +660,7 @@
   $effect(() => {
     const sid = router.sessionId;
     const msgParam = router.params["msg"] ?? null;
-    const revParam = router.params["rev"] || undefined;
+    const call = parseScrollCall(router.params["call"], router.params["tool_use_id"]);
     untrack(() => {
       if (!sid || !msgParam) return;
       if (msgParam === "last") {
@@ -673,7 +669,7 @@
       } else {
         const ordinal = parseInt(msgParam, 10);
         if (Number.isFinite(ordinal)) {
-          ui.scrollToOrdinal(ordinal, sid, revParam);
+          ui.scrollToOrdinal(ordinal, sid, call);
         }
       }
     });

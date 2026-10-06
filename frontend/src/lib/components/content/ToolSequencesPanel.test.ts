@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { mount, tick, unmount } from "svelte";
+import { createClassComponent } from "svelte/legacy";
 import type {
   DbSessionTiming,
   SessionToolSequence,
@@ -65,7 +66,9 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-function makeTiming(turns: { ordinal: number; calls: { tool_use_id: string; duration_ms: number | null }[] }[]): DbSessionTiming {
+function makeTiming(
+  turns: { ordinal: number; calls: { tool_use_id: string; duration_ms: number | null }[] }[],
+): DbSessionTiming {
   return {
     session_id: "session-a",
     running: false,
@@ -94,12 +97,11 @@ function mountPanel(
     unavailable?: boolean;
     onretry?: () => void;
     timing?: DbSessionTiming | null;
-    linked?: boolean;
   } = {},
 ) {
   return mount(ToolSequencesPanel, {
     target: document.body,
-    props: { data, sessionId: "session-a", loading: false, failed: false, linked: true, ...extra },
+    props: { data, sessionId: "session-a", loading: false, failed: false, ...extra },
   });
 }
 
@@ -156,7 +158,9 @@ describe("ToolSequencesPanel", () => {
     });
     const jump = vi.spyOn(ui, "scrollToOrdinal").mockImplementation(() => {});
     // Message 20 is the only call the timing view measured, and it took no time at all.
-    const timing = makeTiming([{ ordinal: 20, calls: [{ tool_use_id: "tool-id", duration_ms: 0 }] }]);
+    const timing = makeTiming([
+      { ordinal: 20, calls: [{ tool_use_id: "tool-id", duration_ms: 0 }] },
+    ]);
     const component = mountPanel(data, { timing });
 
     const row = document.querySelector<HTMLButtonElement>(".sequence-row")!;
@@ -216,11 +220,13 @@ describe("ToolSequencesPanel", () => {
     );
     expect(link).not.toBeNull();
     expect(link!.textContent).toContain("Message 20");
-    expect(link!.getAttribute("href")).toContain("msg=20");
-    expect(link!.getAttribute("href")).toContain("rev=revision-1");
+    const params = new URL(link!.getAttribute("href")!, "http://localhost").searchParams;
+    expect(params.get("msg")).toBe("20");
+    expect(params.get("call")).toBe("0");
+    expect(params.get("tool_use_id")).toBe("tool-id");
     expect(link!.closest("button")).toBeNull();
     link!.click();
-    expect(jump).toHaveBeenCalledWith(20, "session-a", "revision-1");
+    expect(jump).toHaveBeenCalledWith(20, "session-a", { index: 0, toolUseId: "tool-id" });
     expect(document.querySelectorAll(".call-row")[9]!.getAttribute("aria-expanded")).toBe("false");
     jump.mockRestore();
     unmount(component);
@@ -383,7 +389,9 @@ describe("ToolSequencesPanel", () => {
 
   it("keeps the full name of a long tool on its truncated call row", async () => {
     const tool = "mcp__agentsview__search_sessions_by_content";
-    const component = mountPanel(makeData({ sequences: [makeSequence({ calls: [makeCall({ tool_name: tool })] })] }));
+    const component = mountPanel(
+      makeData({ sequences: [makeSequence({ calls: [makeCall({ tool_name: tool })] })] }),
+    );
     await openSequence();
 
     const name = document.querySelector<HTMLElement>(".call-row .name")!;
@@ -458,16 +466,50 @@ describe("ToolSequencesPanel", () => {
     ]);
     const component = mountPanel(data, { timing });
     await openSequence();
-    const durations = [...document.querySelectorAll(".dur")].map((cell) => cell.textContent?.trim());
+    const durations = [...document.querySelectorAll(".dur")].map((cell) =>
+      cell.textContent?.trim(),
+    );
     expect(durations).toEqual(["1.0s", "—Not measured", "—Not measured", "3.0s"]);
     unmount(component);
   });
 
-  it("withholds transcript links while the sequences belong to another revision", async () => {
-    const component = mountPanel(makeData(), { linked: false });
+  it("links a call with a blank tool ID by its position alone", async () => {
+    const data = makeData({
+      sequences: [makeSequence({ calls: [makeCall({ call_index: 2, tool_use_id: "" })] })],
+    });
+    const jump = vi.spyOn(ui, "scrollToOrdinal").mockImplementation(() => {});
+    const component = mountPanel(data);
     await openSequence();
-    expect(document.querySelector("a.jump")).toBeNull();
-    expect(document.querySelector(".jump")!.textContent).toContain("Message 4");
+    const link = document.querySelector<HTMLAnchorElement>("a.jump")!;
+    const params = new URL(link.getAttribute("href")!, "http://localhost").searchParams;
+    expect(params.get("call")).toBe("2");
+    expect(params.has("tool_use_id")).toBe(false);
+    link.click();
+    expect(jump).toHaveBeenCalledWith(4, "session-a", { index: 2, toolUseId: "" });
+    jump.mockRestore();
     unmount(component);
+  });
+
+  it("keeps the opened sequence open when a refresh puts a new one before it", async () => {
+    const later = makeSequence({ calls: [makeCall({ ordinal: 9, tool_name: "Glob" })] });
+    const earlier = makeSequence({ calls: [makeCall({ ordinal: 2, tool_name: "Read" })] });
+    const component = createClassComponent({
+      component: ToolSequencesPanel,
+      target: document.body,
+      props: {
+        data: makeData({ sequences: [later] }),
+        sessionId: "session-a",
+        loading: false,
+        failed: false,
+      },
+    });
+    await openSequence();
+
+    component.$set({ data: makeData({ total_sequences: 2, sequences: [earlier, later] }) });
+    await tick();
+    const rows = [...document.querySelectorAll(".sequence-row")];
+    expect(rows.map((row) => row.getAttribute("aria-expanded"))).toEqual(["false", "true"]);
+    expect(rows[1]!.textContent).toContain("Message 9");
+    component.$destroy();
   });
 });

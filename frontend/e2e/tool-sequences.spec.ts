@@ -101,6 +101,33 @@ test("renders, expands, and navigates observed sequences at desktop, tablet, and
   }
 });
 
+test("opens a sequence link in a fresh page and refuses one whose call moved", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("agentsview-signal-panel", "true");
+  });
+  const panel = await openSession(page, 1280);
+  await panel.locator(".sequence-row").first().click();
+  const href = await panel
+    .getByRole("link", { name: "Message 1: open the Grep call in the transcript" })
+    .getAttribute("href");
+  expect(href).not.toBeNull();
+
+  // A link opened in another tab loads the transcript fresh and still finds its call.
+  await page.goto(href!, { waitUntil: "domcontentloaded" });
+  const target = page.locator(".message-list-scroll .virtual-row.selected");
+  await expect(target).toHaveAttribute("data-index", "1", { timeout: 10_000 });
+  await expect(target).toContainText("Grep");
+
+  // A link whose ordinal now holds a different call selects nothing.
+  const moved = new URL(href!, page.url());
+  moved.searchParams.set("tool_use_id", "a-call-that-moved");
+  await page.goto(moved.pathname + moved.search, { waitUntil: "domcontentloaded" });
+  await expect(page.locator(".message-list-scroll .virtual-row").first()).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.locator(".message-list-scroll .virtual-row.selected")).toHaveCount(0);
+});
+
 test("shows the empty state for a session with no messages", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("agentsview-signal-panel", "true");

@@ -10,7 +10,7 @@
   import { getLocale, m } from "../../i18n/index.js";
   import { ChevronRightIcon, InfoIcon, WorkflowIcon } from "../../icons.js";
   import { router } from "../../stores/router.svelte.js";
-  import { ui } from "../../stores/ui.svelte.js";
+  import { scrollCallParams, ui, type ScrollCall } from "../../stores/ui.svelte.js";
   import { formatDuration } from "../../utils/duration.js";
   import { summarizeToolInputPreview } from "../../utils/tool-summary.js";
 
@@ -23,8 +23,6 @@
     onretry?: (() => void) | undefined;
     /** The session's live timing, the same snapshot the timing view shows. */
     timing?: DbSessionTiming | null;
-    /** True only when data comes from the transcript revision the message list holds. */
-    linked?: boolean;
   }
 
   let {
@@ -35,7 +33,6 @@
     unavailable = false,
     onretry = undefined,
     timing = null,
-    linked = false,
   }: Props = $props();
 
   type Outcome = SessionToolSequenceCall["outcome"];
@@ -168,16 +165,25 @@
     return m.tool_sequences_preview_shows({ ...countArgs(total), shownLabel: (total - omitted).toLocaleString(getLocale()) });
   }
 
+  // The link names the call so the transcript can refuse a message that no longer holds it.
+  function scrollCall(call: SessionToolSequenceCall): ScrollCall {
+    return { index: call.call_index, toolUseId: call.tool_use_id };
+  }
+
   function jumpHref(call: SessionToolSequenceCall): string {
-    // The revision rides along so a link opened in another tab is checked against the transcript it loads.
-    const rev = data?.transcript_revision;
-    return router.buildSessionHref(sessionId, { msg: String(call.ordinal), ...(rev ? { rev } : {}) });
+    return router.buildSessionHref(sessionId, { msg: String(call.ordinal), ...scrollCallParams(scrollCall(call)) });
   }
 
   function jumpToCall(event: MouseEvent, call: SessionToolSequenceCall) {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
-    ui.scrollToOrdinal(call.ordinal, sessionId, data?.transcript_revision);
+    ui.scrollToOrdinal(call.ordinal, sessionId, scrollCall(call));
+  }
+
+  // A sequence keeps its first call across refreshes, so that call keeps its expanded state.
+  function sequenceKey(sequence: SessionToolSequence): string {
+    const first = sequence.calls[0];
+    return `${sessionId}-${first?.ordinal}-${first?.call_index}`;
   }
 </script>
 
@@ -242,8 +248,8 @@
       <p class="state">{m.tool_sequences_no_sequences()}</p>
     {:else}
       <div class="box">
-        {#each data.sequences as sequence, index (`${sessionId}-${index}`)}
-          {@const key = `${sessionId}-${index}`}
+        {#each data.sequences as sequence, index (sequenceKey(sequence))}
+          {@const key = sequenceKey(sequence)}
           {@const open = openSequences.has(key)}
           {@const flags = sequenceFlags(sequence)}
           {@const gap = hiddenBefore(sequence)}
@@ -318,17 +324,12 @@
                           <span class="dur">{formatDuration(duration)}</span>
                         {/if}
                       </button>
-                      {#if linked}
-                        <a
-                          class="jump"
-                          href={jumpHref(call)}
-                          aria-label={m.tool_sequences_jump_label({ ordinal: call.ordinal, tool: call.tool_name })}
-                          onclick={(event) => jumpToCall(event, call)}
-                        >{m.tool_sequences_message({ ordinal: call.ordinal })}<span aria-hidden="true"> ↗</span></a>
-                      {:else}
-                        <!-- The transcript on screen is a different revision, so the ordinal could name another message. -->
-                        <span class="jump unlinked">{m.tool_sequences_message({ ordinal: call.ordinal })}</span>
-                      {/if}
+                      <a
+                        class="jump"
+                        href={jumpHref(call)}
+                        aria-label={m.tool_sequences_jump_label({ ordinal: call.ordinal, tool: call.tool_name })}
+                        onclick={(event) => jumpToCall(event, call)}
+                      >{m.tool_sequences_message({ ordinal: call.ordinal })}<span aria-hidden="true"> ↗</span></a>
                     </div>
                     {#if callOpen}
                       <div class="detail" id="{uid}-call-{index}-{callIndex}">
@@ -723,10 +724,6 @@
 
   a.jump:hover {
     text-decoration: underline;
-  }
-
-  .jump.unlinked {
-    color: var(--text-muted);
   }
 
   .detail,

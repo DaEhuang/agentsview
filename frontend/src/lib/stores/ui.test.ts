@@ -9,6 +9,8 @@ import {
 import {
   ALL_BLOCK_TYPES,
   parseBlockFilters,
+  parseScrollCall,
+  scrollCallParams,
   serializeBlockFilters,
   ui,
   type BlockType,
@@ -150,6 +152,33 @@ describe("UIStore", () => {
       expect(ui.selectedOrdinal).toBe(0);
       expect(ui.pendingScrollOrdinal).toBe(0);
     });
+  });
+
+  describe("scroll call link parameters", () => {
+    it("reads back the call a link names", () => {
+      const params = scrollCallParams({ index: 2, toolUseId: "toolu_1" });
+      expect(params).toEqual({ call: "2", tool_use_id: "toolu_1" });
+      expect(parseScrollCall(params["call"], params["tool_use_id"])).toEqual({
+        index: 2,
+        toolUseId: "toolu_1",
+      });
+    });
+
+    it("leaves a blank tool ID out of the link and reads it back as blank", () => {
+      const params = scrollCallParams({ index: 0, toolUseId: "" });
+      expect(params).toEqual({ call: "0" });
+      expect(parseScrollCall(params["call"], params["tool_use_id"])).toEqual({
+        index: 0,
+        toolUseId: "",
+      });
+    });
+
+    it.each([undefined, "", "-1", "1.5", "two"])(
+      "treats call=%s as a link without a call",
+      (index) => {
+        expect(parseScrollCall(index, "toolu_1")).toBeUndefined();
+      },
+    );
   });
 
   describe("followLatest", () => {

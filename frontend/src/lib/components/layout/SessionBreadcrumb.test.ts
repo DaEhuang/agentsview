@@ -272,6 +272,18 @@ function jumpLink(ordinal: number): HTMLAnchorElement | null {
   );
 }
 
+// Tool-sequence reads after the first wait out the panel's minimum interval.
+const SEQUENCE_READ_INTERVAL_MS = 5_000;
+
+function useSequenceClock() {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+}
+
+async function passSequenceInterval() {
+  await vi.advanceTimersByTimeAsync(SEQUENCE_READ_INTERVAL_MS);
+  await flushPromises();
+}
+
 function panelBusy(): string | null | undefined {
   return document.querySelector(".tool-sequences-panel")?.getAttribute("aria-busy");
 }
@@ -372,6 +384,7 @@ const createClassComponent = ((options: Parameters<typeof createLegacyComponent>
 }) as typeof createLegacyComponent;
 
 afterEach(() => {
+  vi.useRealTimers();
   for (const teardown of [...live.values()]) teardown();
   live.clear();
   setLocale("en");
@@ -2282,7 +2295,8 @@ describe("SessionBreadcrumb", () => {
       component.$destroy();
     });
 
-    it("refetches when the loaded message revision or the end state changes", async () => {
+    it("refetches when the loaded message revision or the end state changes, at most once per interval", async () => {
+      useSequenceClock();
       const session = makeSession("claude", { termination_status: "tool_call_pending" });
       showMessages(session.id, "revision-1");
       sessionsService.getApiV1SessionsByIdToolSequences
@@ -2300,17 +2314,31 @@ describe("SessionBreadcrumb", () => {
         expect(jumpLink(3)).not.toBeNull();
       });
 
+      // A new message lands right after the first read, so the next read waits out the interval.
       messages.loadedRevision = "revision-2";
-      await vi.waitFor(() => expect(jumpLink(5)).not.toBeNull());
+      await flushPromises();
+      await vi.advanceTimersByTimeAsync(SEQUENCE_READ_INTERVAL_MS / 2);
+      expect(sessionsService.getApiV1SessionsByIdToolSequences).toHaveBeenCalledTimes(1);
+      expect(jumpLink(3)).not.toBeNull();
+      await passSequenceInterval();
       expect(sessionsService.getApiV1SessionsByIdToolSequences).toHaveBeenCalledTimes(2);
+      await vi.waitFor(async () => {
+        await expandedSequenceText();
+        expect(jumpLink(5)).not.toBeNull();
+      });
 
       component.$set({ session: { ...session, termination_status: "clean" } });
-      await vi.waitFor(() => expect(jumpLink(6)).not.toBeNull());
+      await passSequenceInterval();
+      await vi.waitFor(async () => {
+        await expandedSequenceText();
+        expect(jumpLink(6)).not.toBeNull();
+      });
       expect(sessionsService.getApiV1SessionsByIdToolSequences).toHaveBeenCalledTimes(3);
       component.$destroy();
     });
 
     it("keeps an expanded sequence and its links while a refresh is in flight", async () => {
+      useSequenceClock();
       const refresh = deferred<SessionToolSequencesResponse>();
       const session = makeSession("claude", { termination_status: "tool_call_pending" });
       showMessages(session.id, "revision-1");
@@ -2330,41 +2358,36 @@ describe("SessionBreadcrumb", () => {
       });
 
       component.$set({ session: { ...session, termination_status: "clean" } });
-      await tick();
+      await passSequenceInterval();
+      expect(sessionsService.getApiV1SessionsByIdToolSequences).toHaveBeenCalledTimes(2);
       expect(panelBusy()).toBe("true");
       expect(document.body.textContent).not.toContain("Loading tool sequences");
       expect(document.querySelector(".sequence-row")?.getAttribute("aria-expanded")).toBe("true");
       const scrollToOrdinal = vi.spyOn(ui, "scrollToOrdinal");
       jumpLink(3)!.click();
-      expect(scrollToOrdinal).toHaveBeenCalledWith(3, session.id, "revision-1");
+      expect(scrollToOrdinal).toHaveBeenCalledWith(3, session.id, {
+        index: 0,
+        toolUseId: "tool-id",
+      });
       scrollToOrdinal.mockRestore();
 
-      refresh.resolve(makeToolSequences(4, session.id, "revision-1"));
+      refresh.resolve(makeToolSequences(3, session.id, "revision-1"));
       await vi.waitFor(() => expect(panelBusy()).toBe("false"));
       expect(document.querySelector(".sequence-row")?.getAttribute("aria-expanded")).toBe("true");
-      expect(jumpLink(4)).not.toBeNull();
+      expect(jumpLink(3)).not.toBeNull();
       component.$destroy();
     });
 
-    it.each([
-      ["delayed", false],
-      ["failed", true],
-    ])("never links into old messages while a message refresh after resync is %s", async (_, fails) => {
-      vi.spyOn(console, "warn").mockImplementation(() => {});
-      const session = makeSession("claude", { message_count: 4, termination_status: "tool_call_pending" });
-      const rows = (revision: string) => ({
-        messages: [0, 1, 2, 3].map((ordinal) => ({ ...makeAssistantMessage("claude sonnet"), ordinal })),
-        count: 4,
-        transcript_revision: revision,
-      });
-      sessionsService.getApiV1SessionsById.mockResolvedValue({ ...session, transcript_revision: "revision-1" });
-      sessionsService.getApiV1SessionsByIdMessages.mockResolvedValueOnce(rows("revision-1"));
-      await messages.loadSession(session.id);
-      expect(messages.loadedRevision).toBe("revision-1");
-      const replaced = makeToolSequences(2, session.id, "revision-2");
+    it("keeps the shown sequences through a read a sync interrupts and reads again", async () => {
+      useSequenceClock();
+      const session = makeSession("claude");
+      showMessages(session.id, "revision-1");
+      const conflict = () =>
+        new ApiError(409, "session changed while it was read; try again", "source_changed");
       sessionsService.getApiV1SessionsByIdToolSequences
         .mockResolvedValueOnce(makeToolSequences(3, session.id, "revision-1"))
-        .mockResolvedValue(replaced);
+        .mockRejectedValueOnce(conflict())
+        .mockResolvedValueOnce(makeToolSequences(5, session.id, "revision-2"));
       ui.signalPanelOpen = true;
       const component = createClassComponent({
         component: SessionBreadcrumb,
@@ -2376,29 +2399,43 @@ describe("SessionBreadcrumb", () => {
         expect(jumpLink(3)).not.toBeNull();
       });
 
-      // A resync replaces the transcript. Session metadata and the sequences reach the new revision first.
-      const refresh = deferred<ReturnType<typeof rows>>();
-      sessionsService.getApiV1SessionsById.mockResolvedValue({ ...session, transcript_revision: "revision-2" });
-      sessionsService.getApiV1SessionsByIdMessages.mockReturnValueOnce(refresh.promise);
-      const reload = messages.reload();
-      component.$set({ session: { ...session, transcript_revision: "revision-2", termination_status: "clean" } });
-      await vi.waitFor(async () => expect(await expandedSequenceText()).toContain("Message 2"));
-      expect(document.querySelector(".tool-sequences-panel a.jump")).toBeNull();
-      expect(messages.loadedRevision).toBe("revision-1");
+      messages.loadedRevision = "revision-2";
+      await passSequenceInterval();
+      expect(sessionsService.getApiV1SessionsByIdToolSequences).toHaveBeenCalledTimes(2);
+      expect(document.querySelector('.tool-sequences-panel [role="alert"]')).toBeNull();
+      expect(jumpLink(3)).not.toBeNull();
+      expect(panelBusy()).toBe("true");
 
-      if (fails) refresh.reject(new Error("offline"));
-      else refresh.resolve(rows("revision-2"));
-      await reload;
+      await passSequenceInterval();
+      await vi.waitFor(async () => {
+        await expandedSequenceText();
+        expect(jumpLink(5)).not.toBeNull();
+      });
+      expect(sessionsService.getApiV1SessionsByIdToolSequences).toHaveBeenCalledTimes(3);
+      component.$destroy();
+    });
+
+    it("reports a failure once a sync interrupts three reads in a row", async () => {
+      useSequenceClock();
+      const session = makeSession("claude");
+      showMessages(session.id, "revision-1");
+      sessionsService.getApiV1SessionsByIdToolSequences.mockRejectedValue(
+        new ApiError(409, "session changed while it was read; try again", "source_changed"),
+      );
+      ui.signalPanelOpen = true;
+      const component = createClassComponent({
+        component: SessionBreadcrumb,
+        target: document.body,
+        props: { session, onBack: () => {} },
+      });
       await flushPromises();
-      if (fails) {
-        expect(messages.loadedRevision).toBe("revision-1");
-        expect(document.querySelector(".tool-sequences-panel a.jump")).toBeNull();
-        expect(sessionsService.getApiV1SessionsByIdToolSequences).toHaveBeenCalledTimes(2);
-      } else {
-        await vi.waitFor(() => expect(jumpLink(2)).not.toBeNull());
-        expect(messages.loadedRevision).toBe("revision-2");
-        expect(sessionsService.getApiV1SessionsByIdToolSequences).toHaveBeenCalledTimes(3);
-      }
+      await passSequenceInterval();
+      expect(document.querySelector('.tool-sequences-panel [role="alert"]')).toBeNull();
+      await passSequenceInterval();
+      await vi.waitFor(() => {
+        expect(document.querySelector('.tool-sequences-panel [role="alert"]')).not.toBeNull();
+      });
+      expect(sessionsService.getApiV1SessionsByIdToolSequences).toHaveBeenCalledTimes(3);
       component.$destroy();
     });
 
@@ -2427,6 +2464,7 @@ describe("SessionBreadcrumb", () => {
     });
 
     it("ignores a superseded tool-sequence response for the same session", async () => {
+      useSequenceClock();
       const revision2 = deferred<SessionToolSequencesResponse>();
       const session = makeSession("claude");
       showMessages(session.id, "revision-1");
@@ -2445,10 +2483,14 @@ describe("SessionBreadcrumb", () => {
         expect(jumpLink(3)).not.toBeNull();
       });
       messages.loadedRevision = "revision-2";
-      await flushPromises();
+      await passSequenceInterval();
       expect(sessionsService.getApiV1SessionsByIdToolSequences).toHaveBeenCalledTimes(2);
       messages.loadedRevision = "revision-3";
-      await vi.waitFor(() => expect(jumpLink(9)).not.toBeNull());
+      await passSequenceInterval();
+      await vi.waitFor(async () => {
+        await expandedSequenceText();
+        expect(jumpLink(9)).not.toBeNull();
+      });
 
       revision2.resolve(makeToolSequences(5, session.id, "revision-2"));
       await flushPromises();
@@ -2503,6 +2545,11 @@ describe("SessionBreadcrumb", () => {
       await vi.waitFor(() => {
         expect(document.querySelector('.tool-sequences-panel [role="alert"]')).not.toBeNull();
       });
+
+      // A metadata-only session update says nothing new, so the failed read is not repeated on its own.
+      component.$set({ session: { ...session, first_message: "hello again" } });
+      await flushPromises();
+      expect(sessionsService.getApiV1SessionsByIdToolSequences).toHaveBeenCalledTimes(1);
 
       document
         .querySelector<HTMLButtonElement>('.tool-sequences-panel [role="alert"] button')!
