@@ -1303,20 +1303,34 @@ func TestRecallSchedulerStartupDoesNotDependOnRunAfterSync(t *testing.T) {
 	}, "a non-sync Recall mutation must refresh when run_after_sync is disabled")
 }
 
-func TestRecallSearchRejectsCorpusMutationUntilRefresh(t *testing.T) {
+// laggedRecallSearch is a Recall index built over two accepted entries and
+// served with a revision lag bound.
+type laggedRecallSearch struct {
+	database     *db.DB
+	mgr          *vector.Manager
+	searcher     recallSearcherAdapter
+	queryEncoder kitvec.EncodeFunc
+}
+
+func newLaggedRecallSearch(t *testing.T, maxLag int) laggedRecallSearch {
+	t.Helper()
 	dataDir := t.TempDir()
 	database := dbtest.OpenTestDBAt(t, filepath.Join(dataDir, "sessions.db"))
 	dbtest.SeedSession(t, database, "s1", "agentsview")
-	_, err := database.InsertRecallEntry(t.Context(), db.RecallEntry{
-		ID: "entry-1", Type: "fact", Scope: "project", Status: "accepted",
-		Title: "Database pool", Body: "Reuse idle connections.",
-		SourceSessionID: "s1", ExtractorMethod: "import-v1",
-	})
-	require.NoError(t, err)
+	for _, entry := range []db.RecallEntry{
+		{ID: "entry-1", Title: "Database pool", Body: "Reuse idle connections."},
+		{ID: "entry-2", Title: "Connection reuse", Body: "Keep idle connections open."},
+	} {
+		entry.Type, entry.Scope, entry.Status = "fact", "project", "accepted"
+		entry.SourceSessionID, entry.ExtractorMethod = "s1", "import-v1"
+		_, err := database.InsertRecallEntry(t.Context(), entry)
+		require.NoError(t, err)
+	}
 
 	stub := newEmbeddingsStubServer(t, 3)
 	t.Cleanup(stub.Close)
 	cfg := vectorTestConfig(dataDir)
+	cfg.Vector.RecallMaxRevisionLag = maxLag
 	embeddingsServer := cfg.Vector.Embeddings.Servers["local"]
 	embeddingsServer.Endpoint = stub.URL + "/v1"
 	cfg.Vector.Embeddings.Servers["local"] = embeddingsServer
@@ -1339,41 +1353,79 @@ func TestRecallSearchRejectsCorpusMutationUntilRefresh(t *testing.T) {
 	searcher := recallSearcherAdapter{
 		ix: ix, enc: queryEncoder, database: database, cfg: cfg,
 	}
-	_, _, _, err = searcher.SearchRecall(t.Context(), "connection reuse", 5)
-	require.NoError(t, err)
-
-	searcher.enc = func(
-		ctx context.Context, texts []string,
-	) ([][]float32, error) {
-		if updateErr := database.Update(ctx, func(tx *sql.Tx) error {
-			_, execErr := tx.ExecContext(ctx, `
-				UPDATE recall_entries
-				SET title = 'Connection policy',
-					updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-				WHERE id = 'entry-1'`)
-			return execErr
-		}); updateErr != nil {
-			return nil, updateErr
-		}
-		return queryEncoder(ctx, texts)
+	return laggedRecallSearch{
+		database: database, mgr: mgr, searcher: searcher, queryEncoder: queryEncoder,
 	}
-	_, _, _, err = searcher.SearchRecall(t.Context(), "connection reuse", 5)
-	require.Error(t, err)
+}
+
+func (l laggedRecallSearch) mutate(ctx context.Context, stmt string) error {
+	return l.database.Update(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, stmt)
+		return err
+	})
+}
+
+func TestRecallSearchServesIndexWithinRevisionLag(t *testing.T) {
+	l := newLaggedRecallSearch(t, 2)
+	searcher := l.searcher
+	writeDuringSearch := func(stmt string) kitvec.EncodeFunc {
+		return func(ctx context.Context, texts []string) ([][]float32, error) {
+			if err := l.mutate(ctx, stmt); err != nil {
+				return nil, err
+			}
+			return l.queryEncoder(ctx, texts)
+		}
+	}
+
+	// Without a bound, a corpus revision landing during the search refuses.
+	strict := searcher
+	strict.cfg.Vector.RecallMaxRevisionLag = 0
+	strict.enc = writeDuringSearch(`UPDATE recall_entries SET title = 'Pool policy' WHERE id = 'entry-1'`)
+	_, _, _, err := strict.SearchRecall(t.Context(), "connection reuse", 5)
 	require.ErrorIs(t, err, db.ErrSemanticUnavailable)
 	assert.Contains(t, err.Error(), "changed during search")
 
-	searcher.enc = queryEncoder
-
+	// With a bound of 2, one more revision during the search is still served.
+	searcher.enc = writeDuringSearch(`UPDATE recall_entries SET status = 'rejected' WHERE id = 'entry-2'`)
 	_, _, _, err = searcher.SearchRecall(t.Context(), "connection reuse", 5)
-	require.Error(t, err)
+	require.NoError(t, err, "two revisions behind is within a lag of 2")
+
+	// One more revision puts the index past the bound.
+	searcher.enc = l.queryEncoder
+	require.NoError(t, l.mutate(t.Context(), `UPDATE recall_entries SET body = 'Cap the pool.' WHERE id = 'entry-1'`))
+	_, _, _, err = searcher.SearchRecall(t.Context(), "connection reuse", 5)
 	require.ErrorIs(t, err, db.ErrSemanticUnavailable)
 	assert.Contains(t, err.Error(), "embeddings build --store recall")
 
-	started, err = mgr.TryBuild(t.Context(), vector.BuildRequest{})
+	started, err := l.mgr.TryBuild(t.Context(), vector.BuildRequest{})
 	require.NoError(t, err)
 	require.True(t, started)
 	_, _, _, err = searcher.SearchRecall(t.Context(), "connection reuse", 5)
 	require.NoError(t, err)
+}
+
+func TestRecallRevisionFresh(t *testing.T) {
+	tests := []struct {
+		name      string
+		maxLag    int
+		completed string
+		want      string
+		fresh     bool
+	}{
+		{name: "any lag without a bound", maxLag: 0, completed: "counter-v1:5", want: "counter-v1:6"},
+		{name: "lag within the bound", maxLag: 3, completed: "counter-v1:5", want: "counter-v1:8", fresh: true},
+		{name: "lag past the bound", maxLag: 3, completed: "counter-v1:5", want: "counter-v1:9"},
+		{name: "index ahead of the corpus", maxLag: 3, completed: "counter-v1:9", want: "counter-v1:5"},
+		{name: "legacy watermarks still need equality", maxLag: 3, completed: "2026-01-01T00:00:00Z", want: "2026-01-01T00:00:01Z"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg config.Config
+			cfg.Vector.RecallMaxRevisionLag = tt.maxLag
+			a := recallSearcherAdapter{cfg: cfg}
+			assert.Equal(t, tt.fresh, a.revisionFresh(tt.completed, tt.want))
+		})
+	}
 }
 
 func TestRecallSchedulerRequiresExplicitOptInForAutomaticBuilds(t *testing.T) {

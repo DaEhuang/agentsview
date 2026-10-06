@@ -411,7 +411,7 @@ func (a recallSearcherAdapter) SearchRecall(
 	if err != nil {
 		return nil, false, db.RecallVectorSnapshot{}, fmt.Errorf("%w: %w", db.ErrSemanticUnavailable, err)
 	}
-	stale, err := a.ix.StaleActive(ctx, space, identity.CorpusRevision)
+	stale, err := a.ix.StaleActiveWithin(ctx, space, identity.CorpusRevision, a.revisionFresh)
 	if err != nil {
 		return nil, false, db.RecallVectorSnapshot{}, translateRecallSearchError(err)
 	}
@@ -442,9 +442,18 @@ func (a recallSearcherAdapter) ValidateRecallSnapshot(
 	if err != nil {
 		return fmt.Errorf("%w: %w", db.ErrSemanticUnavailable, err)
 	}
-	stale, err := a.ix.StaleActive(ctx, space, identity.CorpusRevision)
+	// The corpus may move during a search; the index only has to be within
+	// the lag bound of the corpus as it is now.
+	stale, err := a.ix.StaleActiveWithin(ctx, space, currentIdentity.CorpusRevision, a.revisionFresh)
 	if err != nil {
 		return translateRecallSearchError(err)
+	}
+	if currentIdentity.GenerationFingerprint != identity.GenerationFingerprint ||
+		(stale && currentIdentity != identity) {
+		return fmt.Errorf(
+			"%w: recall corpus changed during search; retry after the recall index refreshes",
+			db.ErrSemanticUnavailable,
+		)
 	}
 	if stale {
 		return fmt.Errorf(
@@ -452,13 +461,24 @@ func (a recallSearcherAdapter) ValidateRecallSnapshot(
 			db.ErrSemanticUnavailable,
 		)
 	}
-	if currentIdentity != identity {
-		return fmt.Errorf(
-			"%w: recall corpus changed during search; retry after the recall index refreshes",
-			db.ErrSemanticUnavailable,
-		)
-	}
 	return nil
+}
+
+// revisionFresh reports whether a Recall index completed at corpus revision
+// completed may answer for a corpus at want: always when they match, and,
+// with [vector] recall_max_revision_lag above 0, when the index trails by at
+// most that many revisions. Revisions that are not counters, such as legacy
+// timestamp watermarks, must still match exactly.
+func (a recallSearcherAdapter) revisionFresh(completed, want string) bool {
+	if completed == want {
+		return true
+	}
+	maxLag := a.cfg.Vector.RecallMaxRevisionLag
+	if maxLag <= 0 {
+		return false
+	}
+	lag, ok := db.RecallCorpusRevisionLag(completed, want)
+	return ok && lag >= 0 && lag <= int64(maxLag)
 }
 
 func (a recallSearcherAdapter) MaxRecallSearchCandidates() int {

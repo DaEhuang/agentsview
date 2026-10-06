@@ -187,9 +187,24 @@ accepted Recall entry titles, bodies, and triggers to the configured embeddings
 endpoint. It is off by default; manually running the build command is treated as
 one-time consent for that invocation.
 
-Vector and hybrid queries fail closed when the active Recall corpus is newer
-than its last completed vector build. Rebuild the Recall store, or continue
-using lexical mode while an automatic refresh catches up. See
+Vector and hybrid queries keep working while the Recall index trails the corpus
+by a few entries, which is normal while extraction is writing them. Each
+insert, delete, accept, reject, or text edit of an accepted entry is one corpus
+revision, and the index may trail by up to `[vector] recall_max_revision_lag`
+revisions (default 256):
+
+```toml
+[vector]
+recall_max_revision_lag = 256   # 0 requires the index to match the corpus exactly
+```
+
+Entries newer than the index are missing only from the vector ranking. Hybrid
+search still finds them through its lexical ranking, which runs after the
+query is encoded. Results come from the entries as the query reads them, so one
+deleted or rejected since the last build drops out. Past the bound,
+vector and hybrid queries fail closed until the Recall store is rebuilt, by hand
+or by the automatic refresh when it is enabled; lexical mode keeps working
+meanwhile. See
 [Semantic Search](/docs/semantic-search/#enabling-vector) for the shared
 embedding configuration and endpoint privacy considerations.
 
