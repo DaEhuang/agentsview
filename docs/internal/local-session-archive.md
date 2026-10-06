@@ -6,8 +6,8 @@ command limits live in [the CLI reference](../commands.md#agentsview-archive).
 The approved
 [multi-machine archive design](../superpowers/specs/2026-09-30-multi-machine-session-archive-design.md)
 defines source attribution, artifact/raw identity matching and recovery.
-Portable capture, seed assembly, recovery and persisted archive-only mode are
-implemented here. Multi-machine source identity mapping remains unimplemented.
+Portable capture, seed assembly, multi-machine source identity mapping, recovery
+and persisted archive-only mode are implemented here.
 
 ## Source capture
 
@@ -21,9 +21,10 @@ A digest binds the inventory to its source and root identities. Import checks
 all captured files and rechecks each file against that inventory while storing
 it. The descriptor and exact inventory are retained as supplemental evidence.
 Curation counts come from the closed database, not its live predecessor. The
-regular importer refuses unknown preflight, deletion evidence and artifact
-history until source mapping can honor those inputs. Ordinary-vault capture also
-remains blocked on upstream stopped-owner custody support.
+regular importer refuses unknown preflight, incomplete or unattributed deletion
+evidence, and artifact history. Accepted source deletions suppress matching
+sessions during reparse. Ordinary-vault capture remains blocked on upstream
+stopped-owner custody support.
 
 ## Seed assembly
 
@@ -44,8 +45,11 @@ The seed preserves archive and session identities and machine aliases. A
 conflicting recorded installation owner is an error. Unresolved machine keys and
 counts are reported without assigning them to the seed installation. Runtime
 configuration comes from the same allowlist and fresh local authentication as
-restore. Foreign sources and their deletion mapping remain the next
-implementation slice.
+restore. Sessions from other installations use `installation~parser-id`
+identities and retain their original machine attribution. Their trash and
+permanent-delete records prevent raw files from bringing those sessions back.
+Other foreign curation remains in the captured database; it is not merged into
+browsable state.
 
 ## Storage and reuse
 
@@ -125,6 +129,15 @@ Missing or corrupt referenced images also prevent backup. A matching vault ID or
 bounded blob sample is insufficient. Restore upgrades an older database through
 the normal preserved-provider rebuild with every live provider disabled. Native
 extraction provides access to supplemental files too.
+
+Docbank applies its managed compression policy when restoring individual raw
+objects, including large originals reconstructed from chunks. The source vault's
+write settings do not control restore compression. Existing backups need no
+conversion. Packed objects retain their packing; SQLite databases and
+application extras are restored as ordinary files. The restored archive can
+therefore differ in size from both the working archive and the backup. Restore
+needs temporary space for raw and compressed candidates as well as the staged
+database.
 
 The original runtime config is omitted. Only content/image retention policy and
 the original display label return; local authentication is regenerated and the

@@ -72,11 +72,14 @@ that the proposed behavior already exists:
 - Docbank #741 merged on September 30 as `4e9a5a0e`. The branch's pre-squash pin
   is not that merged revision; no fetched release tag contains the merge.
 
-The implementation baseline now includes main `597a06ba` without rewriting the
-branch's history. It uses Docbank v0.15.0 and Kit v0.31.1, replacing the
-temporary commit pins. These releases include embedded backup, large recovery
-files and the telemetry API required by main. The recovery and
-retired-generation regressions must pass against these releases before delivery.
+The implementation baseline includes main `597a06ba` without rewriting the
+branch's history. Its first tagged dependency pair was Docbank v0.15.0 and Kit
+v0.31.1, covering embedded backup, large recovery files and main's telemetry
+API. Current dependency versions live in `go.mod`. Recovery and
+retired-generation regressions must pass against each updated pair before
+delivery. Restore also uses Docbank's managed compression policy, including for
+large chunked originals; see
+[recovery storage](../../internal/local-session-archive.md#recovery).
 
 [Hosted raw sync](../../hosted-raw-sync.md) retains originals and authenticated
 source generations. [Artifact folder sync](../../artifact-sync.md) exchanges
