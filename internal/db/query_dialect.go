@@ -613,7 +613,7 @@ func BuildSessionFilterSQL(
 func BuildSessionBaseFilterSQL(
 	f SessionFilter, dialect QueryDialect,
 ) (string, []any) {
-	f = f.WithAnnotationSelection()
+	f = f.withAnnotationSelection()
 	b := NewQueryBuilder(dialect, 0)
 	preds := []string{
 		"message_count > 0",
@@ -694,7 +694,7 @@ func buildSessionFilterWithBuilder(
 		}
 		return qualifier + "." + col
 	}
-	f = f.WithAnnotationSelection()
+	f = f.withAnnotationSelection()
 
 	if f.IDs != nil {
 		// Explicit hydration selects the requested rows rather than sidebar
@@ -782,6 +782,7 @@ func buildSessionFilterWithBuilder(
 func SessionTreeMemberPredicate(
 	f SessionFilter, dialect QueryDialect, sessionAlias string,
 ) string {
+	f = f.withAnnotationSelection()
 	pred := sessionAlias + ".message_count > 0 AND " + sessionAlias + ".deleted_at IS NULL"
 	if scope := automationScopePredicate(f, dialect, sessionAlias); scope != "" {
 		pred += " AND " + scope
@@ -911,12 +912,12 @@ func (f SessionFilter) HasAnnotationFilter() bool {
 	return len(f.Labels) > 0 || !f.PR.IsZero()
 }
 
-// WithAnnotationSelection lifts the default one-shot and automated
+// withAnnotationSelection lifts the default one-shot and automated
 // exclusions when the filter selects by label or pull request link. Those
 // filters name the sessions the caller wants, the way explicit IDs do, and
 // sessions started by a launcher are usually headless single-prompt runs
 // that the defaults would hide. An explicit AutomatedScope still applies.
-func (f SessionFilter) WithAnnotationSelection() SessionFilter {
+func (f SessionFilter) withAnnotationSelection() SessionFilter {
 	if f.HasAnnotationFilter() {
 		f.ExcludeOneShot = false
 		f.ExcludeAutomated = false
