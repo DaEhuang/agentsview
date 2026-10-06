@@ -103,6 +103,12 @@ restored or purged. PostgreSQL purge retains thread-wide exclusions for later
 pushes; the hosted legacy routes use the same behavior without removing raw
 projections.
 
+When an old PostgreSQL thread row held a revert page, the next push moves its
+remote pins and notes to that page before replacing the original thread. Both
+writes share a transaction, including when the page belongs to a later batch. If
+the retained page cannot be published, the push stops and keeps the original
+pins. A filtered push must include the page's project for this migration.
+
 ### Codex incremental import state
 
 Four SQLite-only tables support local Codex imports: `parser_checkpoints` holds
@@ -357,11 +363,12 @@ The cache format version is also the extractor compatibility version. Bump
 `usageCacheFormatVersion` whenever fact extraction, `priceUsageFact`, web-search
 fees, deduplication, rollup semantics, or query-time model canonicalization
 change. Catalog and user-pricing changes are covered per session instead: each
-rollup install records the distinct `(provider, reported model, canonical
-model)` lookups its daily rows used, and a read re-resolves only those against
-the current catalog. A price change therefore rebuilds just the sessions whose
-lookups resolve differently, while `updated_at`-only refreshes rebuild nothing.
-Do not add a write-only extractor-version metadata key.
+rollup install records the distinct
+`(provider, reported model, canonical model)` lookups its daily rows used, and a
+read re-resolves only those against the current catalog. A price change
+therefore rebuilds just the sessions whose lookups resolve differently, while
+`updated_at`-only refreshes rebuild nothing. Do not add a write-only
+extractor-version metadata key.
 
 Deduplication groups are classified per group at rollup build time. A group is
 finalized into daily rows only when its resolution provably cannot vary with the
