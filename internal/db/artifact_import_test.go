@@ -653,7 +653,7 @@ func TestArtifactCheckpointStagePagesDeferredSessionsAndLands(t *testing.T) {
 	missingStage.Sequence++
 	err = database.RecordArtifactCheckpointLandingFromStage(ctx, missingStage)
 	require.ErrorIs(t, err, ErrArtifactImportConflict)
-	assert.ErrorContains(t, err, "stage is missing")
+	require.ErrorContains(t, err, "stage is missing")
 
 	err = database.RecordArtifactCheckpointLandingFromStage(ctx, landing)
 	require.ErrorIs(t, err, ErrArtifactImportConflict)
@@ -692,7 +692,7 @@ func TestArtifactCheckpointStagePagesDeferredSessionsAndLands(t *testing.T) {
 	require.True(t, advanced)
 	err = database.RecordArtifactCheckpointLandingFromStage(ctx, landing)
 	require.ErrorIs(t, err, ErrArtifactImportConflict)
-	assert.ErrorContains(t, err, "does not match peer head")
+	require.ErrorContains(t, err, "does not match peer head")
 
 	require.NoError(t, database.BeginArtifactCheckpointStage(ctx, landing, 2))
 	require.NoError(t, database.StageArtifactCheckpointSessions(ctx, landing, entries[:1]))
