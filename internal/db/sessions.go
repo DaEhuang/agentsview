@@ -893,9 +893,7 @@ func (db *DB) GetSidebarSessionIndex(
 func (db *DB) getSidebarSessionIndexPage(
 	ctx context.Context, f SessionFilter,
 ) (SidebarSessionIndex, error) {
-	if f.Limit <= 0 || f.Limit > MaxSessionLimit {
-		f.Limit = DefaultSessionLimit
-	}
+	f.Limit = NormalizeSessionLimit(f.Limit)
 
 	rootFilter := f
 	rootFilter.Cursor = ""

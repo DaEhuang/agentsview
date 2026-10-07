@@ -307,7 +307,7 @@ func (s *Store) getAnalyticsModelScopedMessages(
 	if scope == nil {
 		return map[string][]db.ScopedMessage{}, nil
 	}
-	return scope.MessagesBySession(), nil
+	return scope, nil
 }
 
 func (s *Store) getAnalyticsFilteredMessageStats(
@@ -516,7 +516,7 @@ func (s *Store) filteredSessionIDsModel(
 	}
 	ids := make(map[string]bool)
 	if scope != nil {
-		for id := range scope.MessagesBySession() {
+		for id := range scope {
 			ids[id] = true
 		}
 	}
@@ -1694,7 +1694,7 @@ func (s *Store) getAnalyticsHourOfWeekFilteredByModel(
 
 	var grid [7][24]int
 	if scope != nil {
-		for _, msgs := range scope.MessagesBySession() {
+		for _, msgs := range scope {
 			for _, m := range msgs {
 				if !m.HasLocalTime {
 					continue

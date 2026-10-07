@@ -199,7 +199,7 @@ func (s *Store) analyticsSessionsModelTimeFiltered(
 	}
 	matched := make(map[string]struct{})
 	if scope != nil {
-		for id := range scope.MessagesBySession() {
+		for id := range scope {
 			matched[id] = struct{}{}
 		}
 	}
@@ -1445,7 +1445,7 @@ func (s *Store) getAnalyticsHourOfWeekFilteredByModel(
 
 	var grid [7][24]int
 	if scope != nil {
-		for _, msgs := range scope.MessagesBySession() {
+		for _, msgs := range scope {
 			for _, m := range msgs {
 				if !m.HasLocalTime {
 					continue
@@ -2639,7 +2639,7 @@ func (s *Store) chSignalMessages(
 			return nil, err
 		}
 		if scope != nil {
-			for sessionID, scopedRows := range scope.MessagesBySession() {
+			for sessionID, scopedRows := range scope {
 				for _, row := range scopedRows {
 					out[sessionID] = append(out[sessionID], db.SignalMessage{
 						SessionID:     row.SessionID,

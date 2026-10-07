@@ -100,9 +100,9 @@ func TestTrendAccumulator(t *testing.T) {
 
 func TestMessageScopeProjections(t *testing.T) {
 	var unfiltered MessageScope
-	assert.Nil(t, unfiltered.MessagesBySession())
+	assert.Nil(t, unfiltered)
 	empty := make(MessageScope)
-	assert.NotNil(t, empty.MessagesBySession())
+	assert.NotNil(t, empty)
 	assert.Empty(t, empty.StatsBySession())
 	assert.Empty(t, empty.TimingBySession())
 	rows := []ScopedMessage{
@@ -110,7 +110,7 @@ func TestMessageScopeProjections(t *testing.T) {
 		{SessionID: "session", Role: "assistant", Timestamp: "2026-01-01T00:00:01.123Z", OutputTokens: 8, HasOutputTokens: true},
 	}
 	scope := MessageScope{"session": rows}
-	assert.Equal(t, rows, scope.MessagesBySession()["session"])
+	assert.Equal(t, rows, scope["session"])
 	assert.Equal(t, ScopeStats(rows), scope.StatsBySession()["session"])
 	assert.Equal(t, ScopeTiming(rows), scope.TimingBySession()["session"])
 	hour := 12

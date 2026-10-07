@@ -120,11 +120,6 @@ func (db *DB) resolveAnalyticsMessageScope(
 	return bySession, nil
 }
 
-// MessagesBySession returns the matched rows per session.
-func (s MessageScope) MessagesBySession() map[string][]ScopedMessage {
-	return s
-}
-
 // StatsBySession aggregates matched rows per session.
 func (s MessageScope) StatsBySession() map[string]MessageStats {
 	out := make(map[string]MessageStats, len(s))

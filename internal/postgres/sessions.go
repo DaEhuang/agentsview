@@ -589,9 +589,7 @@ func (s *Store) GetSidebarSessionIndex(
 func (s *Store) getSidebarSessionIndexPage(
 	ctx context.Context, f db.SessionFilter,
 ) (db.SidebarSessionIndex, error) {
-	if f.Limit <= 0 || f.Limit > db.MaxSessionLimit {
-		f.Limit = db.DefaultSessionLimit
-	}
+	f.Limit = db.NormalizeSessionLimit(f.Limit)
 
 	rootFilter := f
 	rootFilter.IncludeChildren = false
