@@ -515,10 +515,8 @@ func (s *Store) filteredSessionIDsModel(
 		return nil, err
 	}
 	ids := make(map[string]bool)
-	if scope != nil {
-		for id := range scope {
-			ids[id] = true
-		}
+	for id := range scope {
+		ids[id] = true
 	}
 	return ids, nil
 }
@@ -1693,15 +1691,13 @@ func (s *Store) getAnalyticsHourOfWeekFilteredByModel(
 	}
 
 	var grid [7][24]int
-	if scope != nil {
-		for _, msgs := range scope {
-			for _, m := range msgs {
-				if !m.HasLocalTime {
-					continue
-				}
-				dow := (int(m.LocalTime.Weekday()) + 6) % 7
-				grid[dow][m.LocalTime.Hour()]++
+	for _, msgs := range scope {
+		for _, m := range msgs {
+			if !m.HasLocalTime {
+				continue
 			}
+			dow := (int(m.LocalTime.Weekday()) + 6) % 7
+			grid[dow][m.LocalTime.Hour()]++
 		}
 	}
 

@@ -198,10 +198,8 @@ func (s *Store) analyticsSessionsModelTimeFiltered(
 		return nil, err
 	}
 	matched := make(map[string]struct{})
-	if scope != nil {
-		for id := range scope {
-			matched[id] = struct{}{}
-		}
+	for id := range scope {
+		matched[id] = struct{}{}
 	}
 	out := make([]chAnalyticsSession, 0, len(sessions))
 	for _, session := range sessions {
@@ -1444,15 +1442,13 @@ func (s *Store) getAnalyticsHourOfWeekFilteredByModel(
 	}
 
 	var grid [7][24]int
-	if scope != nil {
-		for _, msgs := range scope {
-			for _, m := range msgs {
-				if !m.HasLocalTime {
-					continue
-				}
-				dow := (int(m.LocalTime.Weekday()) + 6) % 7
-				grid[dow][m.LocalTime.Hour()]++
+	for _, msgs := range scope {
+		for _, m := range msgs {
+			if !m.HasLocalTime {
+				continue
 			}
+			dow := (int(m.LocalTime.Weekday()) + 6) % 7
+			grid[dow][m.LocalTime.Hour()]++
 		}
 	}
 
@@ -2638,20 +2634,18 @@ func (s *Store) chSignalMessages(
 		if err != nil {
 			return nil, err
 		}
-		if scope != nil {
-			for sessionID, scopedRows := range scope {
-				for _, row := range scopedRows {
-					out[sessionID] = append(out[sessionID], db.SignalMessage{
-						SessionID:     row.SessionID,
-						Ordinal:       row.Ordinal,
-						Role:          row.Role,
-						SourceSubtype: row.SourceSubtype,
-						Content:       row.Content,
-						Timestamp:     row.Timestamp,
-						IsSystem:      row.IsSystem,
-						HasToolUse:    row.HasToolUse,
-					})
-				}
+		for sessionID, scopedRows := range scope {
+			for _, row := range scopedRows {
+				out[sessionID] = append(out[sessionID], db.SignalMessage{
+					SessionID:     row.SessionID,
+					Ordinal:       row.Ordinal,
+					Role:          row.Role,
+					SourceSubtype: row.SourceSubtype,
+					Content:       row.Content,
+					Timestamp:     row.Timestamp,
+					IsSystem:      row.IsSystem,
+					HasToolUse:    row.HasToolUse,
+				})
 			}
 		}
 		return out, nil

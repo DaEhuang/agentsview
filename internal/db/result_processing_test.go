@@ -9,8 +9,11 @@ import (
 
 func TestNormalizeSessionLimit(t *testing.T) {
 	for _, tc := range []struct{ input, want int }{
-		{-1, DefaultSessionLimit}, {0, DefaultSessionLimit}, {1, 1},
-		{MaxSessionLimit, MaxSessionLimit}, {MaxSessionLimit + 1, DefaultSessionLimit},
+		{-1, DefaultSessionLimit},
+		{0, DefaultSessionLimit},
+		{1, 1},
+		{MaxSessionLimit, MaxSessionLimit},
+		{MaxSessionLimit + 1, DefaultSessionLimit},
 	} {
 		assert.Equal(t, tc.want, NormalizeSessionLimit(tc.input))
 	}
@@ -28,7 +31,7 @@ func TestBuildSessionPage(t *testing.T) {
 	assert.Equal(t, NextSessionCursor(&sessions[0], ResolveSort(f), 7, f), cursor)
 	for _, rows := range [][]Session{nil, {}, sessions[:1]} {
 		page = BuildSessionPage(rows, 7, f, ResolveSort(f), func(SessionCursor) string {
-			t.Fatal("last page must not encode a cursor")
+			require.FailNow(t, "last page must not encode a cursor")
 			return ""
 		})
 		assert.Equal(t, rows, page.Sessions)

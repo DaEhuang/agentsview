@@ -1090,7 +1090,6 @@ func TestGetAnalyticsHeatmap(t *testing.T) {
 		assert.Empty(t, resp.Entries,
 			"len(Entries) want 0 (no sessions report token coverage)")
 	})
-
 }
 
 func TestGetAnalyticsSummaryModelFilterUsesFilteredOutputTokens(
