@@ -98,7 +98,7 @@ func (db *DB) GetTrendsTerms(
 		if !ok {
 			return
 		}
-		acc.Add(row.content, msgTime.Format("2006-01-02"), trendBucketDate(msgTime, loc, granularity))
+		acc.Add(row.content, msgTime.Format("2006-01-02"), TrendBucketDate(msgTime, loc, granularity))
 	}
 	rowStartedAt := make(map[string]string)
 	rowCreatedAt := make(map[string]string)
@@ -397,10 +397,6 @@ func trendMessageLocalTime(
 	return time.Time{}, false
 }
 
-func trendBucketDate(t time.Time, loc *time.Location, granularity string) string {
-	return TrendBucketDate(t, loc, granularity)
-}
-
 func TrendBucketDate(t time.Time, loc *time.Location, granularity string) string {
 	local := t.In(loc)
 	switch granularity {
@@ -436,8 +432,8 @@ func TrendBucketRange(from, to, granularity string) []TrendBucket {
 	if err != nil {
 		return nil
 	}
-	startDate := trendBucketDate(start, time.UTC, granularity)
-	endDate := trendBucketDate(end, time.UTC, granularity)
+	startDate := TrendBucketDate(start, time.UTC, granularity)
+	endDate := TrendBucketDate(end, time.UTC, granularity)
 	cur, err := time.Parse("2006-01-02", startDate)
 	if err != nil {
 		return nil

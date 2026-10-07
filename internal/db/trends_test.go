@@ -116,7 +116,7 @@ func TestTrendBucketDate(t *testing.T) {
 	}
 	for _, tc := range cases {
 		parsed, _ := time.Parse(time.RFC3339, tc.ts)
-		assert.Equal(t, tc.want, trendBucketDate(parsed, loc, tc.gran), tc.gran)
+		assert.Equal(t, tc.want, TrendBucketDate(parsed, loc, tc.gran), tc.gran)
 	}
 }
 

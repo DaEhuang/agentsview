@@ -1889,7 +1889,7 @@ func (db *DB) GetAnalyticsHeatmap(
 	return BuildHeatmapResponse(f.From, f.To, metric, source, false), nil
 }
 
-// BuildHeatmapResponse preserves mirror empty slices on reversed ranges when emptyEntries is true.
+// BuildHeatmapResponse returns an empty slice for valid reversed ranges when emptyEntries is true.
 func BuildHeatmapResponse(from, to, metric string, source map[string]int, emptyEntries bool) HeatmapResponse {
 	entriesFrom := clampFrom(from, to)
 	out := HeatmapResponse{Metric: metric, EntriesFrom: entriesFrom}
