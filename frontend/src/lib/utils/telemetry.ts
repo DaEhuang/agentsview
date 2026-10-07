@@ -2,6 +2,7 @@ import { orvalRequest } from "../api/runtime.js";
 
 export type TelemetryEvent =
   | "app_opened"
+  | "screen_viewed"
   | "search_run"
   | "session_viewed"
   | "export_run"
@@ -14,5 +15,6 @@ export function reportTelemetry(event: TelemetryEvent, properties?: Record<strin
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ event, properties }),
+    signal: AbortSignal.timeout(5000),
   }).catch(() => {});
 }

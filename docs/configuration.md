@@ -1797,6 +1797,12 @@ startup and every 24 hours while running. The web UI also reports an anonymous
 UTC day. The server sends it to PostHog with the same fields and opt-out as the
 ping. The browser never contacts PostHog.
 
+The web UI also reports `screen_viewed` with `surface: web`. The server counts
+each screen once per installation per UTC day, across tabs and server restarts.
+It stores the installation ID, date, and that day's screen names in
+`telemetry-screen-views` beside the installation identity. Invalid screen names
+are dropped.
+
 The web UI reports five core actions the same way. Each carries one property,
 and the server drops any value outside its fixed list. A search counts once per
 mode used during each command palette open. Typing pauses, sorting, and retries
@@ -1813,6 +1819,7 @@ fail. Markdown links count after the link is copied successfully.
 | `export_run`        | `format`     | `html`, `insight_html`, `csv`, `markdown_link`, `gist`, `insight_gist`   |
 | `insight_generated` | `kind`       | `daily_activity`, `agent_analysis`, or a generated-insight template name |
 | `analytics_viewed`  | `page`       | `usage`, `activity`, `trends`, `quality`                                 |
+| `screen_viewed` | `screen` | `sessions`, `usage`, `activity`, `trends`, `recall`, `quality`, `pinned`, `trash`, `recent-edits`, `data`, `settings` |
 
 Every event contains only:
 
@@ -1821,6 +1828,7 @@ Every event contains only:
 - the application-owned installation ID stored in
   `~/.agentsview/telemetry-install-id`
 - for the five UI actions, the one listed value above
+- for screen views, the listed screen name and `surface: web`
 
 It contains no session data, prompts, project names, file paths, account
 information, or hostname, and the events are sent with person-profile processing

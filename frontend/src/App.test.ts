@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { mount, tick, unmount } from "svelte";
 import { analytics } from "./lib/stores/analytics.svelte.js";
+import { activity } from "./lib/stores/activity.svelte.js";
 import { analyticsPageDates } from "./lib/stores/analyticsPageDates.js";
 import { insights } from "./lib/stores/insights.svelte.js";
 import { messages } from "./lib/stores/messages.svelte.js";
@@ -1860,6 +1861,8 @@ describe("App telemetry", () => {
 
   function setup() {
     stubAppDependencies();
+    vi.spyOn(activity, "load").mockResolvedValue(false);
+    vi.spyOn(activity, "loadFilterOptions").mockResolvedValue(false);
     vi.spyOn(sessions, "load").mockResolvedValue();
     // Selects without fetching, as the real store does before hydration lands.
     vi.spyOn(sessions, "navigateToSession").mockImplementation(async (id: string) => {
@@ -1882,6 +1885,62 @@ describe("App telemetry", () => {
   function postedFor(event: string) {
     return posted.filter((p) => p.event === event).map((p) => p.properties);
   }
+
+  it("reports every screen through navigation and maps the usage alias", async () => {
+    setup();
+    router.replace("recall");
+    component = mount(App, { target: document.body });
+    await flushEffects();
+    expect(postedFor("screen_viewed")).toEqual([{ screen: "recall", surface: "web" }]);
+    const routes = [
+      "sessions",
+      "usage",
+      "token-usage",
+      "activity",
+      "trends",
+      "quality",
+      "pinned",
+      "trash",
+      "recent-edits",
+      "data",
+      "settings",
+    ] as const;
+    for (const route of routes) {
+      router.navigate(route);
+      await flushEffects();
+    }
+    expect(postedFor("screen_viewed").slice(1)).toEqual(
+      routes.map((route) => ({
+        screen: route === "token-usage" ? "usage" : route,
+        surface: "web",
+      })),
+    );
+    window.history.replaceState(null, "", "/activity");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    await flushEffects();
+    expect(postedFor("screen_viewed").at(-1)).toEqual({ screen: "activity", surface: "web" });
+  });
+
+  it("reports an authenticated screen on next-day focus and removes its listener", async () => {
+    setup();
+    router.route = "sessions";
+    settings.needsAuth = true;
+    component = mount(App, { target: document.body });
+    await flushEffects();
+    expect(postedFor("screen_viewed")).toEqual([]);
+    settings.needsAuth = false;
+    await flushEffects();
+    expect(postedFor("screen_viewed")).toEqual([{ screen: "sessions", surface: "web" }]);
+    vi.setSystemTime(new Date(Date.now() + 86400000));
+    window.dispatchEvent(new Event("focus"));
+    await flushEffects();
+    expect(postedFor("screen_viewed")).toHaveLength(2);
+    await unmount(component!);
+    component = undefined;
+    window.dispatchEvent(new Event("focus"));
+    expect(postedFor("screen_viewed")).toHaveLength(2);
+    vi.useRealTimers();
+  });
 
   async function open(id: string | null) {
     router.route = "sessions";
