@@ -50,7 +50,7 @@ func (s *Store) BuildActivityReportArtifacts(
 	db.ReportProgress(onProgress, activity.Progress{Phase: activity.ProgressLoadingSessions})
 	f.IncludeSubagents = true
 	f.IncludeForks = true
-	rangeStartUTC, rangeEndUTC := db.ActivityReportRangeBoundsUTC(q)
+	rangeStartUTC, rangeEndUTC := db.ActivityReportInstantBoundsUTC(q)
 	lowerBound := duckUsagePaddedUTCBound(q.RangeStart.UTC().Format(time.RFC3339), -14)
 	upperBound := duckUsagePaddedUTCBound(q.RangeEnd.UTC().Format(time.RFC3339), 14)
 

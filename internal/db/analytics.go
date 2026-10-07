@@ -2448,8 +2448,8 @@ var (
 	}
 )
 
-// SortBuckets sorts distribution buckets by their defined order.
-func SortBuckets(
+// sortBuckets sorts distribution buckets by their defined order.
+func sortBuckets(
 	buckets []DistributionBucket,
 	order map[string]int,
 ) {
@@ -2458,8 +2458,8 @@ func SortBuckets(
 	})
 }
 
-// MapToBuckets converts a label→count map to sorted buckets.
-func MapToBuckets(
+// mapToBuckets converts a label→count map to sorted buckets.
+func mapToBuckets(
 	m map[string]int, order map[string]int,
 ) []DistributionBucket {
 	buckets := make([]DistributionBucket, 0, len(m))
@@ -2468,20 +2468,20 @@ func MapToBuckets(
 			Label: label, Count: count,
 		})
 	}
-	SortBuckets(buckets, order)
+	sortBuckets(buckets, order)
 	return buckets
 }
 
 func LengthDistributionBuckets(counts map[string]int) []DistributionBucket {
-	return MapToBuckets(counts, lengthOrder)
+	return mapToBuckets(counts, lengthOrder)
 }
 
 func DurationDistributionBuckets(counts map[string]int) []DistributionBucket {
-	return MapToBuckets(counts, durationOrder)
+	return mapToBuckets(counts, durationOrder)
 }
 
 func AutonomyDistributionBuckets(counts map[string]int) []DistributionBucket {
-	return MapToBuckets(counts, autonomyOrder)
+	return mapToBuckets(counts, autonomyOrder)
 }
 
 // GetAnalyticsSessionShape returns distribution histograms for

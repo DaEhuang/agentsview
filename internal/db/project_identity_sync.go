@@ -75,6 +75,7 @@ func MergeProjectIdentitySnapshots(
 	return out
 }
 
+// FilterIdentityScope limits full publications; LoadProjectIdentityPublicationDelta applies the scope in SQL.
 func FilterIdentityScope(
 	items []export.ProjectIdentityObservation, projects, excludeProjects []string,
 ) []export.ProjectIdentityObservation {
@@ -140,6 +141,7 @@ func ObservationRootKey(
 	}
 }
 
+// PlanProjectIdentityObservationSync keeps the last observation per conflict key, removes ordinary fallbacks shadowed by real remotes, and retains ambiguous evidence.
 func PlanProjectIdentityObservationSync(
 	observations []export.ProjectIdentityObservation,
 ) ProjectIdentityObservationPlan {

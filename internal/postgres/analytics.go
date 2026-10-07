@@ -1701,21 +1701,6 @@ func (s *Store) getAnalyticsHourOfWeekFilteredByModel(
 
 // --- Session Shape ---
 
-var (
-	lengthOrder = map[string]int{
-		"1-5": 0, "6-15": 1, "16-30": 2,
-		"31-60": 3, "61-120": 4, "121+": 5,
-	}
-	durationOrder = map[string]int{
-		"<5m": 0, "5-15m": 1, "15-30m": 2,
-		"30-60m": 3, "1-2h": 4, "2h+": 5,
-	}
-	autonomyOrder = map[string]int{
-		"<0.5": 0, "0.5-1": 1, "1-2": 2,
-		"2-5": 3, "5-10": 4, "10+": 5,
-	}
-)
-
 // GetAnalyticsSessionShape returns distribution histograms
 // for session length, duration, and autonomy ratio.
 func (s *Store) GetAnalyticsSessionShape(
@@ -1833,16 +1818,10 @@ func (s *Store) GetAnalyticsSessionShape(
 	}
 
 	return db.SessionShapeResponse{
-		Count: totalCount,
-		LengthDistribution: db.MapToBuckets(
-			lengthCounts, lengthOrder,
-		),
-		DurationDistribution: db.MapToBuckets(
-			durationCounts, durationOrder,
-		),
-		AutonomyDistribution: db.MapToBuckets(
-			autonomyCounts, autonomyOrder,
-		),
+		Count:                totalCount,
+		LengthDistribution:   db.LengthDistributionBuckets(lengthCounts),
+		DurationDistribution: db.DurationDistributionBuckets(durationCounts),
+		AutonomyDistribution: db.AutonomyDistributionBuckets(autonomyCounts),
 	}, nil
 }
 

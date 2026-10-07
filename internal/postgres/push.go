@@ -781,7 +781,7 @@ func (s *Sync) syncProjectIdentityObservations(
 		if err != nil {
 			return fmt.Errorf("loading project identity observations: %w", err)
 		}
-		observations = filterProjectIdentityObservations(
+		observations = db.FilterIdentityScope(
 			observations, s.projects, s.excludeProjects,
 		)
 		snapshots, err = s.local.ListPublishableSessionProjectIdentitySnapshots(
@@ -913,27 +913,6 @@ func (s *Sync) syncProjectIdentityObservations(
 		return fmt.Errorf("recording project identity publication revision: %w", err)
 	}
 	return nil
-}
-
-func filterProjectIdentityObservations(
-	observations []export.ProjectIdentityObservation,
-	projects []string,
-	excludeProjects []string,
-) []export.ProjectIdentityObservation {
-	if len(projects) == 0 && len(excludeProjects) == 0 {
-		return observations
-	}
-	out := observations[:0]
-	for _, obs := range observations {
-		if len(projects) > 0 && !slices.Contains(projects, obs.Project) {
-			continue
-		}
-		if slices.Contains(excludeProjects, obs.Project) {
-			continue
-		}
-		out = append(out, obs)
-	}
-	return out
 }
 
 // pgPushMarkerMachineState reports whether this host's push marker is present
@@ -1899,10 +1878,10 @@ func reconcilePGProjectScopeMoves(
 		if err := rows.Scan(&id, &project); err != nil {
 			return nil, fmt.Errorf("scanning owned pg session for scope reconciliation: %w", err)
 		}
-		if !projectInPGSyncScope(project, projects, excludeProjects) {
+		if !db.ProjectMatchesPushScope(project, projects, excludeProjects) {
 			continue
 		}
-		if !projectInPGSyncScope(
+		if !db.ProjectMatchesPushScope(
 			localProjects[id], projects, excludeProjects,
 		) {
 			staleIDs = append(staleIDs, id)
@@ -1934,17 +1913,6 @@ func listPGProjectScopeMoveCandidates(
 	lastPush string,
 ) ([]db.Session, error) {
 	return local.ListSessionsForMirrorWindow(ctx, lastPush, nil, nil)
-}
-
-func projectInPGSyncScope(
-	project string,
-	projects []string,
-	excludeProjects []string,
-) bool {
-	if len(projects) > 0 && !slices.Contains(projects, project) {
-		return false
-	}
-	return !slices.Contains(excludeProjects, project)
 }
 
 func hasPGExcludedSessionID(
