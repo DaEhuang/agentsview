@@ -512,7 +512,10 @@ CREATE INDEX IF NOT EXISTS idx_provider_freshness_updated_at
 // messages and classifying user prompts. Re-parse unchanged sources to
 // remove retained context, restore omitted prompts, and correct first-message
 // previews and user-message counts.)
-const dataVersion = 113
+// Version 114 retains reply phases and Kiro credit meters, strips Crew prompt
+// envelopes, and corrects Codex/QoderCN accounting. Source-backed sessions
+// reparse; missing-source sessions keep their archived facts.
+const dataVersion = 114
 
 const tokenCoverageRepairStatsKey = "token_coverage_repair_v1"
 
@@ -3609,14 +3612,7 @@ func (db *DB) createPartialIndexesLocked(ctx context.Context, w *writerHandle) e
 		 ON messages(session_id) WHERE is_sidechain = 1`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_source_uuid
 		 ON messages(source_uuid) WHERE source_uuid != ''`,
-		`CREATE INDEX IF NOT EXISTS idx_messages_claude_snapshot
-		 ON messages(claude_message_id, claude_request_id,
-		             timestamp, session_id, ordinal)
-		 WHERE token_usage != ''
-		   AND model != ''
-		   AND model != '<synthetic>'
-		   AND claude_message_id != ''
-		   AND claude_request_id != ''`,
+
 		`CREATE INDEX IF NOT EXISTS idx_sessions_has_secret
 		 ON sessions(secret_leak_count) WHERE secret_leak_count > 0`,
 	}
@@ -3624,6 +3620,9 @@ func (db *DB) createPartialIndexesLocked(ctx context.Context, w *writerHandle) e
 		if _, err := w.Exec(ctx, ddl); err != nil {
 			return fmt.Errorf("creating index: %w", err)
 		}
+	}
+	if err := ensureClaudeSnapshotIndexLocked(ctx, w); err != nil {
+		return err
 	}
 	if err := ensureUsageIndexesLocked(ctx, w); err != nil {
 		return err

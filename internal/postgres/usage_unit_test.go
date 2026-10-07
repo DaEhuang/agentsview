@@ -281,11 +281,11 @@ func TestPGGetDailyUsageReturnsDedupedSessionCounts(t *testing.T) {
 	assert.Zero(t, result.SessionCounts.ByAgent["codex"])
 }
 
-func TestPGUsageDedupTokenForRowFallsBackToSourceUUIDWhenClaudePairIncomplete(t *testing.T) {
+func TestPGUsageDedupTokenForRowFallsBackToSourceUUIDWhenMessageIDMissing(t *testing.T) {
 	got, ok := pgUsageDedupTokenForRow(
 		"message",
 		"claude-code",
-		"msg-dup",
+		"",
 		"",
 		"source-dup",
 		"",

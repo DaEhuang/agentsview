@@ -678,6 +678,8 @@ const (
 	// ArchiveContentTranscripts keeps message text, thinking text, titles,
 	// and tool call metadata while dropping tool inputs and tool results.
 	ArchiveContentTranscripts ArchiveContent = "transcripts"
+	// ArchiveContentDialogue retains user prompts, final replies, and numeric usage.
+	ArchiveContentDialogue ArchiveContent = "dialogue"
 	// ArchiveContentUsage keeps only the session and message rows needed for
 	// token and cost reporting.
 	ArchiveContentUsage ArchiveContent = "usage"
@@ -690,11 +692,11 @@ func ParseArchiveContent(value string) (ArchiveContent, error) {
 	switch policy {
 	case "":
 		return ArchiveContentFull, nil
-	case ArchiveContentFull, ArchiveContentTranscripts, ArchiveContentUsage:
+	case ArchiveContentFull, ArchiveContentTranscripts, ArchiveContentDialogue, ArchiveContentUsage:
 		return policy, nil
 	default:
 		return "", fmt.Errorf(
-			`archive_content must be "full", "transcripts", or "usage" (got %q)`,
+			`archive_content must be "full", "transcripts", "dialogue", or "usage" (got %q)`,
 			value,
 		)
 	}
@@ -703,7 +705,7 @@ func ParseArchiveContent(value string) (ArchiveContent, error) {
 // OmitsToolContent reports whether tool inputs and tool results are dropped
 // at the storage boundary.
 func (a ArchiveContent) OmitsToolContent() bool {
-	return a == ArchiveContentTranscripts || a == ArchiveContentUsage
+	return a == ArchiveContentTranscripts || a == ArchiveContentDialogue || a == ArchiveContentUsage
 }
 
 // UsageOnly reports whether the archive keeps only usage accounting rows.

@@ -22,11 +22,12 @@ const (
 
 // kiroMeta holds fields from the companion .json metadata file.
 type kiroMeta struct {
-	SessionID string `json:"session_id"`
-	Cwd       string `json:"cwd"`
-	Title     string `json:"title"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	SessionID    string          `json:"session_id"`
+	Cwd          string          `json:"cwd"`
+	Title        string          `json:"title"`
+	CreatedAt    string          `json:"created_at"`
+	UpdatedAt    string          `json:"updated_at"`
+	SessionState kiroCreditState `json:"session_state"`
 }
 
 // discoverLegacyJSONL finds all .jsonl session files under a Kiro
@@ -152,10 +153,11 @@ func (p *kiroProvider) parseLegacySessionContext(
 
 		kind := gjson.Get(line, "kind").Str
 		data := gjson.Get(line, "data")
+		timestamp := kiroCurrentMessageTimestamp(data.Get("meta.timestamp"))
 
 		switch kind {
 		case kiroKindPrompt:
-			content := kiroExtractText(data)
+			content := preprocessKiroPrompt(kiroExtractText(data))
 			if content == "" {
 				continue
 			}
@@ -166,6 +168,8 @@ func (p *kiroProvider) parseLegacySessionContext(
 			}
 			messages = append(messages, ParsedMessage{
 				Ordinal:       ordinal,
+				Timestamp:     timestamp,
+				SourceUUID:    data.Get("message_id").Str,
 				Role:          RoleUser,
 				Content:       content,
 				ContentLength: len(content),
@@ -186,6 +190,8 @@ func (p *kiroProvider) parseLegacySessionContext(
 
 			messages = append(messages, ParsedMessage{
 				Ordinal:       ordinal,
+				Timestamp:     timestamp,
+				SourceUUID:    data.Get("message_id").Str,
 				Role:          RoleAssistant,
 				Content:       displayContent,
 				ContentLength: len(displayContent),
@@ -200,9 +206,11 @@ func (p *kiroProvider) parseLegacySessionContext(
 				continue
 			}
 			messages = append(messages, ParsedMessage{
-				Ordinal:     ordinal,
-				Role:        RoleUser,
-				ToolResults: results,
+				Ordinal:       ordinal,
+				Timestamp:     timestamp,
+				SourceSubtype: SourceSubtypeToolResult,
+				Role:          RoleUser,
+				ToolResults:   results,
 			})
 			ordinal++
 		}
@@ -221,14 +229,13 @@ func (p *kiroProvider) parseLegacySessionContext(
 			break
 		}
 	}
-	if !hasContent {
-		return nil, nil, nil
-	}
-
 	// Extract metadata from companion .json file.
 	meta, err := loadKiroMetaStrict(path)
 	if err != nil {
 		return nil, nil, err
+	}
+	if !hasContent && (meta == nil || len(meta.SessionState.ConversationMetadata.Turns) == 0) {
+		return nil, nil, nil
 	}
 
 	sessionID := strings.TrimSuffix(
@@ -259,9 +266,18 @@ func (p *kiroProvider) parseLegacySessionContext(
 
 	sessionID = "kiro:" + sessionID
 
+	// Crew uses this reserved agent for background memory work. Its prompts
+	// and replies are accounting activity, not human conversation.
+	background := meta != nil && meta.SessionState.AgentName == "kirocrew-lite"
+	if background {
+		firstMessage = ""
+		for i := range messages {
+			messages[i].IsSystem = true
+		}
+	}
 	userCount := 0
 	for _, m := range messages {
-		if m.Role == RoleUser && m.Content != "" {
+		if m.Role == RoleUser && m.Content != "" && !m.IsSystem {
 			userCount++
 		}
 	}

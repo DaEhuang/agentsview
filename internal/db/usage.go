@@ -1174,7 +1174,7 @@ func exactUsageUTCWindow(f UsageFilter) usageBounds {
 // (claude_message_id, claude_request_id) contributes one row: the greatest
 // output snapshot, attributed to the session that streamed the request
 // first, carrying the maximum billed web-search count across its snapshots.
-// Rows without complete Claude request identity bypass the ranking.
+// Rows without a Claude message ID bypass the ranking.
 //
 // Only requests that appear more than once are ranked. usage_snapshot_dups
 // finds them with an index-only pass over messages, usage_snapshot_ranked
@@ -1278,7 +1278,6 @@ func snapshotRankedDailyUsageRowsSQL(
 				AND NOT (
 					u.usage_source = 'message'
 					AND u.claude_message_id != ''
-					AND u.claude_request_id != ''
 					AND (%[8]s) IN (
 						SELECT %[9]s FROM usage_snapshot_dups
 					)
@@ -1333,11 +1332,10 @@ func usageSnapshotWindowWhere(f UsageFilter) (string, []any) {
 	return where, args
 }
 
-// usageSnapshotClaudeIdentity selects the message rows that carry complete
-// Claude request identity and could enter the usage row source.
+// usageSnapshotClaudeIdentity selects rows with a stable message identity.
+// requestId remains optional: older/proxied transcripts omit it on snapshots.
 const usageSnapshotClaudeIdentity = usageMessageSourceEligibility + `
-	AND m.claude_message_id != ''
-	AND m.claude_request_id != ''`
+	AND m.claude_message_id != ''`
 
 // usageSnapshotDuplicateRequestsSQL lists the Claude requests that appear on
 // more than one eligible message. It over-approximates the ranked set (it
@@ -1386,7 +1384,6 @@ func usageSnapshotDuplicateRequestsSQL(b usageBounds) (string, []any) {
 func usageSnapshotClaudeMessageRowsSQL(b usageBounds) (string, []any) {
 	where := usageMessageEligibility + `
 	AND m.claude_message_id != ''
-	AND m.claude_request_id != ''
 	AND (m.claude_message_id, m.claude_request_id) IN (
 		SELECT claude_message_id, claude_request_id FROM usage_snapshot_dups
 	)`
@@ -1727,7 +1724,7 @@ type usageDedupToken struct {
 func usageDedupTokenForRow(
 	usageSource, agent, claudeMessageID, claudeRequestID, sourceUUID, usageDedupKey string,
 ) (usageDedupToken, bool) {
-	if claudeMessageID != "" && claudeRequestID != "" {
+	if claudeMessageID != "" {
 		return usageDedupToken{
 			kind:  "claude",
 			value: claudeMessageID + ":" + claudeRequestID,

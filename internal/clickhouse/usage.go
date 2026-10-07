@@ -799,7 +799,7 @@ func chUsageCTEFromRaw(
 		usage_snapshot_ranked AS (
 			SELECT *,
 				CASE
-					WHEN claude_message_id != '' AND claude_request_id != ''
+					WHEN claude_message_id != ''
 						THEN first_value(session_id) OVER (
 							PARTITION BY claude_message_id, claude_request_id
 							ORDER BY ts ASC, session_id ASC,
@@ -808,7 +808,7 @@ func chUsageCTEFromRaw(
 					ELSE session_id
 				END AS snapshot_attribution_session_id,
 				CASE
-					WHEN claude_message_id != '' AND claude_request_id != ''
+					WHEN claude_message_id != ''
 						THEN row_number() OVER (
 							PARTITION BY claude_message_id, claude_request_id
 							ORDER BY output_tokens_norm DESC, ts DESC,
@@ -818,7 +818,7 @@ func chUsageCTEFromRaw(
 					ELSE toUInt64(1)
 				END AS snapshot_rank,
 				CASE
-					WHEN claude_message_id != '' AND claude_request_id != ''
+					WHEN claude_message_id != ''
 						THEN sum(output_tokens_norm) OVER (
 							PARTITION BY claude_message_id, claude_request_id
 						) - max(output_tokens_norm) OVER (
@@ -827,7 +827,7 @@ func chUsageCTEFromRaw(
 					ELSE toInt64(0)
 				END AS snapshot_deduplicated_output_tokens,
 				CASE
-					WHEN claude_message_id != '' AND claude_request_id != ''
+					WHEN claude_message_id != ''
 						THEN max(web_search_requests_norm) OVER (
 							PARTITION BY claude_message_id, claude_request_id
 						)
@@ -921,7 +921,7 @@ func chUsageCTEFromRaw(
 				if(source = 'message',
 					greatest(JSONExtractInt(token_json, 'server_tool_use', 'web_search_requests'), toInt64(0)),
 					toInt64(0)) AS web_search_requests_norm,
-				if(claude_message_id != '' AND claude_request_id != '',
+				if(claude_message_id != '',
 					concat('claude:', claude_message_id, ':', claude_request_id),
 					if(source = 'message' AND agent != '' AND source_uuid != '',
 						concat('source:', agent, ':', source_uuid),

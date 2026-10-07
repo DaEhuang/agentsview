@@ -317,11 +317,23 @@ func (p *kiroProvider) parseLegacyJSONL(
 	if fingerprint.Hash != "" {
 		sess.File.Hash = fingerprint.Hash
 	}
+	meta, err := loadKiroMetaStrict(src.Path)
+	if err != nil {
+		return ParseOutcome{}, err
+	}
+	ledger, events, err := kiroCreditAccounting(sess.ID, len(msgs), meta)
+	if err != nil {
+		return ParseOutcome{}, err
+	}
+	msgs = append(msgs, ledger...)
+	sess.MessageCount = len(msgs)
+	sess.AgentLabel = kiroCreditHarness(meta)
 	return ParseOutcome{
 		Results: []ParseResultOutcome{{
 			Result: ParseResult{
-				Session:  *sess,
-				Messages: msgs,
+				Session:     *sess,
+				Messages:    msgs,
+				UsageEvents: events,
 			},
 			DataVersion: DataVersionCurrent,
 		}},

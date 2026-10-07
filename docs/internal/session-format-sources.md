@@ -226,6 +226,12 @@ add an archived or maintained mirror without replacing the original identity.
   selected Claude input-token snapshots identically across SQLite, PostgreSQL,
   and DuckDB.
 
+- **Fork accounting:** Reverified 2026-10-07 against local source records:
+  some transcripts have stable `message.id` but no `requestId`. Their streamed
+  snapshots are ranked by message ID alone; the request ID stays empty.
+  Rows without a message ID retain the existing source-UUID fallback.
+  `TestClaudeUsageSnapshotWithoutRequestID` covers streaming and fork replay.
+
 - **Agentsview:** `internal/parser/claude.go` and
   `internal/parser/claude_provider.go`; local observations and fixtures are
   the implementation evidence for fields not documented upstream. Reverified
@@ -407,6 +413,13 @@ add an archived or maintained mirror without replacing the original identity.
   `cmd/perfsim` generates dated rollouts with session metadata, turn context,
   response items and token-count events through the shared fixture builder.
   Its integration test checks parsed messages and aggregate output tokens.
+
+- **Fork accounting:** Reverified 2026-10-07 using synthetic equal-size
+  requests. Deduplication uses `total_token_usage` when present, falling back
+  to `last_token_usage` for legacy records. Assistant `phase` is retained for
+  final-reply storage. `TestCodexEqualRequestsAdvanceCumulativeUsage` and
+  `TestCodexPreservesResponsePhase` cover both rules. Daily attribution remains
+  the associated assistant timestamp; it is not a previous-request timestamp.
 
 - **Format:** Rollout JSONL files, with a separate JSONL session index used by
   older releases for discovery and metadata. Current releases no longer write
@@ -2269,6 +2282,27 @@ schemas keep their existing ordering behavior.
 
 ## Kiro CLI (`kiro`)
 
+- **Fork credit accounting:** Legacy CLI sidecars can carry
+  `session_state.conversation_metadata.user_turn_metadatas[].metering_usage`
+  and `end_timestamp`. Native credit records are archived separately from
+  synthetic usage events. The versioned `kiro-credit-equivalent-v1` model
+  estimates tokens at $0.04/credit, using 96% cached input at $0.20/M,
+  3.5% uncached input at $4/M, and 0.5% output at $20/M. These are explicit
+  policy assumptions, not measured token ratios. Crew's assembled prompt
+  boundary (`[CURRENT USER REQUEST — respond to this]`) separates injected
+  context from user text; the reserved `kirocrew-lite` background agent is
+  system activity. These rules were checked against the locally installed
+  producer's `context.py` and `session.py` on 2026-10-07 and are covered by
+  `TestKiroPromptSeparatesInjectedContext`. Older Crew captures without that
+  boundary still contain injected context inside user messages; this fork
+  preserves those bodies rather than guessing where the user's text starts.
+  Background agents without the reserved name also need separate adaptation.
+  Crew-named CLI sessions retain
+  the `kiro-crew` label. Independent Crew usage logs are not added: they overlap
+  CLI billing and need identity reconciliation. Covered by
+  `TestKiroCreditAccountingUsesDatedNativeCredits`; evidence is local observed
+  metadata plus synthetic fixtures, not a published producer contract.
+
 - **Format:** Legacy JSONL plus companion metadata JSON, and newer SQLite
   session databases.
 
@@ -2310,8 +2344,9 @@ schemas keep their existing ordering behavior.
   USD fields. The companion state can contain model/window metadata, context
   percentage, and per-turn credit metering; the recorded Kiro 2.5.1 evidence
   found input/output counters present but zero and no cache split. Agentsview
-  currently consumes none of those sidecar usage fields, so it emits no Kiro
-  usage or cost metrics.
+  reads dated legacy-sidecar credit meters in this fork and retains their
+  native values alongside explicitly labeled cost-equivalent estimates. The
+  newer SQLite format still has no measured token or credit coverage here.
 
 - **Agentsview:** `internal/parser/kiro.go`, `internal/parser/kiro_sqlite.go`,
   and `internal/parser/kiro_provider.go`; both generations must remain
@@ -2967,9 +3002,13 @@ schemas keep their existing ordering behavior.
   `<session-id>.jsonl`. This is a user-reported local observation, not
   producer-side evidence, and does not establish storage behavior for all
   Qoder CN releases or platforms.
-- **Usage and cost:** The consumed files provide transcript and model/session
-  metadata but no authoritative token, cache, reasoning, credit, or USD events
-  to Agentsview.
+- **Usage and cost:** Locally observed Qoder CN project transcripts contain
+  `message.usage.input_tokens`, `cache_read_input_tokens`, and `output_tokens`.
+  CN input includes cached tokens; normalize the uncached remainder before
+  summing the buckets. This observation does not establish the international
+  variant's accounting semantics. Reverified 2026-10-07 with a synthetic
+  100-input/80-cached/20-output record: its total is 120, not 200. Covered by
+  `TestQoderCNCachedInputIsNotCountedTwice`; CN retains the `qoder-cn` label.
 - **Agentsview:** `internal/parser/qoder.go` and
   `internal/parser/qoder_provider.go`.
 

@@ -96,7 +96,7 @@ command counts raw `tool_calls.result_content` and `tool_result_events.content`
 bytes separately from decoded image bytes. `db compact` reports file-size
 reclamation separately.
 
-Transcript-only and usage-only writes omit parser checkpoints because resumable
+Transcript-only, dialogue-only, and usage-only writes omit parser checkpoints because resumable
 hash state can contain raw trailing transcript bytes. They retain staged parsing
 but publish projected messages and tool metadata without staged output. Late
 result updates use the same projection as newly inserted messages.

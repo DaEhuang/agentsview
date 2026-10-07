@@ -505,6 +505,7 @@ func (b *codexSessionBuilder) handleResponseItem(ctx context.Context,
 	}
 	if role == string(RoleAssistant) {
 		msg.ReasoningEffort = b.reasoningEffort
+		msg.SourceSubtype = payload.Get("phase").Str
 	}
 	b.sink.AppendMessage(msg)
 }
@@ -558,7 +559,14 @@ func (b *codexSessionBuilder) handleTokenCountEvent(
 	payload gjson.Result,
 ) {
 	raw := payload.Get("info.last_token_usage").Raw
-	if raw == "" || b.observeTokenUsage(raw) {
+	// Equal per-request counts do not identify a repeated event. Prefer the
+	// cumulative watermark when available; identical requests advance it.
+	total := payload.Get("info.total_token_usage")
+	identity := total.Raw
+	if total.Get("total_tokens").Int() <= 0 && total.Get("input_tokens").Int() <= 0 && total.Get("output_tokens").Int() <= 0 {
+		identity = raw
+	}
+	if raw == "" || b.observeTokenUsage(identity) {
 		return
 	}
 

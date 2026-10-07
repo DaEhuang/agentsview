@@ -804,8 +804,7 @@ func clickActivityReportUsageQuery(
 			JOIN sessions s ON s.id = m.session_id
 			WHERE ` + chUsageMessageEligibility + `
 				AND ` + candidateIn + `
-				AND m.claude_message_id != ''
-				AND m.claude_request_id != ''` + messageBound + `
+				AND m.claude_message_id != ''` + messageBound + `
 		),
 		`
 	query := clickUsageNormalizedQueryWith(ctes,
@@ -988,7 +987,7 @@ func clickUsageOrdinalOrNeg(v sql.NullInt64) int64 {
 }
 
 func clickSessionUsageDedupKey(r clickActivityReportUsageRow) (string, bool) {
-	if r.claudeMessageID != "" && r.claudeRequestID != "" {
+	if r.claudeMessageID != "" {
 		return "claude:" + r.claudeMessageID + ":" + r.claudeRequestID, true
 	}
 	if r.source == "message" && r.agent != "" && r.sourceUUID != "" {

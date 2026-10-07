@@ -779,7 +779,6 @@ func (s *Store) activityReportUsage(
 					WHERE `+pgUsageMessageEligibility+`
 						AND m.session_id = ANY(`+peerSessions+`)
 						AND m.claude_message_id != ''
-						AND m.claude_request_id != ''
 						AND COALESCE(m.timestamp, s.started_at) >= `+peerLower+`::timestamptz
 						AND COALESCE(m.timestamp, s.started_at) <= `+peerUpper+`::timestamptz
 				))`,
