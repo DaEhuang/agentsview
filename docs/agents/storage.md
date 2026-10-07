@@ -20,6 +20,9 @@ transaction or a pinned reader can push the WAL past it (249 MiB was observed).
 Before closing the replacement, the build runs a checked truncate checkpoint.
 The swap installs only the main file, so a failed checkpoint or close aborts it.
 
+`RecordArtifactCheckpointLandingFromStage` records completed checkpoint landings;
+the retired `artifact_checkpoint_landing_sessions` table remains for older builds.
+
 ### Conversation export
 
 Conversation exports consume normalized SQLite message records for every agent.
