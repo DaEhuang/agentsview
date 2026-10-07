@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -78,19 +80,6 @@ func TestScreenViewedCapture(t *testing.T) {
 	}
 	post(`{"event":"screen_viewed","properties":{"screen":"unknown","surface":"web"}}`, 202)
 	post(`{"event":"screen_viewed"}`, 202)
-	post(`{"event":"screen_viewed","properties":{"screen":"sessions"}} {}`, 400)
-	for _, method := range []string{http.MethodGet, http.MethodPost} {
-		req := httptest.NewRequestWithContext(t.Context(), method, "/api/v1/telemetry/events",
-			strings.NewReader(`{"event":"screen_viewed","properties":{"screen":"sessions"}}`))
-		req.Header.Set("Content-Type", "text/plain")
-		rec := httptest.NewRecorder()
-		reporter.CaptureHandler().ServeHTTP(rec, req)
-		if method == http.MethodGet {
-			require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
-		} else {
-			require.Equal(t, http.StatusUnsupportedMediaType, rec.Code)
-		}
-	}
 	reporter.claimScreenView = func(screen string, now time.Time, _ func() error) (bool, error) {
 		return cfg.ClaimScreenView(screen, now, func() error { return errors.New("queue full") })
 	}
@@ -110,16 +99,67 @@ func TestScreenViewedCapture(t *testing.T) {
 	reporter.claimScreenView = func(screen string, now time.Time, send func() error) (bool, error) {
 		return cfg.ClaimScreenView(screen, now.Add(24*time.Hour), send)
 	}
-	post(`{"event":"screen_viewed","properties":{"screen":"sessions","surface":"web"}}`, 202)
+	reporter.screenDay = time.Now().UTC().Add(-24 * time.Hour).Format(time.DateOnly)
+	post(`{"event":"screen_viewed","properties":{"screen":"usage","surface":"web"}}`, 202)
 	require.NoError(t, reporter.Close())
 	sent := captured()
 	require.Len(t, sent, 12)
 	assert.Equal(t, "sessions", sent[0]["screen"])
 	assert.Equal(t, "web", sent[0]["surface"])
 	assert.NotContains(t, sent[0], "query")
+	assert.Equal(t, "usage", sent[11]["screen"])
 	for _, item := range sent[1:11] {
 		assert.NotContains(t, item, "surface")
 	}
+}
+
+func TestScreenViewRequestContract(t *testing.T) {
+	t.Setenv(EnabledEnv, "1")
+	t.Setenv(GenericEnabledEnv, "1")
+	endpoint, _ := captureCollector(t)
+	for _, contentType := range []string{"", "text/plain", "application/json"} {
+		cfg := config.Config{DataDir: t.TempDir(), InstallationID: "install-id"}
+		reporter := captureReporter(t, endpoint, Options{ClaimScreenView: cfg.ClaimScreenView})
+		for _, event := range []string{EventAppOpened, EventScreenViewed} {
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/telemetry/events",
+				strings.NewReader(`{"event":"`+event+`","properties":{"screen":"sessions"}} {}`))
+			req.Header.Set("Content-Type", contentType)
+			rec := httptest.NewRecorder()
+			reporter.CaptureHandler().ServeHTTP(rec, req)
+			assert.Equal(t, http.StatusAccepted, rec.Code, "%s %s", contentType, event)
+		}
+		require.NoError(t, reporter.Close())
+	}
+}
+
+func TestScreenViewAcceptedBeforeWriteFailure(t *testing.T) {
+	t.Setenv(EnabledEnv, "1")
+	t.Setenv(GenericEnabledEnv, "1")
+	endpoint, captured := captureCollector(t)
+	cfg := config.Config{DataDir: t.TempDir(), InstallationID: "install-id", Host: "127.0.0.1", Port: 8080}
+	path := filepath.Join(cfg.DataDir, "telemetry-screen-views")
+	sends := 0
+	reporter := captureReporter(t, endpoint, Options{ClaimScreenView: func(screen string, now time.Time, send func() error) (bool, error) {
+		return cfg.ClaimScreenView(screen, now, func() error {
+			sends++
+			if err := send(); err != nil {
+				return err
+			}
+			return os.Mkdir(path, 0o700)
+		})
+	}})
+	srv := server.New(cfg, dbtest.OpenTestDB(t), nil, server.WithTelemetryCapture(reporter.CaptureHandler()))
+	body := `{"event":"screen_viewed","properties":{"screen":"sessions","surface":"web"}}`
+	postCapture(t, srv.Handler(), body, http.StatusAccepted)
+	require.NoError(t, os.Remove(path))
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() { postCapture(t, srv.Handler(), body, http.StatusAccepted) })
+	}
+	wg.Wait()
+	require.NoError(t, reporter.Close())
+	assert.Equal(t, 1, sends)
+	assert.Len(t, captured(), 1)
 }
 
 func captureCollector(t *testing.T) (string, func() []map[string]any) {

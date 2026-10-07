@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,6 +34,9 @@ var ErrUnsupportedEvent = kittelemetry.ErrUnsupportedTelemetryEvent
 type Reporter struct {
 	client          *kittelemetry.PostHogReporter
 	claimScreenView func(string, time.Time, func() error) (bool, error)
+	screenMu        sync.Mutex
+	screenDay       string
+	screenViews     map[string]bool
 }
 
 type Options struct {

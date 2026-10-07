@@ -101,3 +101,12 @@ func TestClaimScreenViewFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestClaimScreenViewAcceptedBeforeWriteFailure(t *testing.T) {
+	c := Config{DataDir: t.TempDir(), InstallationID: "install-one"}
+	claimed, err := c.ClaimScreenView("sessions", time.Now(), func() error {
+		return os.Mkdir(filepath.Join(c.DataDir, telemetryScreensFilename), 0o700)
+	})
+	assert.True(t, claimed)
+	assert.Error(t, err)
+}

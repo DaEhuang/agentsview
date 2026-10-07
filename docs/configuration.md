@@ -1802,6 +1802,7 @@ each screen once per installation per UTC day, across tabs and server restarts.
 It stores the installation ID, date, and that day's screen names in
 `telemetry-screen-views` beside the installation identity. Invalid screen names
 are dropped.
+A claim that cannot be saved lasts only until the daemon exits.
 
 The web UI reports five core actions the same way. Each carries one property,
 and the server drops any value outside its fixed list. A search counts once per

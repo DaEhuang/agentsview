@@ -30,10 +30,10 @@ func (c *Config) ClaimScreenView(screen string, now time.Time, send func() error
 		if err := send(); err != nil {
 			return err
 		}
+		claimed = true
 		if err := c.writeInstallationFile(telemetryScreensFilename, strings.Join(append(fields, screen), " ")); err != nil {
 			return err
 		}
-		claimed = true
 		return nil
 	})
 	return claimed, err

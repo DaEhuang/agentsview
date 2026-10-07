@@ -7,6 +7,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("preserves the transport for earlier events", async () => {
+  vi.useFakeTimers();
+  const fetch = vi.fn().mockResolvedValue(new Response("", { status: 202 }));
+  vi.stubGlobal("fetch", fetch);
+  reportTelemetry("app_opened");
+  expect(fetch.mock.calls[0]![1]).not.toHaveProperty("signal");
+  expect(vi.getTimerCount()).toBe(0);
+  await vi.runAllTimersAsync();
+});
+
 it("bounds a telemetry request on WebKit without AbortSignal.timeout", async () => {
   vi.useFakeTimers();
   vi.stubGlobal("AbortSignal", { timeout: undefined });
