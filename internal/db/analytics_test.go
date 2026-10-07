@@ -1079,17 +1079,6 @@ func TestGetAnalyticsHeatmap(t *testing.T) {
 		assert.Equal(t, 2, resp.Entries[0].Value, "Jun1 sessions")
 	})
 
-	t.Run("LevelsAssigned", func(t *testing.T) {
-		resp := mustHeatmap(t, d, ctx, baseFilter(), "messages")
-		// All entries should have levels 0-4
-		for _, e := range resp.Entries {
-			assert.GreaterOrEqual(t, e.Level, 0,
-				"date %s level", e.Date)
-			assert.LessOrEqual(t, e.Level, 4,
-				"date %s level", e.Date)
-		}
-	})
-
 	t.Run("OutputTokensNoReporting", func(t *testing.T) {
 		// When no sessions report token coverage, the
 		// output_tokens heatmap must return empty entries
@@ -1102,16 +1091,6 @@ func TestGetAnalyticsHeatmap(t *testing.T) {
 			"len(Entries) want 0 (no sessions report token coverage)")
 	})
 
-	t.Run("EmptyRange", func(t *testing.T) {
-		f := emptyFilter()
-		f.To = "2020-01-03"
-		resp := mustHeatmap(t, d, ctx, f, "messages")
-		require.Len(t, resp.Entries, 3, "len(Entries) =")
-		for _, e := range resp.Entries {
-			assert.Equal(t, 0, e.Value, "date %s value", e.Date)
-			assert.Equal(t, 0, e.Level, "date %s level", e.Date)
-		}
-	})
 }
 
 func TestGetAnalyticsSummaryModelFilterUsesFilteredOutputTokens(

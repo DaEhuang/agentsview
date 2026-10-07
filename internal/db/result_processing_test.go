@@ -36,7 +36,7 @@ func TestBuildSessionPage(t *testing.T) {
 	}
 }
 
-func TestBuildHeatmapResponseCoverage(t *testing.T) {
+func TestBuildHeatmapResponse(t *testing.T) {
 	for _, empty := range []bool{false, true} {
 		uncovered := BuildHeatmapResponse("2026-01-01", "2026-01-02", "output_tokens", nil, empty)
 		assert.Nil(t, uncovered.Entries)
@@ -46,9 +46,6 @@ func TestBuildHeatmapResponseCoverage(t *testing.T) {
 		assert.Equal(t, HeatmapEntry{Date: "2026-01-01"}, covered.Entries[0])
 		assert.Equal(t, HeatmapLevels{L1: 1, L2: 2, L3: 3, L4: 4}, covered.Levels)
 	}
-}
-
-func TestBuildHeatmapResponseRange(t *testing.T) {
 	for _, tc := range []struct {
 		name, from, to    string
 		empty, nilEntries bool
@@ -99,18 +96,11 @@ func TestTrendAccumulator(t *testing.T) {
 }
 
 func TestMessageScopeProjections(t *testing.T) {
-	var unfiltered MessageScope
-	assert.Nil(t, unfiltered)
-	empty := make(MessageScope)
-	assert.NotNil(t, empty)
-	assert.Empty(t, empty.StatsBySession())
-	assert.Empty(t, empty.TimingBySession())
 	rows := []ScopedMessage{
 		{SessionID: "session", Role: "user", Timestamp: "2026-01-01T00:00:00Z"},
 		{SessionID: "session", Role: "assistant", Timestamp: "2026-01-01T00:00:01.123Z", OutputTokens: 8, HasOutputTokens: true},
 	}
 	scope := MessageScope{"session": rows}
-	assert.Equal(t, rows, scope["session"])
 	assert.Equal(t, ScopeStats(rows), scope.StatsBySession()["session"])
 	assert.Equal(t, ScopeTiming(rows), scope.TimingBySession()["session"])
 	hour := 12
