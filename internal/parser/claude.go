@@ -2949,7 +2949,6 @@ func claudePRLink(line []byte) (PRLink, bool) {
 		gjson.GetBytes(line, "prUrl").Str,
 		gjson.GetBytes(line, "prRepository").Str,
 		int(gjson.GetBytes(line, "prNumber").Int()),
-		PRLinkSourceTranscript,
 		extractTimestampBytes(line),
 	)
 }
