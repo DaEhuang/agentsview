@@ -201,7 +201,8 @@ backend at compile time, so a missing method fails `go build`.
 `BuildSessionPage` for pagination, `BuildHeatmapResponse` for daily levels,
 `TrendAccumulator` for term counts, and `MessageScope` with
 `AnalyticsFilter.MessageScopeFilter` for model-scoped projections. Backends
-retain their queries, cursor codecs, and timestamp scanning.
+retain their queries, cursor codecs, timestamp scanning, and trend bucket
+derivation.
 
 | Role    | Today                  | Contract                                   |
 | ------- | ---------------------- | ------------------------------------------ |

@@ -2,7 +2,6 @@ package db
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -76,28 +75,25 @@ func TestBuildHeatmapResponseRange(t *testing.T) {
 func TestTrendAccumulator(t *testing.T) {
 	terms, err := ParseTrendTerms([]string{"cat"})
 	require.NoError(t, err)
-	loc := time.FixedZone("local", -5*60*60)
 	for _, tc := range []struct{ granularity, bucket string }{
-		{"day", "2026-01-04"}, {"", "2025-12-29"}, {"month", "2026-01-01"},
+		{"day", "2026-01-04"}, {"week", "2025-12-29"}, {"month", "2026-01-01"},
 	} {
 		t.Run(tc.granularity, func(t *testing.T) {
 			acc := NewTrendAccumulator("2026-01-04", "2026-01-05", tc.granularity, terms)
-			acc.Add("cats cat", time.Date(2026, 1, 4, 23, 59, 0, 0, loc))
-			acc.Add("unmatched", time.Date(2026, 1, 5, 0, 0, 0, 0, loc))
-			acc.Add("cat", time.Date(2026, 1, 3, 23, 59, 0, 0, loc))
-			acc.Add("cat", time.Date(2026, 1, 6, 0, 0, 0, 0, loc))
+			acc.Add("cats cat", "2026-01-04", tc.bucket)
+			acc.Add("unmatched", "2026-01-05", tc.bucket)
+			acc.Add("cat", "2026-01-03", tc.bucket)
+			acc.Add("cat", "2026-01-06", tc.bucket)
+			acc.Add("cat", "2026-01-04", "unknown")
 			out := acc.Response()
 			assert.Equal(t, 2, out.MessageCount)
 			require.Len(t, out.Series, 1)
 			assert.Equal(t, 2, out.Series[0].Total)
 			assert.Equal(t, TrendPoint{Date: tc.bucket, Count: 2}, out.Series[0].Points[0])
-			if tc.granularity == "" {
-				assert.Equal(t, "week", out.Granularity)
-			}
 		})
 	}
 	empty := NewTrendAccumulator("bad", "2026-01-05", "week", terms)
-	empty.Add("cat", time.Now())
+	empty.Add("cat", "2026-01-05", "2026-01-05")
 	assert.Empty(t, empty.Response().Buckets)
 	assert.Zero(t, empty.Response().MessageCount)
 }

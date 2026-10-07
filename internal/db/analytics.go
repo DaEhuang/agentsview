@@ -1904,14 +1904,7 @@ func BuildHeatmapResponse(from, to, metric string, source map[string]int, emptyE
 	}
 	sort.Ints(values)
 	out.Levels = computeQuartileLevels(values)
-	out.Entries = buildDateEntries(entriesFrom, to, source, out.Levels)
-	if emptyEntries && out.Entries == nil {
-		_, fromErr := time.Parse("2006-01-02", entriesFrom)
-		_, toErr := time.Parse("2006-01-02", to)
-		if fromErr == nil && toErr == nil {
-			out.Entries = []HeatmapEntry{}
-		}
-	}
+	out.Entries = buildDateEntries(entriesFrom, to, source, out.Levels, emptyEntries)
 	return out
 }
 
@@ -1977,6 +1970,7 @@ func buildDateEntries(
 	from, to string,
 	values map[string]int,
 	levels HeatmapLevels,
+	emptyEntries bool,
 ) []HeatmapEntry {
 	start, err := time.Parse("2006-01-02", from)
 	if err != nil {
@@ -1988,6 +1982,9 @@ func buildDateEntries(
 	}
 
 	var entries []HeatmapEntry
+	if emptyEntries {
+		entries = []HeatmapEntry{}
+	}
 	for d := start; !d.After(end); d = d.AddDate(0, 0, 1) {
 		date := d.Format("2006-01-02")
 		v := values[date]

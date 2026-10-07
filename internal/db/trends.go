@@ -52,6 +52,9 @@ func (db *DB) GetTrendsTerms(
 	terms []TrendTermInput,
 	granularity string,
 ) (TrendsTermsResponse, error) {
+	if granularity == "" {
+		granularity = "week"
+	}
 	acc := NewTrendAccumulator(f.From, f.To, granularity, terms)
 	loc := f.location()
 	sessionFilter := f
@@ -95,7 +98,7 @@ func (db *DB) GetTrendsTerms(
 		if !ok {
 			return
 		}
-		acc.Add(row.content, msgTime)
+		acc.Add(row.content, msgTime.Format("2006-01-02"), trendBucketDate(msgTime, loc, granularity))
 	}
 	rowStartedAt := make(map[string]string)
 	rowCreatedAt := make(map[string]string)
@@ -153,7 +156,7 @@ func (db *DB) GetTrendsTerms(
 	return acc.Response(), nil
 }
 
-// TrendAccumulator counts terms in messages whose timestamps are already local.
+// TrendAccumulator counts terms using the backend's local dates and bucket keys.
 type TrendAccumulator struct {
 	from, to, granularity string
 	terms                 []TrendTermInput
@@ -164,9 +167,6 @@ type TrendAccumulator struct {
 }
 
 func NewTrendAccumulator(from, to, granularity string, terms []TrendTermInput) *TrendAccumulator {
-	if granularity == "" {
-		granularity = "week"
-	}
 	buckets := TrendBucketRange(from, to, granularity)
 	counts := make([][]int, len(terms))
 	for i := range counts {
@@ -175,11 +175,11 @@ func NewTrendAccumulator(from, to, granularity string, terms []TrendTermInput) *
 	return &TrendAccumulator{from: from, to: to, granularity: granularity, terms: terms, buckets: buckets, index: trendBucketIndex(buckets), counts: counts, messageCounts: make([]int, len(buckets))}
 }
 
-func (a *TrendAccumulator) Add(content string, local time.Time) {
-	if !inDateRange(local.Format("2006-01-02"), a.from, a.to) {
+func (a *TrendAccumulator) Add(content, date, bucketDate string) {
+	if !inDateRange(date, a.from, a.to) {
 		return
 	}
-	bucket, ok := a.index[TrendBucketDate(local, local.Location(), a.granularity)]
+	bucket, ok := a.index[bucketDate]
 	if !ok {
 		return
 	}
@@ -292,10 +292,6 @@ func dedupeCaseFolded(values []string) []string {
 type matchSpan struct {
 	start int
 	end   int
-}
-
-func countTrendOccurrences(text string, term TrendTermInput) int {
-	return CountTrendOccurrences(text, term)
 }
 
 func CountTrendOccurrences(text string, term TrendTermInput) int {

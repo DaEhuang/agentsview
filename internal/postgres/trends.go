@@ -15,6 +15,9 @@ func (s *Store) GetTrendsTerms(
 	terms []db.TrendTermInput,
 	granularity string,
 ) (db.TrendsTermsResponse, error) {
+	if granularity == "" {
+		granularity = "week"
+	}
 	acc := db.NewTrendAccumulator(f.From, f.To, granularity, terms)
 	loc := analyticsLocation(f)
 	sessionFilter := f
@@ -66,7 +69,7 @@ func (s *Store) GetTrendsTerms(
 		if !ok {
 			return
 		}
-		acc.Add(row.content, msgTime)
+		acc.Add(row.content, msgTime.Format("2006-01-02"), db.TrendBucketDate(msgTime, loc, granularity))
 	}
 	rowStartedAt := make(map[string]string)
 	rowCreatedAt := make(map[string]string)

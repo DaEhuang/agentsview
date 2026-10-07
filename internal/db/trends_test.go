@@ -78,7 +78,7 @@ func TestCountTrendOccurrences(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, countTrendOccurrences(tc.text, term))
+			assert.Equal(t, tc.want, CountTrendOccurrences(tc.text, term))
 		})
 	}
 }
@@ -86,7 +86,7 @@ func TestCountTrendOccurrences(t *testing.T) {
 func TestCountTrendOccurrencesSilentEStem(t *testing.T) {
 	terms, err := ParseTrendTerms([]string{"slic"})
 	require.NoError(t, err, "ParseTrendTerms")
-	got := countTrendOccurrences(
+	got := CountTrendOccurrences(
 		"slice slices sliced slicing slicer sliced-up",
 		terms[0],
 	)
@@ -99,7 +99,7 @@ func TestCountTrendOccurrencesPhrases(t *testing.T) {
 		Variants: []string{"load bearing", "load-bearing"},
 		Matchers: []string{"load bearing", "load-bearing"},
 	}
-	got := countTrendOccurrences("Load bearing and load-bearing", term)
+	got := CountTrendOccurrences("Load bearing and load-bearing", term)
 	assert.Equal(t, 2, got)
 }
 

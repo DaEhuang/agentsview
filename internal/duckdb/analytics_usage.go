@@ -2632,6 +2632,9 @@ func (s *Store) GetTrendsTerms(
 	ctx context.Context, f db.AnalyticsFilter,
 	terms []db.TrendTermInput, granularity string,
 ) (db.TrendsTermsResponse, error) {
+	if granularity == "" {
+		granularity = "week"
+	}
 	acc := db.NewTrendAccumulator(f.From, f.To, granularity, terms)
 	sessionFilter := f
 	sessionFilter.From = ""
@@ -2690,7 +2693,8 @@ func (s *Store) GetTrendsTerms(
 		if !allowedSessions[sessionID] {
 			return
 		}
-		acc.Add(content, local)
+		date := local.Format("2006-01-02")
+		acc.Add(content, date, bucketAnalyticsDate(date, granularity))
 	}
 	emit := func(m db.ScopedMessage) {
 		if !m.HasLocalTime {
