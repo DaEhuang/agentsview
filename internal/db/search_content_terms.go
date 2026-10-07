@@ -233,7 +233,7 @@ func (f ContentSearchFilter) TermsSnippet(body string, terms []string) string {
 		if !ok {
 			continue
 		}
-		lo, hi := SnippetBounds(body, start, end, contentSnippetRadius)
+		lo, hi := SnippetBounds(body, start, end, ContentSnippetRadius)
 		windows = append(windows, window{lo, hi})
 	}
 	if len(windows) == 0 {

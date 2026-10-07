@@ -20,7 +20,7 @@ import (
 const (
 	DefaultContentSearchLimit = 50
 	MaxContentSearchLimit     = 500
-	contentSnippetRadius      = 60 // chars of context on each side of a match
+	ContentSnippetRadius      = 60 // chars of context on each side of a match
 )
 
 // ContentSearchFilter parameterises SearchContent. Session-scoping fields
@@ -670,7 +670,7 @@ func SnippetBounds(text string, start, end, radius int) (int, int) {
 // reveal, masks any secret overlapping the window via secrets.RedactWindow
 // (which also catches secrets straddling the window edges).
 func (f ContentSearchFilter) BuildSnippet(body string, start, end int) string {
-	lo, hi := SnippetBounds(body, start, end, contentSnippetRadius)
+	lo, hi := SnippetBounds(body, start, end, ContentSnippetRadius)
 	return f.redactedWindow(body, lo, hi)
 }
 

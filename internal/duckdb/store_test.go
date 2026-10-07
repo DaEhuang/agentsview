@@ -1159,7 +1159,7 @@ func TestLoadPricingUsesFallbackWhenEffectiveTableEmpty(t *testing.T) {
 	assert.Equal(t, fallback.InputPerMTok, got["gpt-5.5"].InputPerMTok)
 	assert.Equal(t, fallback.OutputPerMTok, got["gpt-5.5"].OutputPerMTok)
 	assert.Equal(t, export.PricingRowSourceEmbedded, got["gpt-5.5"].Source)
-	assert.Equal(t, db.CatalogPricingBands(fallback.Bands), got["gpt-5.5"].Bands)
+	assert.Equal(t, db.FallbackRateMap()["gpt-5.5"].Bands, got["gpt-5.5"].Bands)
 }
 
 func TestLoadPricingClassifiesBandOnlyFallbackMismatchAsFetched(t *testing.T) {

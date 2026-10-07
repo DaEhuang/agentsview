@@ -24,6 +24,7 @@ func TranscriptRevisionValue(value *string) string {
 	return *value
 }
 
+// MirroredSessionMachine replaces empty and "local" archive-only sentinels with the push machine.
 func MirroredSessionMachine(sess Session, fallbackMachine string) string {
 	if sess.Machine != "" && sess.Machine != "local" {
 		return sess.Machine

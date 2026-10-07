@@ -98,6 +98,7 @@ func ProjectMatchesPushScope(project string, projects, excludeProjects []string)
 	return !slices.Contains(excludeProjects, project)
 }
 
+// CanonicalPushScope returns "" for an unfiltered scope, keeping the common case free of JSON.
 func CanonicalPushScope(projects, excludeProjects []string) string {
 	if len(projects) == 0 && len(excludeProjects) == 0 {
 		return ""

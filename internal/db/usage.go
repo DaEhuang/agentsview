@@ -1544,7 +1544,7 @@ func dailyUsageRowWebSearchRequests(r dailyUsageScanRow) int {
 	return usageRowWebSearchRequests(r.usageSource, r.tokenJSON)
 }
 
-func ClampedUsageRowTokens(
+func clampedUsageRowTokens(
 	inputTokens, outputTokens, cacheCreationInputTokens,
 	cacheReadInputTokens int,
 ) (inputTok, outputTok, cacheCrTok, cacheRdTok int) {
@@ -1565,7 +1565,7 @@ func UsageEventRowTokens(
 			max(cacheCreationInputTokens, 0),
 			max(cacheReadInputTokens, 0)
 	}
-	return ClampedUsageRowTokens(
+	return clampedUsageRowTokens(
 		inputTokens, outputTokens,
 		cacheCreationInputTokens, cacheReadInputTokens)
 }
@@ -2045,7 +2045,7 @@ func FallbackRateMap() map[string]export.ModelRates {
 			CacheWrite1hPerMTok: p.CacheCreation1hPerMTok,
 			CacheReadPerMTok:    p.CacheReadPerMTok,
 			Source:              export.PricingRowSourceEmbedded,
-			Bands:               CatalogPricingBands(p.Bands),
+			Bands:               catalogPricingBands(p.Bands),
 		}
 		out[p.ModelPattern] = rates
 	}
@@ -2067,11 +2067,11 @@ func ModelPricingRates(p ModelPricing) export.ModelRates {
 		CacheWrite1hPerMTok: p.CacheCreation1hPerMTok,
 		CacheReadPerMTok:    p.CacheReadPerMTok,
 		UpdatedAt:           updatedAt,
-		Bands:               StoredPricingBands(p.Bands),
+		Bands:               storedPricingBands(p.Bands),
 	}
 }
 
-func CatalogPricingBands(bands []pricingpkg.PricingBand) []export.PricingBand {
+func catalogPricingBands(bands []pricingpkg.PricingBand) []export.PricingBand {
 	out := make([]export.PricingBand, len(bands))
 	for i, band := range bands {
 		out[i] = export.PricingBand{
@@ -2086,7 +2086,7 @@ func CatalogPricingBands(bands []pricingpkg.PricingBand) []export.PricingBand {
 	return out
 }
 
-func StoredPricingBands(bands []PricingBand) []export.PricingBand {
+func storedPricingBands(bands []PricingBand) []export.PricingBand {
 	out := make([]export.PricingBand, len(bands))
 	for i, band := range bands {
 		var updatedAt *time.Time
@@ -2116,13 +2116,13 @@ func ModelPricingSource(
 		f.CacheWritePerMTok == rates.CacheWritePerMTok &&
 		f.CacheWrite1hPerMTok == rates.CacheWrite1hPerMTok &&
 		f.CacheReadPerMTok == rates.CacheReadPerMTok &&
-		ExportPricingBandsEqual(f.Bands, rates.Bands) {
+		exportPricingBandsEqual(f.Bands, rates.Bands) {
 		return export.PricingRowSourceEmbedded
 	}
 	return export.PricingRowSourceFetched
 }
 
-func ExportPricingBandsEqual(a, b []export.PricingBand) bool {
+func exportPricingBandsEqual(a, b []export.PricingBand) bool {
 	if len(a) != len(b) {
 		return false
 	}

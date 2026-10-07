@@ -197,8 +197,8 @@ func BuildProjectInventoryRows(
 		row.Machines += a.Machines
 		row.Agents += a.Agents
 		row.DistinctCwds += a.DistinctCwds
-		row.FirstActivity = MinTimePtr(row.FirstActivity, a.First)
-		row.LastActivity = MaxTimePtr(row.LastActivity, a.Last)
+		row.FirstActivity = minTimePtr(row.FirstActivity, a.First)
+		row.LastActivity = maxTimePtr(row.LastActivity, a.Last)
 	}
 
 	rowList := make([]ProjectInventoryRow, 0, len(byKey))
@@ -371,8 +371,8 @@ func AnnotateProjectInventoryRows(
 	}
 }
 
-// MinTimePtr returns the earlier of a and b, treating nil as "no bound".
-func MinTimePtr(a, b *time.Time) *time.Time {
+// minTimePtr returns the earlier of a and b, treating nil as "no bound".
+func minTimePtr(a, b *time.Time) *time.Time {
 	if a == nil {
 		return b
 	}
@@ -385,8 +385,8 @@ func MinTimePtr(a, b *time.Time) *time.Time {
 	return a
 }
 
-// MaxTimePtr returns the later of a and b, treating nil as "no bound".
-func MaxTimePtr(a, b *time.Time) *time.Time {
+// maxTimePtr returns the later of a and b, treating nil as "no bound".
+func maxTimePtr(a, b *time.Time) *time.Time {
 	if a == nil {
 		return b
 	}
