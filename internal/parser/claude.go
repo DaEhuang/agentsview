@@ -806,9 +806,8 @@ type claudeIncrementalScan struct {
 	// only when it differs from that name, so repeated title records stay on
 	// the incremental path. nil keeps the append incremental.
 	storedSessionName *string
-	// storedPRLinks maps the normalized pull request URLs already persisted
-	// for this session to their stored first-seen time.
-	storedPRLinks map[string]time.Time
+	// storedPRLinks contains the normalized pull request URLs already persisted.
+	storedPRLinks map[string]struct{}
 }
 
 func claudeParseSessionFrom(
@@ -871,9 +870,10 @@ func claudeParseSessionFrom(
 				return
 			}
 			if entryType == "pr-link" {
-				if link, ok := claudePRLink([]byte(line)); ok &&
-					prLinkChangesStored(scan.storedPRLinks, link) {
-					sawNewPRLink = true
+				if link, ok := claudePRLink([]byte(line)); ok {
+					if _, stored := scan.storedPRLinks[link.URL]; !stored {
+						sawNewPRLink = true
+					}
 				}
 				return
 			}
@@ -2949,7 +2949,6 @@ func claudePRLink(line []byte) (PRLink, bool) {
 		gjson.GetBytes(line, "prUrl").Str,
 		gjson.GetBytes(line, "prRepository").Str,
 		int(gjson.GetBytes(line, "prNumber").Int()),
-		extractTimestampBytes(line),
 	)
 }
 
