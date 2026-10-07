@@ -153,6 +153,7 @@ func TestScreenViewedCapture(t *testing.T) {
 	}
 	assert.Equal(t, []string{"sessions", "usage", "settings", "sessions"}, screens)
 }
+
 func captureCollector(t *testing.T) (string, func() []map[string]any) {
 	t.Helper()
 	var mu sync.Mutex
@@ -163,7 +164,10 @@ func captureCollector(t *testing.T) (string, func() []map[string]any) {
 				Properties map[string]any `json:"properties"`
 			} `json:"batch"`
 		}
-		require.NoError(t, json.NewDecoder(req.Body).Decode(&payload))
+		if !assert.NoError(t, json.NewDecoder(req.Body).Decode(&payload)) {
+			http.Error(w, "invalid capture batch", http.StatusBadRequest)
+			return
+		}
 		mu.Lock()
 		for _, item := range payload.Batch {
 			sent = append(sent, item.Properties)

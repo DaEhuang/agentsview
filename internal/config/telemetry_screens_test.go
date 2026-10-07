@@ -91,7 +91,7 @@ func TestClaimScreenViewFailure(t *testing.T) {
 				}
 				return errors.New("enqueue failed")
 			})
-			assert.Error(t, err)
+			require.Error(t, err)
 			assert.Equal(t, tc.writeFailure, claimed)
 			if tc.writeFailure {
 				assert.Equal(t, 1, sends)
