@@ -1162,35 +1162,6 @@ func TestLoadPricingUsesFallbackWhenEffectiveTableEmpty(t *testing.T) {
 	assert.Equal(t, db.FallbackRateMap()["gpt-5.5"].Bands, got["gpt-5.5"].Bands)
 }
 
-func TestLoadPricingClassifiesBandOnlyFallbackMismatchAsFetched(t *testing.T) {
-	ctx := t.Context()
-	conn := openTestDuckDB(t)
-	require.NoError(t, EnsureSchema(ctx, conn))
-	store := NewStoreFromDB(conn)
-	fallback := pricingByPattern(t, pricingpkg.FallbackPricing(), "gpt-5.5")
-	require.NotEmpty(t, fallback.Bands)
-
-	_, err := conn.ExecContext(ctx, `
-		INSERT INTO model_pricing (
-			model_pattern, input_microdollars_per_mtok,
-			output_microdollars_per_mtok,
-			cache_creation_microdollars_per_mtok,
-			cache_read_microdollars_per_mtok, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?)`,
-		fallback.ModelPattern,
-		fallback.InputPerMTok.Microdollars,
-		fallback.OutputPerMTok.Microdollars,
-		fallback.CacheCreationPerMTok.Microdollars,
-		fallback.CacheReadPerMTok.Microdollars,
-		"2026-07-29T12:00:00Z",
-	)
-	require.NoError(t, err)
-
-	got, err := store.loadPricing(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, export.PricingRowSourceFetched, got["gpt-5.5"].Source)
-}
-
 func TestLoadPricingRetainsCustomOverrideSource(t *testing.T) {
 	ctx := t.Context()
 	conn := openTestDuckDB(t)

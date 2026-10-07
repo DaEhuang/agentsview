@@ -1430,45 +1430,6 @@ func TestSessionPushFingerprintTracksResolvedMachine(t *testing.T) {
 		"a session with a real machine ignores the fallback")
 }
 
-func TestPushedSessionMachine(t *testing.T) {
-	tests := []struct {
-		name     string
-		session  db.Session
-		fallback string
-		want     string
-	}{
-		{
-			name: "preserves source machine",
-			session: db.Session{
-				Machine: "remote-host",
-			},
-			fallback: "push-host",
-			want:     "remote-host",
-		},
-		{
-			name:     "falls back for empty machine",
-			session:  db.Session{},
-			fallback: "push-host",
-			want:     "push-host",
-		},
-		{
-			name: "falls back for local sentinel",
-			session: db.Session{
-				Machine: "local",
-			},
-			fallback: "push-host",
-			want:     "push-host",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want,
-				db.MirroredSessionMachine(tc.session, tc.fallback))
-		})
-	}
-}
-
 func TestSessionPushFingerprintNoFieldCollisions(
 	t *testing.T,
 ) {

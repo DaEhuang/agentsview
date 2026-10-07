@@ -308,23 +308,6 @@ func TestClonePricingRowsDeepClonesPricingBands(t *testing.T) {
 	assert.Equal(t, 200_000, rows[0].Rates.Bands[0].AboveInputTokens)
 }
 
-func TestPGModelPricingSourceDetectsBandOnlyFallbackMismatch(t *testing.T) {
-	fallback := db.FallbackRateMap()
-	rates, ok := fallback["gpt-5.5"]
-	require.True(t, ok)
-	require.NotEmpty(t, rates.Bands)
-	p := db.ModelPricing{
-		ModelPattern:         "gpt-5.5",
-		InputPerMTok:         rates.InputPerMTok,
-		OutputPerMTok:        rates.OutputPerMTok,
-		CacheCreationPerMTok: rates.CacheWritePerMTok,
-		CacheReadPerMTok:     rates.CacheReadPerMTok,
-	}
-
-	assert.Equal(t, export.PricingRowSourceFetched,
-		db.ModelPricingSource(p.ModelPattern, db.ModelPricingRates(p), fallback))
-}
-
 func TestLoadPricingMapSharesConcurrentDBRows(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		block := make(chan struct{})

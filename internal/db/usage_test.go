@@ -6111,3 +6111,19 @@ func TestDailyUsageAmountsPrefersExactCustomKimiAlias(t *testing.T) {
 	require.Len(t, resolutions, 1)
 	assert.Equal(t, "kimi-for-coding", resolutions[0].PricedModel)
 }
+
+func TestUsageDedupTokenForRowFallsBackToSourceUUIDWhenClaudePairIncomplete(t *testing.T) {
+	got, ok := UsageDedupTokenForRow(
+		"message",
+		"claude-code",
+		"msg-dup",
+		"",
+		"source-dup",
+		"",
+	)
+	require.True(t, ok, "expected source_uuid fallback key")
+	assert.Equal(t, UsageDedupToken{
+		Kind:  "source",
+		Value: "claude-code:source-dup",
+	}, got)
+}
