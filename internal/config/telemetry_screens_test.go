@@ -75,7 +75,8 @@ func TestClaimScreenViewFailure(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
 		storageFailure bool
-	}{{"enqueue", false}, {"storage", true}} {
+		writeFailure   bool
+	}{{"enqueue", false, false}, {"storage", true, false}, {"write", false, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := Config{DataDir: t.TempDir(), InstallationID: "install-one"}
 			path := filepath.Join(c.DataDir, telemetryScreensFilename)
@@ -85,10 +86,17 @@ func TestClaimScreenViewFailure(t *testing.T) {
 			sends := 0
 			claimed, err := c.ClaimScreenView("sessions", time.Now(), func() error {
 				sends++
+				if tc.writeFailure {
+					return os.Mkdir(path, 0o700)
+				}
 				return errors.New("enqueue failed")
 			})
 			assert.Error(t, err)
-			assert.False(t, claimed)
+			assert.Equal(t, tc.writeFailure, claimed)
+			if tc.writeFailure {
+				assert.Equal(t, 1, sends)
+				return
+			}
 			if tc.storageFailure {
 				assert.Zero(t, sends)
 				return
@@ -100,13 +108,4 @@ func TestClaimScreenViewFailure(t *testing.T) {
 			assert.Equal(t, 2, sends)
 		})
 	}
-}
-
-func TestClaimScreenViewAcceptedBeforeWriteFailure(t *testing.T) {
-	c := Config{DataDir: t.TempDir(), InstallationID: "install-one"}
-	claimed, err := c.ClaimScreenView("sessions", time.Now(), func() error {
-		return os.Mkdir(filepath.Join(c.DataDir, telemetryScreensFilename), 0o700)
-	})
-	assert.True(t, claimed)
-	assert.Error(t, err)
 }

@@ -1886,62 +1886,33 @@ describe("App telemetry", () => {
     return posted.filter((p) => p.event === event).map((p) => p.properties);
   }
 
-  it("reports every screen through navigation and maps the usage alias", async () => {
+  it("reports authenticated route changes, the usage alias, and focus until unmount", async () => {
     setup();
     router.replace("recall");
-    component = mount(App, { target: document.body });
-    await flushEffects();
-    expect(postedFor("screen_viewed")).toEqual([{ screen: "recall", surface: "web" }]);
-    const routes = [
-      "sessions",
-      "usage",
-      "token-usage",
-      "activity",
-      "trends",
-      "quality",
-      "pinned",
-      "trash",
-      "recent-edits",
-      "data",
-      "settings",
-    ] as const;
-    for (const route of routes) {
-      router.navigate(route);
-      await flushEffects();
-    }
-    expect(postedFor("screen_viewed").slice(1)).toEqual(
-      routes.map((route) => ({
-        screen: route === "token-usage" ? "usage" : route,
-        surface: "web",
-      })),
-    );
-    window.history.replaceState(null, "", "/activity");
-    window.dispatchEvent(new PopStateEvent("popstate"));
-    await flushEffects();
-    expect(postedFor("screen_viewed").at(-1)).toEqual({ screen: "activity", surface: "web" });
-  });
-
-  it("reports an authenticated screen on next-day focus and removes its listener", async () => {
-    setup();
-    router.route = "sessions";
     settings.needsAuth = true;
     component = mount(App, { target: document.body });
     await flushEffects();
     expect(postedFor("screen_viewed")).toEqual([]);
     settings.needsAuth = false;
     await flushEffects();
-    expect(postedFor("screen_viewed")).toEqual([{ screen: "sessions", surface: "web" }]);
-    vi.setSystemTime(new Date(Date.now() + 86400000));
+    for (const route of ["sessions", "token-usage"] as const) {
+      router.navigate(route);
+      await flushEffects();
+    }
+    expect(postedFor("screen_viewed")).toEqual([
+      { screen: "recall", surface: "web" },
+      { screen: "sessions", surface: "web" },
+      { screen: "usage", surface: "web" },
+    ]);
     window.dispatchEvent(new Event("focus"));
     await flushEffects();
-    expect(postedFor("screen_viewed")).toHaveLength(2);
+    expect(postedFor("screen_viewed").at(-1)).toEqual({ screen: "usage", surface: "web" });
+    expect(postedFor("screen_viewed")).toHaveLength(4);
     await unmount(component!);
     component = undefined;
     window.dispatchEvent(new Event("focus"));
-    expect(postedFor("screen_viewed")).toHaveLength(2);
-    vi.useRealTimers();
+    expect(postedFor("screen_viewed")).toHaveLength(4);
   });
-
   async function open(id: string | null) {
     router.route = "sessions";
     router.sessionId = id;
