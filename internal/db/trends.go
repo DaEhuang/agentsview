@@ -52,18 +52,8 @@ func (db *DB) GetTrendsTerms(
 	terms []TrendTermInput,
 	granularity string,
 ) (TrendsTermsResponse, error) {
-	if granularity == "" {
-		granularity = "week"
-	}
+	acc := NewTrendAccumulator(f.From, f.To, granularity, terms)
 	loc := f.location()
-	buckets := TrendBucketRange(f.From, f.To, granularity)
-	bucketIndex := trendBucketIndex(buckets)
-	counts := make([][]int, len(terms))
-	for i := range counts {
-		counts[i] = make([]int, len(buckets))
-	}
-	messageCounts := make([]int, len(buckets))
-
 	sessionFilter := f
 	sessionFilter.From = ""
 	sessionFilter.To = ""
@@ -71,7 +61,7 @@ func (db *DB) GetTrendsTerms(
 	sessionFilter.Hour = nil
 	sessionFilter.Model = ""
 	where, args := sessionFilter.buildWhereWithDate("", false, "s.id")
-	flt := f.messageScopeFilter()
+	flt := f.MessageScopeFilter()
 	modelFiltering := len(flt.Models) > 0
 	query := `SELECT m.session_id, m.ordinal, m.role, m.is_system,
 			COALESCE(m.model, ''), m.content, COALESCE(m.timestamp, ''),
@@ -105,22 +95,7 @@ func (db *DB) GetTrendsTerms(
 		if !ok {
 			return
 		}
-		msgDate := msgTime.Format("2006-01-02")
-		if !inDateRange(msgDate, f.From, f.To) {
-			return
-		}
-		bucketDate := trendBucketDate(msgTime, loc, granularity)
-		bucket, ok := bucketIndex[bucketDate]
-		if !ok {
-			return
-		}
-		messageCounts[bucket]++
-		for i, term := range terms {
-			count := countTrendOccurrences(row.content, term)
-			if count > 0 {
-				counts[i][bucket] += count
-			}
-		}
+		acc.Add(row.content, msgTime)
 	}
 	rowStartedAt := make(map[string]string)
 	rowCreatedAt := make(map[string]string)
@@ -175,9 +150,47 @@ func (db *DB) GetTrendsTerms(
 		return TrendsTermsResponse{}, fmt.Errorf("iterating trends term rows: %w", err)
 	}
 
-	return BuildTrendsTermsResponse(
-		f.From, f.To, granularity, buckets, terms, counts, messageCounts,
-	), nil
+	return acc.Response(), nil
+}
+
+// TrendAccumulator counts terms in messages whose timestamps are already local.
+type TrendAccumulator struct {
+	from, to, granularity string
+	terms                 []TrendTermInput
+	buckets               []TrendBucket
+	index                 map[string]int
+	counts                [][]int
+	messageCounts         []int
+}
+
+func NewTrendAccumulator(from, to, granularity string, terms []TrendTermInput) *TrendAccumulator {
+	if granularity == "" {
+		granularity = "week"
+	}
+	buckets := TrendBucketRange(from, to, granularity)
+	counts := make([][]int, len(terms))
+	for i := range counts {
+		counts[i] = make([]int, len(buckets))
+	}
+	return &TrendAccumulator{from: from, to: to, granularity: granularity, terms: terms, buckets: buckets, index: trendBucketIndex(buckets), counts: counts, messageCounts: make([]int, len(buckets))}
+}
+
+func (a *TrendAccumulator) Add(content string, local time.Time) {
+	if !inDateRange(local.Format("2006-01-02"), a.from, a.to) {
+		return
+	}
+	bucket, ok := a.index[TrendBucketDate(local, local.Location(), a.granularity)]
+	if !ok {
+		return
+	}
+	a.messageCounts[bucket]++
+	for i, term := range a.terms {
+		a.counts[i][bucket] += CountTrendOccurrences(content, term)
+	}
+}
+
+func (a *TrendAccumulator) Response() TrendsTermsResponse {
+	return BuildTrendsTermsResponse(a.from, a.to, a.granularity, a.buckets, a.terms, a.counts, a.messageCounts)
 }
 
 func ParseTrendTerms(values []string) ([]TrendTermInput, error) {

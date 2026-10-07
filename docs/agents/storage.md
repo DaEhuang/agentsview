@@ -197,6 +197,12 @@ PostgreSQL command, config, push, and serve code. `internal/storage` names the
 three roles and holds the contract; `internal/backendcontract` asserts every
 backend at compile time, so a missing method fails `go build`.
 
+`internal/db` owns shared result processing: `NormalizeSessionLimit` and
+`BuildSessionPage` for pagination, `BuildHeatmapResponse` for daily levels,
+`TrendAccumulator` for term counts, and `MessageScope` with
+`AnalyticsFilter.MessageScopeFilter` for model-scoped projections. Backends
+retain their queries, cursor codecs, and timestamp scanning.
+
 | Role    | Today                  | Contract                                   |
 | ------- | ---------------------- | ------------------------------------------ |
 | Archive | SQLite `*db.DB`        | `db.Store`; the only writable ingest store |

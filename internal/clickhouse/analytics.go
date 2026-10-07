@@ -1255,27 +1255,7 @@ func (s *Store) GetAnalyticsHeatmap(
 				counts[date] += session.messageCount
 			}
 		}
-		entriesFrom := chClampHeatmapFrom(f.From, f.To)
-		values := []int{}
-		for date, v := range counts {
-			if v > 0 && date >= entriesFrom && date <= f.To {
-				values = append(values, v)
-			}
-		}
-		sort.Ints(values)
-		levels := chComputeHeatmapLevels(values)
-		entries := chBuildHeatmapEntries(entriesFrom, f.To, counts, levels)
-		if metric == "output_tokens" && len(counts) == 0 {
-			return db.HeatmapResponse{
-				Metric:      metric,
-				EntriesFrom: entriesFrom,
-			}, nil
-		}
-		return db.HeatmapResponse{
-			Metric: metric, Entries: entries,
-			Levels:      levels,
-			EntriesFrom: entriesFrom,
-		}, nil
+		return db.BuildHeatmapResponse(f.From, f.To, metric, counts, true), nil
 	}
 	where, args := chBuildAnalyticsWhere(
 		f, "COALESCE(s.started_at, s.created_at)", "s.", true, true)
@@ -1315,98 +1295,7 @@ func (s *Store) GetAnalyticsHeatmap(
 	if err := rows.Err(); err != nil {
 		return db.HeatmapResponse{}, fmt.Errorf("iterating clickhouse analytics heatmap: %w", err)
 	}
-	if metric == "output_tokens" && len(counts) == 0 {
-		return db.HeatmapResponse{
-			Metric:      metric,
-			EntriesFrom: chClampHeatmapFrom(f.From, f.To),
-		}, nil
-	}
-	entriesFrom := chClampHeatmapFrom(f.From, f.To)
-	values := []int{}
-	for date, v := range counts {
-		if v > 0 && date >= entriesFrom && date <= f.To {
-			values = append(values, v)
-		}
-	}
-	sort.Ints(values)
-	levels := chComputeHeatmapLevels(values)
-	entries := chBuildHeatmapEntries(entriesFrom, f.To, counts, levels)
-	return db.HeatmapResponse{
-		Metric: metric, Entries: entries,
-		Levels:      levels,
-		EntriesFrom: entriesFrom,
-	}, nil
-}
-
-const chMaxHeatmapDays = 366
-
-func chClampHeatmapFrom(from, to string) string {
-	start, err := time.Parse("2006-01-02", from)
-	if err != nil {
-		return from
-	}
-	end, err := time.Parse("2006-01-02", to)
-	if err != nil {
-		return from
-	}
-	earliest := end.AddDate(0, 0, -(chMaxHeatmapDays - 1))
-	if start.Before(earliest) {
-		return earliest.Format("2006-01-02")
-	}
-	return from
-}
-
-func chComputeHeatmapLevels(sorted []int) db.HeatmapLevels {
-	if len(sorted) == 0 {
-		return db.HeatmapLevels{L1: 1, L2: 2, L3: 3, L4: 4}
-	}
-	n := len(sorted)
-	return db.HeatmapLevels{
-		L1: sorted[0],
-		L2: sorted[n/4],
-		L3: sorted[n/2],
-		L4: sorted[n*3/4],
-	}
-}
-
-func chHeatmapLevel(value int, levels db.HeatmapLevels) int {
-	if value <= 0 {
-		return 0
-	}
-	if value <= levels.L2 {
-		return 1
-	}
-	if value <= levels.L3 {
-		return 2
-	}
-	if value <= levels.L4 {
-		return 3
-	}
-	return 4
-}
-
-func chBuildHeatmapEntries(
-	from, to string, values map[string]int, levels db.HeatmapLevels,
-) []db.HeatmapEntry {
-	start, err := time.Parse("2006-01-02", from)
-	if err != nil {
-		return nil
-	}
-	end, err := time.Parse("2006-01-02", to)
-	if err != nil {
-		return nil
-	}
-	entries := []db.HeatmapEntry{}
-	for d := start; !d.After(end); d = d.AddDate(0, 0, 1) {
-		date := d.Format("2006-01-02")
-		v := values[date]
-		entries = append(entries, db.HeatmapEntry{
-			Date:  date,
-			Value: v,
-			Level: chHeatmapLevel(v, levels),
-		})
-	}
-	return entries
+	return db.BuildHeatmapResponse(f.From, f.To, metric, counts, true), nil
 }
 
 func (s *Store) GetAnalyticsProjects(
@@ -2819,19 +2708,7 @@ func (s *Store) GetTrendsTerms(
 	ctx context.Context, f db.AnalyticsFilter,
 	terms []db.TrendTermInput, granularity string,
 ) (db.TrendsTermsResponse, error) {
-	if granularity == "" {
-		granularity = "week"
-	}
-	buckets := db.TrendBucketRange(f.From, f.To, granularity)
-	index := map[string]int{}
-	for i, bucket := range buckets {
-		index[bucket.Date] = i
-	}
-	counts := make([][]int, len(terms))
-	for i := range counts {
-		counts[i] = make([]int, len(buckets))
-	}
-	messageCounts := make([]int, len(buckets))
+	acc := db.NewTrendAccumulator(f.From, f.To, granularity, terms)
 	sessionFilter := f
 	sessionFilter.From = ""
 	sessionFilter.To = ""
@@ -2847,12 +2724,10 @@ func (s *Store) GetTrendsTerms(
 		allowedSessions[sess.id] = true
 	}
 	if len(allowedSessions) == 0 {
-		return db.BuildTrendsTermsResponse(
-			f.From, f.To, granularity, buckets, terms, counts, messageCounts,
-		), nil
+		return acc.Response(), nil
 	}
 	loc := analyticsLocation(f.Timezone)
-	flt := messageScopeFilter(f)
+	flt := f.MessageScopeFilter()
 	modelFiltering := len(flt.Models) > 0
 	trendLocal := func(msgTS, startedAt, createdAt any) (time.Time, bool) {
 		ts := firstNonEmpty(formatDBTime(msgTS), formatDBTime(startedAt), formatDBTime(createdAt))
@@ -2891,22 +2766,7 @@ func (s *Store) GetTrendsTerms(
 		if !allowedSessions[sessionID] {
 			return
 		}
-		date := local.Format("2006-01-02")
-		if f.From != "" && date < f.From {
-			return
-		}
-		if f.To != "" && date > f.To {
-			return
-		}
-		bucket := bucketAnalyticsDate(date, granularity)
-		pos, ok := index[bucket]
-		if !ok {
-			return
-		}
-		messageCounts[pos]++
-		for i, term := range terms {
-			counts[i][pos] += db.CountTrendOccurrences(content, term)
-		}
+		acc.Add(content, local)
 	}
 	emit := func(m db.ScopedMessage) {
 		if !m.HasLocalTime {
@@ -2944,9 +2804,7 @@ func (s *Store) GetTrendsTerms(
 	if err := rows.Err(); err != nil {
 		return db.TrendsTermsResponse{}, err
 	}
-	return db.BuildTrendsTermsResponse(
-		f.From, f.To, granularity, buckets, terms, counts, messageCounts,
-	), nil
+	return acc.Response(), nil
 }
 
 func chAnalyticsWindowBounds(f db.AnalyticsFilter) (string, string) {
