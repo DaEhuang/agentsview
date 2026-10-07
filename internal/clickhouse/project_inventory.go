@@ -295,7 +295,7 @@ func (s *Store) projectInventoryCandidateRows(
 	}
 	if err != nil {
 		return nil, fmt.Errorf(
-			"querying clickhouse project inventory candidate Sessions: %w", err)
+			"querying clickhouse project inventory candidate sessions: %w", err)
 	}
 	defer rows.Close()
 
@@ -313,7 +313,7 @@ func (s *Store) projectInventoryCandidateRows(
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf(
-			"iterating clickhouse project inventory candidate Sessions: %w", err)
+			"iterating clickhouse project inventory candidate sessions: %w", err)
 	}
 	return out, nil
 }

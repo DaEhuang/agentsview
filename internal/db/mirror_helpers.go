@@ -43,10 +43,9 @@ func ActivityReportRangeBoundsUTC(q activity.Query) (string, string) {
 		q.RangeEnd.UTC().Format(time.RFC3339)
 }
 
-func FallbackMirrorPricingRows() []ModelPricing {
+func FallbackMirrorPricingRows(updatedAt string) []ModelPricing {
 	src := pricingpkg.FallbackPricing()
 	out := make([]ModelPricing, len(src))
-	now := time.Now().UTC().Format(time.RFC3339Nano)
 	for i, p := range src {
 		bands := make([]PricingBand, len(p.Bands))
 		for j, band := range p.Bands {
@@ -57,7 +56,7 @@ func FallbackMirrorPricingRows() []ModelPricing {
 				CacheCreationPerMTok:   band.CacheCreationPerMTok,
 				CacheCreation1hPerMTok: band.CacheCreation1hPerMTok,
 				CacheReadPerMTok:       band.CacheReadPerMTok,
-				UpdatedAt:              now,
+				UpdatedAt:              updatedAt,
 			}
 		}
 		out[i] = ModelPricing{
@@ -67,7 +66,7 @@ func FallbackMirrorPricingRows() []ModelPricing {
 			CacheCreationPerMTok:   p.CacheCreationPerMTok,
 			CacheCreation1hPerMTok: p.CacheCreation1hPerMTok,
 			CacheReadPerMTok:       p.CacheReadPerMTok,
-			UpdatedAt:              now,
+			UpdatedAt:              updatedAt,
 			Bands:                  bands,
 		}
 	}

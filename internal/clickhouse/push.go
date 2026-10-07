@@ -550,16 +550,6 @@ func fatalPushError(ctx context.Context, err error) error {
 	return nil
 }
 
-// sessionPayload is everything one session contributes to the mirror.
-type sessionPayload struct {
-	session     db.Session
-	messages    []db.Message
-	usage       []db.UsageEvent
-	findings    []db.SecretFinding
-	pins        []db.PinnedMessage
-	fingerprint string
-}
-
 func reportProgress(done, total int, result *storage.PushResult, onProgress func(storage.PushProgress)) {
 	if onProgress == nil {
 		return
@@ -568,6 +558,16 @@ func reportProgress(done, total int, result *storage.PushResult, onProgress func
 		SessionsDone: done, SessionsTotal: total,
 		MessagesDone: result.MessagesPushed, Errors: result.Errors,
 	})
+}
+
+// sessionPayload is everything one session contributes to the mirror.
+type sessionPayload struct {
+	session     db.Session
+	messages    []db.Message
+	usage       []db.UsageEvent
+	findings    []db.SecretFinding
+	pins        []db.PinnedMessage
+	fingerprint string
 }
 
 func (s *Sync) loadPayload(ctx context.Context, sess db.Session) (sessionPayload, error) {

@@ -322,7 +322,7 @@ func TestPGModelPricingSourceDetectsBandOnlyFallbackMismatch(t *testing.T) {
 	}
 
 	assert.Equal(t, export.PricingRowSourceFetched,
-		db.ModelPricingSource(p, fallback))
+		db.ModelPricingSource(p.ModelPattern, db.ModelPricingRates(p), fallback))
 }
 
 func TestLoadPricingMapSharesConcurrentDBRows(t *testing.T) {

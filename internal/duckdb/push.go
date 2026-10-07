@@ -29,7 +29,7 @@ func (s *Sync) syncModelPricing(ctx context.Context) error {
 		return err
 	}
 	if len(prices) == 0 {
-		prices = db.FallbackMirrorPricingRows()
+		prices = db.FallbackMirrorPricingRows(time.Now().UTC().Format(time.RFC3339Nano))
 	}
 	if len(prices) == 0 {
 		return s.syncGenAIPricing(ctx)

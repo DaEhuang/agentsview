@@ -279,7 +279,7 @@ func (s *Store) projectInventoryCandidateRows(
 	}
 	if err != nil {
 		return nil, fmt.Errorf(
-			"querying pg project inventory candidate Sessions: %w", err)
+			"querying pg project inventory candidate sessions: %w", err)
 	}
 	defer rows.Close()
 
@@ -297,7 +297,7 @@ func (s *Store) projectInventoryCandidateRows(
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf(
-			"iterating pg project inventory candidate Sessions: %w", err)
+			"iterating pg project inventory candidate sessions: %w", err)
 	}
 	return out, nil
 }

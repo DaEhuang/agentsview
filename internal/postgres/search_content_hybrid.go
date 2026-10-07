@@ -202,8 +202,7 @@ func (s *Store) fetchHybridKeywordBatchPG(
 // the full content; redaction always runs on the full content, not this window.
 func pgKeywordApproxSnippet(content, pattern string) string {
 	start, end := db.FTSSnippetRange(pattern, content)
-	lo, hi := db.SnippetBounds(content, start, end, pgSnippetRadius)
-	return content[lo:hi]
+	return (db.ContentSearchFilter{RevealSecrets: true}).BuildSnippet(content, start, end)
 }
 
 // appendHybridKeywordHitsPG resolves one batch of keyword message hits to their

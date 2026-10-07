@@ -961,6 +961,20 @@ func LocalDate(ts string, loc *time.Location) string {
 	return t.Format("2006-01-02")
 }
 
+// PercentileFloat returns the value at the given percentile
+// from a pre-sorted float64 slice.
+func PercentileFloat(sorted []float64, pct float64) float64 {
+	n := len(sorted)
+	if n == 0 {
+		return 0
+	}
+	idx := int(float64(n) * pct)
+	if idx >= n {
+		idx = n - 1
+	}
+	return sorted[idx]
+}
+
 // InDateRange checks if a local date falls within [from, to].
 // Empty bounds are treated as unbounded so callers can pass a
 // zero AnalyticsFilter to get every session.
@@ -2420,15 +2434,15 @@ func AutonomyBucket(ratio float64) string {
 
 // bucketOrder maps label → order index for consistent output.
 var (
-	LengthOrder = map[string]int{
+	lengthOrder = map[string]int{
 		"1-5": 0, "6-15": 1, "16-30": 2,
 		"31-60": 3, "61-120": 4, "121+": 5,
 	}
-	DurationOrder = map[string]int{
+	durationOrder = map[string]int{
 		"<5m": 0, "5-15m": 1, "15-30m": 2,
 		"30-60m": 3, "1-2h": 4, "2h+": 5,
 	}
-	AutonomyOrder = map[string]int{
+	autonomyOrder = map[string]int{
 		"<0.5": 0, "0.5-1": 1, "1-2": 2,
 		"2-5": 3, "5-10": 4, "10+": 5,
 	}
@@ -2456,6 +2470,18 @@ func MapToBuckets(
 	}
 	SortBuckets(buckets, order)
 	return buckets
+}
+
+func LengthDistributionBuckets(counts map[string]int) []DistributionBucket {
+	return MapToBuckets(counts, lengthOrder)
+}
+
+func DurationDistributionBuckets(counts map[string]int) []DistributionBucket {
+	return MapToBuckets(counts, durationOrder)
+}
+
+func AutonomyDistributionBuckets(counts map[string]int) []DistributionBucket {
+	return MapToBuckets(counts, autonomyOrder)
 }
 
 // GetAnalyticsSessionShape returns distribution histograms for
@@ -2571,9 +2597,9 @@ func (db *DB) GetAnalyticsSessionShape(
 
 	return SessionShapeResponse{
 		Count:                totalCount,
-		LengthDistribution:   MapToBuckets(lengthCounts, LengthOrder),
-		DurationDistribution: MapToBuckets(durationCounts, DurationOrder),
-		AutonomyDistribution: MapToBuckets(autonomyCounts, AutonomyOrder),
+		LengthDistribution:   LengthDistributionBuckets(lengthCounts),
+		DurationDistribution: DurationDistributionBuckets(durationCounts),
+		AutonomyDistribution: AutonomyDistributionBuckets(autonomyCounts),
 	}, nil
 }
 
@@ -5742,18 +5768,4 @@ func rankTopSessions(sessions []TopSession, needsGoSort bool) []TopSession {
 		sessions[i].ActiveDurationMin = Round1(sessions[i].ActiveDurationMin)
 	}
 	return sessions
-}
-
-// PercentileFloat returns the value at the given percentile
-// from a pre-sorted float64 slice.
-func PercentileFloat(sorted []float64, pct float64) float64 {
-	n := len(sorted)
-	if n == 0 {
-		return 0
-	}
-	idx := int(float64(n) * pct)
-	if idx >= n {
-		idx = n - 1
-	}
-	return sorted[idx]
 }

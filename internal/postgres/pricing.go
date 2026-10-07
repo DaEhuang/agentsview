@@ -23,34 +23,6 @@ type pricingLoad struct {
 	err     error
 }
 
-func fallbackPricingRows() []db.ModelPricing {
-	src := pricing.FallbackPricing()
-	out := make([]db.ModelPricing, len(src))
-	for i, p := range src {
-		bands := make([]db.PricingBand, len(p.Bands))
-		for j, band := range p.Bands {
-			bands[j] = db.PricingBand{
-				AboveInputTokens:       band.AboveInputTokens,
-				InputPerMTok:           band.InputPerMTok,
-				OutputPerMTok:          band.OutputPerMTok,
-				CacheCreationPerMTok:   band.CacheCreationPerMTok,
-				CacheCreation1hPerMTok: band.CacheCreation1hPerMTok,
-				CacheReadPerMTok:       band.CacheReadPerMTok,
-			}
-		}
-		out[i] = db.ModelPricing{
-			ModelPattern:           p.ModelPattern,
-			InputPerMTok:           p.InputPerMTok,
-			OutputPerMTok:          p.OutputPerMTok,
-			CacheCreationPerMTok:   p.CacheCreationPerMTok,
-			CacheCreation1hPerMTok: p.CacheCreation1hPerMTok,
-			CacheReadPerMTok:       p.CacheReadPerMTok,
-			Bands:                  bands,
-		}
-	}
-	return out
-}
-
 func pricingRowsToMap(prices []db.ModelPricing) map[string]export.ModelRates {
 	fallback := db.FallbackRateMap()
 	out := make(map[string]export.ModelRates, len(prices))
@@ -59,14 +31,14 @@ func pricingRowsToMap(prices []db.ModelPricing) map[string]export.ModelRates {
 			continue
 		}
 		rates := db.ModelPricingRates(p)
-		rates.Source = db.ModelPricingSource(p, fallback)
+		rates.Source = db.ModelPricingSource(p.ModelPattern, rates, fallback)
 		out[p.ModelPattern] = rates
 	}
 	return out
 }
 
 func fallbackPricingMap() map[string]export.ModelRates {
-	return pricingRowsToMap(fallbackPricingRows())
+	return pricingRowsToMap(db.FallbackMirrorPricingRows(""))
 }
 
 func clonePricingRows(
@@ -261,7 +233,7 @@ func (s *Store) mergeDBPricing(
 			continue
 		}
 		rates := db.ModelPricingRates(p)
-		rates.Source = db.ModelPricingSource(p, fallback)
+		rates.Source = db.ModelPricingSource(p.ModelPattern, rates, fallback)
 		out[p.ModelPattern] = rates
 		usableRows++
 	}
@@ -762,7 +734,7 @@ func (s *Sync) syncModelPricing(ctx context.Context) error {
 		return fmt.Errorf("listing local model pricing: %w", err)
 	}
 	if len(prices) == 0 {
-		prices = fallbackPricingRows()
+		prices = db.FallbackMirrorPricingRows("")
 	}
 	localGenAI, err := s.local.GetGenAIPricing(ctx)
 	if err != nil {

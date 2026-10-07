@@ -720,7 +720,7 @@ func deleteProjectIdentityFallbackRows(
 			args...,
 		); err != nil {
 			return fmt.Errorf(
-				"removing stale pg project identity root Fallbacks: %w", err,
+				"removing stale pg project identity root fallbacks: %w", err,
 			)
 		}
 	}

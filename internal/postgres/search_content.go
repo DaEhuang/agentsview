@@ -12,10 +12,6 @@ import (
 	"go.kenn.io/agentsview/internal/db"
 )
 
-const (
-	pgSnippetRadius = 60 // chars of context on each side of a match
-)
-
 // SearchContent implements content search for the PostgreSQL read-only store.
 // The "fts" mode falls back to ILIKE over message content, with one predicate
 // per prepared FTS term to preserve SQLite's implicit-AND semantics.

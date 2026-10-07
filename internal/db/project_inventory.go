@@ -276,7 +276,7 @@ func (db *DB) projectInventoryCandidateRows(
 	rows, err := db.getReader().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf(
-			"querying project inventory candidate Sessions: %w", err)
+			"querying project inventory candidate sessions: %w", err)
 	}
 	defer rows.Close()
 
@@ -295,7 +295,7 @@ func (db *DB) projectInventoryCandidateRows(
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf(
-			"iterating project inventory candidate Sessions: %w", err)
+			"iterating project inventory candidate sessions: %w", err)
 	}
 	return out, nil
 }

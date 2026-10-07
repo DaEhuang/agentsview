@@ -1954,7 +1954,7 @@ func (db *DB) loadPricingMapFrom(
 			continue
 		}
 		rates := ModelPricingRates(p)
-		rates.Source = ModelPricingSource(p, fallback)
+		rates.Source = ModelPricingSource(p.ModelPattern, rates, fallback)
 		out[p.ModelPattern] = rates
 	}
 
@@ -2108,15 +2108,15 @@ func StoredPricingBands(bands []PricingBand) []export.PricingBand {
 }
 
 func ModelPricingSource(
-	p ModelPricing, fallback map[string]export.ModelRates,
+	model string, rates export.ModelRates, fallback map[string]export.ModelRates,
 ) export.PricingRowSource {
-	if rates, ok := fallback[p.ModelPattern]; ok &&
-		rates.InputPerMTok == p.InputPerMTok &&
-		rates.OutputPerMTok == p.OutputPerMTok &&
-		rates.CacheWritePerMTok == p.CacheCreationPerMTok &&
-		rates.CacheWrite1hPerMTok == p.CacheCreation1hPerMTok &&
-		rates.CacheReadPerMTok == p.CacheReadPerMTok &&
-		ExportPricingBandsEqual(rates.Bands, StoredPricingBands(p.Bands)) {
+	if f, ok := fallback[model]; ok &&
+		f.InputPerMTok == rates.InputPerMTok &&
+		f.OutputPerMTok == rates.OutputPerMTok &&
+		f.CacheWritePerMTok == rates.CacheWritePerMTok &&
+		f.CacheWrite1hPerMTok == rates.CacheWrite1hPerMTok &&
+		f.CacheReadPerMTok == rates.CacheReadPerMTok &&
+		ExportPricingBandsEqual(f.Bands, rates.Bands) {
 		return export.PricingRowSourceEmbedded
 	}
 	return export.PricingRowSourceFetched
@@ -3614,21 +3614,6 @@ func FallbackPricingMap() map[string]export.ModelRates {
 	return out
 }
 
-func ModelPricingSourceMirror(
-	model string, rates export.ModelRates, fallback map[string]export.ModelRates,
-) export.PricingRowSource {
-	if f, ok := fallback[model]; ok &&
-		f.InputPerMTok == rates.InputPerMTok &&
-		f.OutputPerMTok == rates.OutputPerMTok &&
-		f.CacheWritePerMTok == rates.CacheWritePerMTok &&
-		f.CacheWrite1hPerMTok == rates.CacheWrite1hPerMTok &&
-		f.CacheReadPerMTok == rates.CacheReadPerMTok &&
-		ExportPricingBandsEqual(f.Bands, rates.Bands) {
-		return export.PricingRowSourceEmbedded
-	}
-	return export.PricingRowSourceFetched
-}
-
 func MirrorPricingRows(
 	in map[string]export.ModelRates,
 ) []export.EffectivePricingRow {
@@ -3637,7 +3622,7 @@ func MirrorPricingRows(
 	for pattern, rates := range in {
 		source := rates.Source
 		if source == "" {
-			source = ModelPricingSourceMirror(pattern, rates, fallback)
+			source = ModelPricingSource(pattern, rates, fallback)
 		}
 		out = append(out, export.EffectivePricingRow{
 			ModelPattern: pattern,

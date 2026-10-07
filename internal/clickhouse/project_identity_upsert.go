@@ -470,7 +470,7 @@ func (s *Sync) deleteProjectIdentityFallbackRows(
 			args...,
 		); err != nil {
 			return fmt.Errorf(
-				"removing stale clickhouse project identity root Fallbacks: %w", err,
+				"removing stale clickhouse project identity root fallbacks: %w", err,
 			)
 		}
 	}

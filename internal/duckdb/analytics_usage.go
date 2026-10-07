@@ -492,6 +492,40 @@ func parseAnalyticsTime(ts string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+func (s *Store) getAnalyticsModelsForSessionIDs(
+	ctx context.Context, sessionIDs []string,
+) ([]string, error) {
+	if len(sessionIDs) == 0 {
+		return []string{}, nil
+	}
+	models := map[string]bool{}
+	err := duckQueryChunked(sessionIDs, func(chunk []string) error {
+		ph, args := duckInPlaceholders(chunk)
+		rows, err := s.queryContext(ctx, `
+			SELECT DISTINCT model
+			FROM messages
+			WHERE session_id IN `+ph+`
+				AND COALESCE(model, '') <> ''
+			ORDER BY model`, args...)
+		if err != nil {
+			return fmt.Errorf("querying duckdb analytics models: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var model string
+			if err := rows.Scan(&model); err != nil {
+				return fmt.Errorf("scanning duckdb analytics model: %w", err)
+			}
+			models[model] = true
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return db.SortedKeys(models), nil
+}
+
 func (s *Store) getAnalyticsModelsForSessionIDsFiltered(
 	ctx context.Context,
 	sessionIDs []string,
@@ -1555,9 +1589,9 @@ func (s *Store) GetAnalyticsSessionShape(
 	}
 	return db.SessionShapeResponse{
 		Count:                len(sessions),
-		LengthDistribution:   db.MapToBuckets(lengths, db.LengthOrder),
-		DurationDistribution: db.MapToBuckets(durations, db.DurationOrder),
-		AutonomyDistribution: db.MapToBuckets(autonomy, db.AutonomyOrder),
+		LengthDistribution:   db.LengthDistributionBuckets(lengths),
+		DurationDistribution: db.DurationDistributionBuckets(durations),
+		AutonomyDistribution: db.AutonomyDistributionBuckets(autonomy),
 	}, nil
 }
 
@@ -2766,7 +2800,7 @@ func (s *Store) loadPricing(ctx context.Context) (map[string]export.ModelRates, 
 	} else {
 		fallback := db.FallbackPricingMap()
 		for model, rates := range out {
-			rates.Source = db.ModelPricingSourceMirror(model, rates, fallback)
+			rates.Source = db.ModelPricingSource(model, rates, fallback)
 			out[model] = rates
 		}
 	}
@@ -4682,38 +4716,4 @@ func (s *Store) GetSessionUsage(
 	}
 	out.CostUSD = db.CostUSDFromCost(out.HasCost, out.Cost)
 	return out, nil
-}
-
-func (s *Store) getAnalyticsModelsForSessionIDs(
-	ctx context.Context, sessionIDs []string,
-) ([]string, error) {
-	if len(sessionIDs) == 0 {
-		return []string{}, nil
-	}
-	models := map[string]bool{}
-	err := duckQueryChunked(sessionIDs, func(chunk []string) error {
-		ph, args := duckInPlaceholders(chunk)
-		rows, err := s.queryContext(ctx, `
-			SELECT DISTINCT model
-			FROM messages
-			WHERE session_id IN `+ph+`
-				AND COALESCE(model, '') <> ''
-			ORDER BY model`, args...)
-		if err != nil {
-			return fmt.Errorf("querying duckdb analytics models: %w", err)
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var model string
-			if err := rows.Scan(&model); err != nil {
-				return fmt.Errorf("scanning duckdb analytics model: %w", err)
-			}
-			models[model] = true
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		return nil, err
-	}
-	return db.SortedKeys(models), nil
 }

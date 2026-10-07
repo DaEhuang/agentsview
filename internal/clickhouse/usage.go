@@ -57,7 +57,7 @@ func chLoadPricing(
 	} else {
 		fallback := db.FallbackPricingMap()
 		for model, rates := range out {
-			rates.Source = db.ModelPricingSourceMirror(model, rates, fallback)
+			rates.Source = db.ModelPricingSource(model, rates, fallback)
 			out[model] = rates
 		}
 	}
