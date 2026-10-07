@@ -112,6 +112,24 @@ func TestScreenViewedCapture(t *testing.T) {
 	post(body, 202)
 	t.Setenv(EnabledEnv, "1")
 	post(body, 202)
+	for _, enabled := range []string{"0", "1"} {
+		t.Setenv(EnabledEnv, enabled)
+		for _, tc := range []struct {
+			body   string
+			status int
+		}{
+			{`{"event":`, 400},
+			{`{"event":42}`, 400},
+			{`{"event":"unknown"}`, 400},
+			{`{"event":"screen_viewed","event":null,"properties":{"screen":"sessions"}}`, 400},
+			{`{"e_vent":"screen_viewed","properties":{"screen":"sessions"}}`, 202},
+			{`{"Event":"screen_viewed","Properties":{"screen":"sessions"}}`, 202},
+			{`{"event":"unknown","event":"screen_viewed","properties":{"screen":"sessions"}}`, 202},
+			{"{\"event\":\"screen_viewed\",\"properties\":{\"screen\":\"sessions\",\"unused\":\"\xff\"}}", 202},
+		} {
+			post(tc.body, tc.status)
+		}
+	}
 	post(`{"event":" screen_viewed ","properties":{"screen":"sessions","surface":"web"}}`, 202)
 	for _, contentType := range []string{"", "text/plain"} {
 		for _, event := range []string{EventAppOpened, EventScreenViewed} {

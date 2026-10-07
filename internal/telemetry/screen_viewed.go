@@ -2,7 +2,8 @@ package telemetry
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,21 +13,27 @@ import (
 
 func (r *Reporter) screenViewHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.Method != http.MethodPost || !r.Enabled() {
+		if req.Method != http.MethodPost {
 			next.ServeHTTP(w, req)
 			return
 		}
-		body, err := io.ReadAll(req.Body)
+		var event struct {
+			Event      string         `json:"event"`
+			Properties map[string]any `json:"properties"`
+		}
+		decoder := jsontext.NewDecoder(req.Body, jsontext.AllowDuplicateNames(true), jsontext.AllowInvalidUTF8(true))
+		if err := json.UnmarshalDecode(decoder, &event, json.MatchCaseInsensitiveNames(true)); err != nil {
+			http.Error(w, "invalid telemetry request", http.StatusBadRequest)
+			return
+		}
+		body, err := json.Marshal(event)
 		if err != nil {
 			http.Error(w, "invalid telemetry request", http.StatusBadRequest)
 			return
 		}
 		req.Body = io.NopCloser(bytes.NewReader(body))
-		var event struct {
-			Event      string         `json:"event"`
-			Properties map[string]any `json:"properties"`
-		}
-		if json.NewDecoder(bytes.NewReader(body)).Decode(&event) != nil || strings.TrimSpace(event.Event) != EventScreenViewed {
+		req.ContentLength = int64(len(body))
+		if !r.Enabled() || strings.TrimSpace(event.Event) != EventScreenViewed {
 			next.ServeHTTP(w, req)
 			return
 		}
@@ -68,6 +75,6 @@ func (r *Reporter) screenViewHandler(next http.Handler) http.Handler {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": status})
+		_ = json.MarshalWrite(w, map[string]string{"status": status})
 	})
 }
