@@ -37,14 +37,10 @@ func (r *Reporter) screenViewHandler(next http.Handler) http.Handler {
 			next.ServeHTTP(w, req)
 			return
 		}
-		properties, err := r.SanitizeProperties(event.Event, event.Properties)
-		if err != nil {
-			next.ServeHTTP(w, req)
-			return
-		}
+		properties, _ := r.SanitizeProperties(event.Event, event.Properties)
 		screen, valid := properties["screen"].(string)
 		claimed := false
-		if valid && r.claimScreenView != nil {
+		if valid {
 			r.screenMu.Lock()
 			now := time.Now().UTC()
 			day := now.Format(time.DateOnly)
