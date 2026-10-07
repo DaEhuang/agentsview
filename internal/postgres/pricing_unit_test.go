@@ -204,7 +204,7 @@ func (s *pricingProbeState) unblockNextQuery() {
 }
 
 func TestCustomPricingOverridesPricingMap(t *testing.T) {
-	fallback := fallbackPricingMap()
+	fallback := db.FallbackPricingMap()
 	tests := []struct {
 		name       string
 		dbPrices   []db.ModelPricing

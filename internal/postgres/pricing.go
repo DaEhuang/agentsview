@@ -37,10 +37,6 @@ func pricingRowsToMap(prices []db.ModelPricing) map[string]export.ModelRates {
 	return out
 }
 
-func fallbackPricingMap() map[string]export.ModelRates {
-	return pricingRowsToMap(db.FallbackMirrorPricingRows(""))
-}
-
 func clonePricingRows(
 	in []export.EffectivePricingRow,
 ) []export.EffectivePricingRow {
@@ -154,7 +150,7 @@ func (s *Store) runPricingLoad(ctx context.Context, load *pricingLoad) {
 	out := map[string]export.ModelRates{}
 	dbRows, err := s.mergeDBPricing(ctx, out)
 	if err == nil && dbRows == 0 {
-		out = fallbackPricingMap()
+		out = db.FallbackPricingMap()
 	}
 	var prices []export.EffectivePricingRow
 	if err == nil {

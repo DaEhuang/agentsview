@@ -348,9 +348,6 @@ func (s *Store) GetSessionUsageRows(
 	}, nil
 }
 
-// db.UsageRowMessageOrdinal renders a nullable message ordinal in
-// activity.UsageRow's COALESCE(message_ordinal, -1) convention.
-
 func pgSessionUsageRowLess(
 	a, b pgSessionUsageOrderedRow,
 	sessionOrder map[string]int,
