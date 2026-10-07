@@ -1,9 +1,11 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,12 +29,12 @@ func TestClaimScreenView(t *testing.T) {
 		{&c, "sessions", now.Add(time.Minute), true},
 		{&other, "sessions", now.Add(time.Minute).In(time.FixedZone("west", -7*3600)), false},
 	} {
-		claimed, err := tc.config.ClaimScreenView(tc.screen, tc.at)
+		claimed, err := tc.config.ClaimScreenView(tc.screen, tc.at, func() error { return nil })
 		require.NoError(t, err)
 		assert.Equal(t, tc.want, claimed)
 	}
 	c.InstallationID = "install-two"
-	claimed, err := c.ClaimScreenView("sessions", now.Add(time.Minute))
+	claimed, err := c.ClaimScreenView("sessions", now.Add(time.Minute), func() error { return nil })
 	require.NoError(t, err)
 	assert.True(t, claimed)
 	data, err := os.ReadFile(filepath.Join(c.DataDir, telemetryScreensFilename))
@@ -44,11 +46,15 @@ func TestClaimScreenViewConcurrent(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()
 	var wg sync.WaitGroup
+	var sends atomic.Int32
 	results := make(chan bool, 8)
 	for range 8 {
 		wg.Go(func() {
 			c := Config{DataDir: dir, InstallationID: "install-one"}
-			claimed, err := c.ClaimScreenView("settings", now)
+			claimed, err := c.ClaimScreenView("settings", now, func() error {
+				sends.Add(1)
+				return nil
+			})
 			assert.NoError(t, err)
 			results <- claimed
 		})
@@ -62,12 +68,36 @@ func TestClaimScreenViewConcurrent(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, claims)
+	assert.EqualValues(t, 1, sends.Load())
 }
 
-func TestClaimScreenViewStorageFailure(t *testing.T) {
-	c := Config{DataDir: t.TempDir(), InstallationID: "install-one"}
-	require.NoError(t, os.Mkdir(filepath.Join(c.DataDir, telemetryScreensFilename), 0o700))
-	claimed, err := c.ClaimScreenView("sessions", time.Now())
-	assert.Error(t, err)
-	assert.False(t, claimed)
+func TestClaimScreenViewFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		storageFailure bool
+	}{{"enqueue", false}, {"storage", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Config{DataDir: t.TempDir(), InstallationID: "install-one"}
+			path := filepath.Join(c.DataDir, telemetryScreensFilename)
+			if tc.storageFailure {
+				require.NoError(t, os.Mkdir(path, 0o700))
+			}
+			sends := 0
+			claimed, err := c.ClaimScreenView("sessions", time.Now(), func() error {
+				sends++
+				return errors.New("enqueue failed")
+			})
+			assert.Error(t, err)
+			assert.False(t, claimed)
+			if tc.storageFailure {
+				assert.Zero(t, sends)
+				return
+			}
+			assert.NoFileExists(t, path)
+			claimed, err = c.ClaimScreenView("sessions", time.Now(), func() error { sends++; return nil })
+			require.NoError(t, err)
+			assert.True(t, claimed)
+			assert.Equal(t, 2, sends)
+		})
+	}
 }

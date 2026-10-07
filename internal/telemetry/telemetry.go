@@ -32,7 +32,7 @@ var ErrUnsupportedEvent = kittelemetry.ErrUnsupportedTelemetryEvent
 
 type Reporter struct {
 	client          *kittelemetry.PostHogReporter
-	claimScreenView func(string, time.Time) (bool, error)
+	claimScreenView func(string, time.Time, func() error) (bool, error)
 }
 
 type Options struct {
@@ -44,7 +44,7 @@ type Options struct {
 	Commit          string
 	AgentTypes      []string
 	InsightKinds    []string
-	ClaimScreenView func(string, time.Time) (bool, error)
+	ClaimScreenView func(string, time.Time, func() error) (bool, error)
 }
 
 func EnabledFromEnv() bool {

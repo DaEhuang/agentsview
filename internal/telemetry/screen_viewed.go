@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"mime"
 	"net/http"
 	"strings"
 	"time"
@@ -15,7 +16,7 @@ func (r *Reporter) screenViewHandler(next http.Handler) http.Handler {
 			next.ServeHTTP(w, req)
 			return
 		}
-		body, err := io.ReadAll(http.MaxBytesReader(w, req.Body, 4096))
+		body, err := io.ReadAll(req.Body)
 		if err != nil {
 			http.Error(w, "invalid telemetry request", http.StatusBadRequest)
 			return
@@ -25,8 +26,18 @@ func (r *Reporter) screenViewHandler(next http.Handler) http.Handler {
 			Event      string         `json:"event"`
 			Properties map[string]any `json:"properties"`
 		}
-		if json.NewDecoder(bytes.NewReader(body)).Decode(&event) != nil || strings.TrimSpace(event.Event) != EventScreenViewed {
+		decoder := json.NewDecoder(bytes.NewReader(body))
+		if decoder.Decode(&event) != nil || strings.TrimSpace(event.Event) != EventScreenViewed {
 			next.ServeHTTP(w, req)
+			return
+		}
+		contentType, _, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+		if err != nil || contentType != "application/json" {
+			http.Error(w, "expected application/json", http.StatusUnsupportedMediaType)
+			return
+		}
+		if decoder.Decode(new(any)) != io.EOF {
+			http.Error(w, "invalid telemetry request", http.StatusBadRequest)
 			return
 		}
 		properties, err := r.SanitizeProperties(event.Event, event.Properties)
@@ -37,18 +48,20 @@ func (r *Reporter) screenViewHandler(next http.Handler) http.Handler {
 		screen, valid := properties["screen"].(string)
 		claimed := false
 		if valid && r.claimScreenView != nil {
-			claimed, err = r.claimScreenView(screen, time.Now().UTC())
+			claimed, err = r.claimScreenView(screen, time.Now().UTC(), func() error {
+				return r.client.Capture(EventScreenViewed, properties)
+			})
 			if err != nil {
 				http.Error(w, "recording screen view failed", http.StatusInternalServerError)
 				return
 			}
 		}
-		if !claimed {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusAccepted)
-			_ = json.NewEncoder(w).Encode(map[string]string{"status": "dropped"})
-			return
+		status := "dropped"
+		if claimed {
+			status = "queued"
 		}
-		next.ServeHTTP(w, req)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": status})
 	})
 }

@@ -11,10 +11,14 @@ export type TelemetryEvent =
 
 /** Posts a UI event to the daemon, which applies its allowlist; failures are ignored. */
 export function reportTelemetry(event: TelemetryEvent, properties?: Record<string, string>): void {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
   orvalRequest("/api/v1/telemetry/events", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ event, properties }),
-    signal: AbortSignal.timeout(5000),
-  }).catch(() => {});
+    signal: controller.signal,
+  })
+    .catch(() => {})
+    .finally(() => clearTimeout(timer));
 }

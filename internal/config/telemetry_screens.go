@@ -11,8 +11,8 @@ import (
 
 const telemetryScreensFilename = "telemetry-screen-views"
 
-// ClaimScreenView persists a daily claim before the daemon queues the event.
-func (c *Config) ClaimScreenView(screen string, now time.Time) (bool, error) {
+// ClaimScreenView serializes enqueueing and persists only accepted events.
+func (c *Config) ClaimScreenView(screen string, now time.Time, send func() error) (bool, error) {
 	claimed := false
 	err := c.withConfigLock(func() error {
 		data, err := os.ReadFile(filepath.Join(c.DataDir, telemetryScreensFilename))
@@ -26,6 +26,9 @@ func (c *Config) ClaimScreenView(screen string, now time.Time) (bool, error) {
 		}
 		if slices.Contains(fields[2:], screen) {
 			return nil
+		}
+		if err := send(); err != nil {
+			return err
 		}
 		if err := c.writeInstallationFile(telemetryScreensFilename, strings.Join(append(fields, screen), " ")); err != nil {
 			return err
