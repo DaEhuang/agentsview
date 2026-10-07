@@ -13,10 +13,6 @@ import (
 
 func (r *Reporter) screenViewHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.Method != http.MethodPost {
-			next.ServeHTTP(w, req)
-			return
-		}
 		var event struct {
 			Event      string         `json:"event"`
 			Properties map[string]any `json:"properties"`

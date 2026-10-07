@@ -43,15 +43,14 @@ describe("setupAppOpenedReporting", () => {
     cleanup = setupAppOpenedReporting();
   }
 
-  it("posts app_opened once on load", () => {
+  it("posts app_opened once on load", async () => {
+    const report = vi
+      .spyOn(await import("./telemetry.js"), "reportTelemetry")
+      .mockImplementation(() => {});
     start("2026-10-02T09:00:00Z");
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0]!;
-    expect(url).toBe("/api/v1/telemetry/events");
-    expect(init.method).toBe("POST");
-    expect(init.body).toBe('{"event":"app_opened"}');
-    expect(new Headers(init.headers).get("Content-Type")).toBe("application/json");
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(report).toHaveBeenCalledWith("app_opened");
   });
 
   it("sends nothing more on focus the same UTC day", () => {

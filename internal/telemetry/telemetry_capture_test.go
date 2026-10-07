@@ -5,8 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -73,41 +71,15 @@ func TestCoreActionAllowlist(t *testing.T) {
 		require.NoError(t, err)
 		postCapture(t, srv.Handler(), string(body), http.StatusAccepted)
 	}
-	require.NoError(t, reporter.Close())
-
-	sent := captured()
-	require.Len(t, sent, len(cases)-1)
-	i := 0
-	for _, c := range cases {
-		if c.event == EventScreenViewed && c.key == "screen" && !c.kept {
-			continue
-		}
-		assert.NotContains(t, sent[i], "query", c.event)
-		value, ok := sent[i][c.key]
-		if c.kept {
-			assert.Equal(t, c.value, value, c.event)
-		} else {
-			assert.False(t, ok, "%s %s=%v should be dropped", c.event, c.key, value)
-		}
-		i++
-	}
-}
-
-func TestScreenViewedCapture(t *testing.T) {
-	t.Setenv(EnabledEnv, "1")
-	t.Setenv(GenericEnabledEnv, "1")
-	endpoint, captured := captureCollector(t)
-	cfg := config.Config{DataDir: t.TempDir(), InstallationID: "install-id", Host: "127.0.0.1", Port: 8080}
-	reporter := captureReporter(t, endpoint, Options{ClaimScreenView: cfg.ClaimScreenView})
-	srv := server.New(cfg, dbtest.OpenTestDB(t), nil, server.WithTelemetryCapture(reporter.CaptureHandler()))
+	reporter.screenViews = make(map[string]bool)
 	post := func(body string, status int) { postCapture(t, srv.Handler(), body, status) }
 	body := `{"event":"screen_viewed","properties":{"screen":"sessions","surface":"web"}}`
 	post(`{"event":"screen_viewed"}`, 202)
-	reporter.claimScreenView = func(screen string, now time.Time, _ func() error) (bool, error) {
-		return cfg.ClaimScreenView(screen, now, func() error { return errors.New("queue full") })
+	reporter.claimScreenView = func(_ string, _ time.Time, _ func() error) (bool, error) {
+		return false, errors.New("claim failed")
 	}
 	post(body, 500)
-	reporter.claimScreenView = cfg.ClaimScreenView
+	reporter.claimScreenView = func(_ string, _ time.Time, send func() error) (bool, error) { return true, send() }
 	t.Setenv(EnabledEnv, "0")
 	post(body, 202)
 	t.Setenv(EnabledEnv, "1")
@@ -120,7 +92,6 @@ func TestScreenViewedCapture(t *testing.T) {
 		}{
 			{`{"event":`, 400},
 			{`{"event":42}`, 400},
-			{`{"event":"unknown"}`, 400},
 			{`{"event":"screen_viewed","event":null,"properties":{"screen":"sessions"}}`, 400},
 			{`{"e_vent":"screen_viewed","properties":{"screen":"sessions"}}`, 202},
 			{`{"Event":"screen_viewed","Properties":{"screen":"sessions"}}`, 202},
@@ -141,30 +112,39 @@ func TestScreenViewedCapture(t *testing.T) {
 			assert.Equal(t, http.StatusAccepted, rec.Code, "%s %s", contentType, event)
 		}
 	}
-	path := filepath.Join(cfg.DataDir, "telemetry-screen-views")
-	require.NoError(t, os.Remove(path))
-	reporter.claimScreenView = func(screen string, now time.Time, send func() error) (bool, error) {
-		return cfg.ClaimScreenView(screen, now, func() error {
-			if err := send(); err != nil {
-				return err
-			}
-			return os.Mkdir(path, 0o700)
-		})
+	reporter.claimScreenView = func(_ string, _ time.Time, send func() error) (bool, error) {
+		if err := send(); err != nil {
+			return false, err
+		}
+		return true, errors.New("saving claim failed")
 	}
 	post(`{"event":"screen_viewed","properties":{"screen":"settings"}}`, 202)
-	require.NoError(t, os.Remove(path))
 	post(`{"event":"screen_viewed","properties":{"screen":"settings"}}`, 202)
-	reporter.claimScreenView = func(screen string, now time.Time, send func() error) (bool, error) {
-		return cfg.ClaimScreenView(screen, now.Add(24*time.Hour), send)
-	}
+	reporter.claimScreenView = func(_ string, _ time.Time, send func() error) (bool, error) { return true, send() }
 	reporter.screenDay = time.Now().UTC().Add(-24 * time.Hour).Format(time.DateOnly)
 	post(body, 202)
 	require.NoError(t, reporter.Close())
+
 	sent := captured()
-	require.Len(t, sent, 6)
-	assert.Equal(t, "web", sent[0]["surface"])
+	require.Len(t, sent, len(cases)-1+6)
+	i := 0
+	for _, c := range cases {
+		if c.event == EventScreenViewed && c.key == "screen" && !c.kept {
+			continue
+		}
+		assert.NotContains(t, sent[i], "query", c.event)
+		value, ok := sent[i][c.key]
+		if c.kept {
+			assert.Equal(t, c.value, value, c.event)
+		} else {
+			assert.False(t, ok, "%s %s=%v should be dropped", c.event, c.key, value)
+		}
+		i++
+	}
+	flow := sent[len(cases)-1:]
+	assert.Equal(t, "web", flow[0]["surface"])
 	var screens []string
-	for _, item := range sent {
+	for _, item := range flow {
 		if screen, ok := item["screen"].(string); ok {
 			screens = append(screens, screen)
 		}

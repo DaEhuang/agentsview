@@ -21,6 +21,10 @@ it("bounds screen requests and preserves earlier event transport", async () => {
     expect(() => reportTelemetry(event)).not.toThrow();
     const options = fetch.mock.calls.at(-1)![1];
     if (event === "app_opened") {
+      expect(fetch.mock.calls.at(-1)![0]).toBe("/api/v1/telemetry/events");
+      expect(options.method).toBe("POST");
+      expect(options.body).toBe('{"event":"app_opened"}');
+      expect(new Headers(options.headers).get("Content-Type")).toBe("application/json");
       expect(options).not.toHaveProperty("signal");
       expect(vi.getTimerCount()).toBe(0);
     } else {

@@ -15,31 +15,69 @@ import (
 
 func TestClaimScreenView(t *testing.T) {
 	c := Config{DataDir: t.TempDir(), InstallationID: "install-one"}
-	other := c
 	now := time.Date(2026, 7, 1, 23, 59, 0, 0, time.UTC)
 	for _, tc := range []struct {
-		config *Config
-		screen string
-		at     time.Time
-		want   bool
+		screen            string
+		at                time.Time
+		want              bool
+		failure, identity string
 	}{
-		{&c, "sessions", now, true},
-		{&other, "sessions", now, false},
-		{&other, "usage", now, true},
-		{&c, "sessions", now.Add(time.Minute), true},
-		{&other, "sessions", now.Add(time.Minute).In(time.FixedZone("west", -7*3600)), false},
+		{"sessions", now, true, "", ""},
+		{"sessions", now, false, "", ""},
+		{"usage", now, true, "", ""},
+		{"sessions", now.Add(time.Minute), true, "", ""},
+		{"sessions", now.Add(time.Minute).In(time.FixedZone("west", -7*3600)), false, "", ""},
+		{"sessions", now.Add(time.Minute), true, "", "install-two"},
+		{"sessions", now, false, "enqueue", ""},
+		{"sessions", now, false, "storage", ""},
+		{"sessions", now, true, "write", ""},
 	} {
-		claimed, err := tc.config.ClaimScreenView(tc.screen, tc.at, func() error { return nil })
-		require.NoError(t, err)
+		if tc.identity != "" {
+			c.InstallationID = tc.identity
+		}
+		if tc.failure != "" {
+			c.DataDir = t.TempDir()
+		}
+		path := filepath.Join(c.DataDir, telemetryScreensFilename)
+		if tc.failure == "storage" {
+			require.NoError(t, os.Mkdir(path, 0o700))
+		}
+		sends := 0
+		claimed, err := c.ClaimScreenView(tc.screen, tc.at, func() error {
+			sends++
+			switch tc.failure {
+			case "enqueue":
+				return errors.New("enqueue failed")
+			case "write":
+				return os.Mkdir(path, 0o700)
+			default:
+				return nil
+			}
+		})
 		assert.Equal(t, tc.want, claimed)
+		if tc.failure == "" {
+			require.NoError(t, err)
+			if tc.identity != "" {
+				data, err := os.ReadFile(path)
+				require.NoError(t, err)
+				assert.Equal(t, "install-two 2026-07-02 sessions\n", string(data))
+			}
+			continue
+		}
+		require.Error(t, err)
+		switch tc.failure {
+		case "storage":
+			assert.Zero(t, sends)
+		case "write":
+			assert.Equal(t, 1, sends)
+		case "enqueue":
+			assert.NoFileExists(t, path)
+			claimed, err = c.ClaimScreenView(tc.screen, tc.at, func() error { sends++; return nil })
+			require.NoError(t, err)
+			assert.True(t, claimed)
+			assert.Equal(t, 2, sends)
+		}
 	}
-	c.InstallationID = "install-two"
-	claimed, err := c.ClaimScreenView("sessions", now.Add(time.Minute), func() error { return nil })
-	require.NoError(t, err)
-	assert.True(t, claimed)
-	data, err := os.ReadFile(filepath.Join(c.DataDir, telemetryScreensFilename))
-	require.NoError(t, err)
-	assert.Equal(t, "install-two 2026-07-02 sessions\n", string(data))
 }
 
 func TestClaimScreenViewConcurrent(t *testing.T) {
@@ -69,43 +107,4 @@ func TestClaimScreenViewConcurrent(t *testing.T) {
 	}
 	assert.Equal(t, 1, claims)
 	assert.EqualValues(t, 1, sends.Load())
-}
-
-func TestClaimScreenViewFailure(t *testing.T) {
-	for _, tc := range []struct {
-		name           string
-		storageFailure bool
-		writeFailure   bool
-	}{{"enqueue", false, false}, {"storage", true, false}, {"write", false, true}} {
-		t.Run(tc.name, func(t *testing.T) {
-			c := Config{DataDir: t.TempDir(), InstallationID: "install-one"}
-			path := filepath.Join(c.DataDir, telemetryScreensFilename)
-			if tc.storageFailure {
-				require.NoError(t, os.Mkdir(path, 0o700))
-			}
-			sends := 0
-			claimed, err := c.ClaimScreenView("sessions", time.Now(), func() error {
-				sends++
-				if tc.writeFailure {
-					return os.Mkdir(path, 0o700)
-				}
-				return errors.New("enqueue failed")
-			})
-			require.Error(t, err)
-			assert.Equal(t, tc.writeFailure, claimed)
-			if tc.writeFailure {
-				assert.Equal(t, 1, sends)
-				return
-			}
-			if tc.storageFailure {
-				assert.Zero(t, sends)
-				return
-			}
-			assert.NoFileExists(t, path)
-			claimed, err = c.ClaimScreenView("sessions", time.Now(), func() error { sends++; return nil })
-			require.NoError(t, err)
-			assert.True(t, claimed)
-			assert.Equal(t, 2, sends)
-		})
-	}
 }
