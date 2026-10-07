@@ -309,7 +309,7 @@ func TestClonePricingRowsDeepClonesPricingBands(t *testing.T) {
 }
 
 func TestPGModelPricingSourceDetectsBandOnlyFallbackMismatch(t *testing.T) {
-	fallback := pgFallbackRateMap()
+	fallback := db.FallbackRateMap()
 	rates, ok := fallback["gpt-5.5"]
 	require.True(t, ok)
 	require.NotEmpty(t, rates.Bands)
@@ -322,7 +322,7 @@ func TestPGModelPricingSourceDetectsBandOnlyFallbackMismatch(t *testing.T) {
 	}
 
 	assert.Equal(t, export.PricingRowSourceFetched,
-		pgModelPricingSource(p, fallback))
+		db.ModelPricingSource(p, fallback))
 }
 
 func TestLoadPricingMapSharesConcurrentDBRows(t *testing.T) {

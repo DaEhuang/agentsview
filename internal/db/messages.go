@@ -1284,7 +1284,7 @@ func insertToolCallsChunkTx(
 			nilIfEmpty(tc.ToolUseID),
 			nilIfEmpty(tc.InputJSON),
 			nilIfEmpty(tc.SkillName),
-			nilIfZero(tc.ResultContentLength),
+			NilIfZero(tc.ResultContentLength),
 			nilIfEmpty(tc.ResultContent),
 			nilIfEmpty(tc.SubagentSessionID),
 			nilIfEmpty(tc.FilePath),
@@ -1392,7 +1392,7 @@ func nilIfEmpty(s string) any {
 	return s
 }
 
-func nilIfZero(n int) any {
+func NilIfZero(n int) any {
 	if n == 0 {
 		return nil
 	}

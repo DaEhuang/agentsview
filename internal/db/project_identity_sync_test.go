@@ -1,4 +1,4 @@
-package postgres
+package db
 
 import (
 	"testing"
@@ -95,29 +95,29 @@ func TestPlanProjectIdentityObservationSync(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			plan := planProjectIdentityObservationSync(tt.observations)
+			plan := PlanProjectIdentityObservationSync(tt.observations)
 
 			var gotReal []string
-			for _, obs := range plan.realRemote {
+			for _, obs := range plan.RealRemote {
 				gotReal = append(gotReal, obs.GitRemoteName)
 			}
 			assert.Equal(t, tt.wantReal, gotReal, "real remote observations")
 
 			var gotAmbiguous []string
-			for _, obs := range plan.ambiguous {
+			for _, obs := range plan.Ambiguous {
 				gotAmbiguous = append(gotAmbiguous, obs.RootPath)
 			}
 			assert.Equal(t, tt.wantAmbiguous, gotAmbiguous, "ambiguous observations")
 
 			var gotFallbacks []string
-			for _, obs := range plan.fallbacks {
+			for _, obs := range plan.Fallbacks {
 				gotFallbacks = append(gotFallbacks, obs.RootPath)
 			}
 			assert.Equal(t, tt.wantFallbacks, gotFallbacks, "fallbacks")
 
 			var gotRoots []string
-			for _, root := range plan.realRoots {
-				gotRoots = append(gotRoots, root.rootPath)
+			for _, root := range plan.RealRoots {
+				gotRoots = append(gotRoots, root.RootPath)
 			}
 			assert.Equal(t, tt.wantRoots, gotRoots, "real roots")
 		})

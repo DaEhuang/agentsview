@@ -24,11 +24,11 @@ func TestPaddedUTCBoundClampsBeforeYearOne(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t,
 		"0001-01-01T00:00:00Z",
-		paddedUTCBound("0001-01-01T00:00:00Z", -14),
+		db.PaddedUTCBound("0001-01-01T00:00:00Z", -14),
 	)
 	assert.Equal(t,
 		"2026-03-10T10:00:00Z",
-		paddedUTCBound("2026-03-11T00:00:00Z", -14),
+		db.PaddedUTCBound("2026-03-11T00:00:00Z", -14),
 	)
 }
 
@@ -282,7 +282,7 @@ func TestPGGetDailyUsageReturnsDedupedSessionCounts(t *testing.T) {
 }
 
 func TestPGUsageDedupTokenForRowFallsBackToSourceUUIDWhenClaudePairIncomplete(t *testing.T) {
-	got, ok := pgUsageDedupTokenForRow(
+	got, ok := db.UsageDedupTokenForRow(
 		"message",
 		"claude-code",
 		"msg-dup",
@@ -291,9 +291,9 @@ func TestPGUsageDedupTokenForRowFallsBackToSourceUUIDWhenClaudePairIncomplete(t 
 		"",
 	)
 	require.True(t, ok, "expected source_uuid fallback key")
-	assert.Equal(t, pgUsageDedupToken{
-		kind:  "source",
-		value: "claude-code:source-dup",
+	assert.Equal(t, db.UsageDedupToken{
+		Kind:  "source",
+		Value: "claude-code:source-dup",
 	}, got)
 }
 

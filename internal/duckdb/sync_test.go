@@ -76,7 +76,7 @@ func TestMirroredSessionMachine(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, mirroredSessionMachine(
+			assert.Equal(t, tt.want, db.MirroredSessionMachine(
 				db.Session{Machine: tt.sessionMachine}, "push-machine",
 			))
 		})
@@ -2173,7 +2173,7 @@ func TestReadStatusFromConfigReportsScopeAndDegradesOnMissingMetadata(t *testing
 		MachineName: "test-machine",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, canonicalPushScope([]string{"alpha"}, nil), status.Scope)
+	assert.Equal(t, db.CanonicalPushScope([]string{"alpha"}, nil), status.Scope)
 
 	conn, err := Open(ctx, target)
 	require.NoError(t, err)

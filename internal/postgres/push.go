@@ -441,7 +441,7 @@ func (s *Sync) PushWithOptions(
 			}
 			sess := sessionByID[id]
 			sessionFingerprints[id] = sessionPushFingerprint(
-				sess, pushedSessionMachine(sess, s.machine),
+				sess, db.MirroredSessionMachine(sess, s.machine),
 				s.archiveID, usageFP, markerID,
 				dependencyFP+"\x00source-database-generation:"+
 					s.databaseGeneration+"\x00archive-content:"+string(s.local.ArchiveContent()),
@@ -810,7 +810,7 @@ func (s *Sync) syncProjectIdentityObservations(
 				loadErr,
 			)
 		}
-		snapshots = mergeProjectIdentitySnapshots(snapshots, refreshSnapshots)
+		snapshots = db.MergeProjectIdentitySnapshots(snapshots, refreshSnapshots)
 	}
 
 	archiveID, err := s.local.GetArchiveID(ctx)
@@ -913,26 +913,6 @@ func (s *Sync) syncProjectIdentityObservations(
 		return fmt.Errorf("recording project identity publication revision: %w", err)
 	}
 	return nil
-}
-
-func mergeProjectIdentitySnapshots(
-	base, refresh []export.ProjectIdentityObservation,
-) []export.ProjectIdentityObservation {
-	merged := make(map[string]export.ProjectIdentityObservation, len(base)+len(refresh))
-	for _, snapshot := range base {
-		merged[snapshot.SessionID] = snapshot
-	}
-	for _, snapshot := range refresh {
-		merged[snapshot.SessionID] = snapshot
-	}
-	out := make([]export.ProjectIdentityObservation, 0, len(merged))
-	for _, snapshot := range merged {
-		out = append(out, snapshot)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].SessionID < out[j].SessionID
-	})
-	return out
 }
 
 func filterProjectIdentityObservations(
@@ -2023,7 +2003,7 @@ func deletePGSessionIfExcluded(
 
 // sessionPushFingerprint builds the change-detection fingerprint for a
 // session. pushedMachine is the value pushSession actually writes to PG
-// (pushedSessionMachine), not the raw sess.Machine: a "local"/empty sentinel
+// (db.MirroredSessionMachine), not the raw sess.Machine: a "local"/empty sentinel
 // row is written under the fallback machine, so the fingerprint must track the
 // fallback to force a re-push when s.machine changes.
 func sessionPushFingerprint(
@@ -2108,16 +2088,6 @@ func sessionPushFingerprint(
 	return b.String()
 }
 
-// pushedSessionMachine resolves the machine field for a PG row. Old rows
-// pushed before this fix with machine="local" will be repaired gradually as
-// each session is modified (message count change, etc.) and re-fingerprinted.
-func pushedSessionMachine(sess db.Session, fallbackMachine string) string {
-	if sess.Machine != "" && sess.Machine != "local" {
-		return sess.Machine
-	}
-	return fallbackMachine
-}
-
 func sameSessionOwner(
 	existingOwnerMarker, existingMachine, markerID, pushedMachine string,
 	legacyMarkerMachines []string,
@@ -2140,13 +2110,6 @@ func sameSessionOwner(
 func stringValue(value *string) string {
 	if value == nil {
 		return ""
-	}
-	return *value
-}
-
-func transcriptRevisionValue(value *string) string {
-	if value == nil || *value == "" {
-		return "0"
 	}
 	return *value
 }
@@ -2235,7 +2198,7 @@ func writePGSession(ctx context.Context, tx *sql.Tx, sess db.Session, markerID s
 		return fmt.Errorf("parsing session %s deleted_at: %w", sess.ID, err)
 	}
 	isAutomated := sess.IsAutomated
-	pushedMachine := pushedSessionMachine(sess, options.Machine)
+	pushedMachine := db.MirroredSessionMachine(sess, options.Machine)
 	var existingMachine sql.NullString
 	var existingOwnerMarker sql.NullString
 	checkErr := tx.QueryRowContext(ctx,
@@ -2535,7 +2498,7 @@ func writePGSession(ctx context.Context, tx *sql.Tx, sess db.Session, markerID s
 		sess.MissingVerificationCount, sess.DuplicatePromptCount,
 		sess.NoCodeContextCount, sess.RunawayToolLoopCount,
 		sanitizePG(sess.TranscriptFidelity),
-		transcriptRevisionValue(sess.TranscriptRevision),
+		db.TranscriptRevisionValue(sess.TranscriptRevision),
 		sanitizePG(sess.AgentLabel),
 		sanitizePG(sess.Entrypoint),
 		sanitizePG(sess.SessionKind),
@@ -3990,7 +3953,7 @@ func bulkInsertToolCalls(
 				sanitizePG(r.tc.ToolUseID),
 				nilIfEmpty(r.tc.InputJSON),
 				nilIfEmpty(r.tc.SkillName),
-				nilIfZero(r.tc.ResultContentLength),
+				db.NilIfZero(r.tc.ResultContentLength),
 				nilIfEmpty(db.DedupToolCallResultSummary(
 					r.tc.ResultContent, r.tc.ResultEvents,
 				)),
@@ -4204,13 +4167,6 @@ func nilIfEmpty(s string) any {
 		return nil
 	}
 	return s
-}
-
-func nilIfZero(n int) any {
-	if n == 0 {
-		return nil
-	}
-	return n
 }
 
 func (s *Sync) syncCursorUsageEvents(ctx context.Context) error {

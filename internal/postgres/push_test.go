@@ -1409,9 +1409,9 @@ func TestSessionPushFingerprintTracksResolvedMachine(t *testing.T) {
 		CreatedAt: "2026-03-11T12:00:00Z",
 	}
 	fpA := sessionPushFingerprint(
-		sentinel, pushedSessionMachine(sentinel, "host-a"), "", "", "", "")
+		sentinel, db.MirroredSessionMachine(sentinel, "host-a"), "", "", "", "")
 	fpB := sessionPushFingerprint(
-		sentinel, pushedSessionMachine(sentinel, "host-b"), "", "", "", "")
+		sentinel, db.MirroredSessionMachine(sentinel, "host-b"), "", "", "", "")
 	assert.NotEqual(t, fpA, fpB,
 		"sentinel session fingerprint must change with the fallback machine")
 
@@ -1423,9 +1423,9 @@ func TestSessionPushFingerprintTracksResolvedMachine(t *testing.T) {
 		CreatedAt: "2026-03-11T12:00:00Z",
 	}
 	fp1 := sessionPushFingerprint(
-		session, pushedSessionMachine(session, "host-a"), "", "", "", "")
+		session, db.MirroredSessionMachine(session, "host-a"), "", "", "", "")
 	fp2 := sessionPushFingerprint(
-		session, pushedSessionMachine(session, "host-b"), "", "", "", "")
+		session, db.MirroredSessionMachine(session, "host-b"), "", "", "", "")
 	assert.Equal(t, fp1, fp2,
 		"a session with a real machine ignores the fallback")
 }
@@ -1464,7 +1464,7 @@ func TestPushedSessionMachine(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want,
-				pushedSessionMachine(tc.session, tc.fallback))
+				db.MirroredSessionMachine(tc.session, tc.fallback))
 		})
 	}
 }

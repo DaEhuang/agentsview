@@ -106,11 +106,11 @@ func (db *DB) GetTrendsTerms(
 			return
 		}
 		msgDate := msgTime.Format("2006-01-02")
-		if !inDateRange(msgDate, f.From, f.To) {
+		if !InDateRange(msgDate, f.From, f.To) {
 			return
 		}
-		bucketDate := trendBucketDate(msgTime, loc, granularity)
-		bucket, ok := bucketIndex[bucketDate]
+		BucketDate := trendBucketDate(msgTime, loc, granularity)
+		bucket, ok := bucketIndex[BucketDate]
 		if !ok {
 			return
 		}
@@ -381,7 +381,7 @@ func trendMessageLocalTime(
 	loc *time.Location,
 ) (time.Time, bool) {
 	for _, ts := range []string{messageTS, startedAt, createdAt} {
-		if t, ok := localTime(ts, loc); ok {
+		if t, ok := LocalTime(ts, loc); ok {
 			return t, true
 		}
 	}

@@ -10,7 +10,7 @@ import (
 // the pure ScopeFilter.
 func (f AnalyticsFilter) messageScopeFilter() ScopeFilter {
 	models := make(map[string]struct{})
-	for _, m := range csvFilterValues(f.Model) {
+	for _, m := range CSVFilterValues(f.Model) {
 		models[m] = struct{}{}
 	}
 	return ScopeFilter{
@@ -93,7 +93,7 @@ func (db *DB) resolveAnalyticsMessageScope(
 			); err != nil {
 				return fmt.Errorf("scanning analytics candidate message: %w", err)
 			}
-			parsed, has := localTime(ts, loc)
+			parsed, has := LocalTime(ts, loc)
 			if err := reducer.Push(MessageInput{
 				SessionID:       sessionID,
 				Ordinal:         ordinal,

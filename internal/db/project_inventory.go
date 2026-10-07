@@ -50,15 +50,15 @@ func (f ProjectDateFilter) SessionFilter() SessionFilter {
 	}
 }
 
-// projectInventoryAgg is one raw project's aggregate over visible
+// ProjectInventoryAgg is one raw project's aggregate over visible
 // (non-deleted) sessions, before display-label sanitization.
-type projectInventoryAgg struct {
-	sessions     int
-	machines     int
-	agents       int
-	distinctCwds int
-	first        *time.Time
-	last         *time.Time
+type ProjectInventoryAgg struct {
+	Sessions     int
+	Machines     int
+	Agents       int
+	DistinctCwds int
+	First        *time.Time
+	Last         *time.Time
 }
 
 // GetProjectInventory aggregates every visible session into a per-project
@@ -86,8 +86,8 @@ func (db *DB) GetProjectInventory(ctx context.Context, filter ProjectDateFilter)
 	if err != nil {
 		return ProjectInventory{}, err
 	}
-	rows, totalSessions := buildProjectInventoryRows(agg, rawProjects, projects)
-	annotateProjectInventoryRows(rows, mappings, eval, projects)
+	rows, totalSessions := BuildProjectInventoryRows(agg, rawProjects, projects)
+	AnnotateProjectInventoryRows(rows, mappings, eval, projects)
 
 	return ProjectInventory{
 		Projects:         rows,
@@ -106,7 +106,7 @@ func (db *DB) GetProjectInventory(ctx context.Context, filter ProjectDateFilter)
 func (db *DB) projectInventoryAggregate(
 	ctx context.Context,
 	filter ProjectDateFilter,
-) (map[string]projectInventoryAgg, error) {
+) (map[string]ProjectInventoryAgg, error) {
 	where, args := BuildSessionBaseFilterSQL(filter.SessionFilter(), SQLiteQueryDialect())
 	query := strings.Replace(projectInventoryAggregateQuery(), "WHERE deleted_at IS NULL", "WHERE "+where, 1)
 	rows, err := db.getReader().QueryContext(ctx, query, args...)
@@ -115,25 +115,25 @@ func (db *DB) projectInventoryAggregate(
 	}
 	defer rows.Close()
 
-	out := map[string]projectInventoryAgg{}
+	out := map[string]ProjectInventoryAgg{}
 	for rows.Next() {
 		var project string
-		var agg projectInventoryAgg
+		var agg ProjectInventoryAgg
 		var first, last sql.NullString
 		if err := rows.Scan(
-			&project, &agg.sessions, &agg.machines, &agg.agents,
-			&agg.distinctCwds, &first, &last,
+			&project, &agg.Sessions, &agg.Machines, &agg.Agents,
+			&agg.DistinctCwds, &first, &last,
 		); err != nil {
 			return nil, fmt.Errorf("scanning project inventory row: %w", err)
 		}
 		if first.Valid && first.String != "" {
 			if t, err := parseTimestamp(first.String); err == nil {
-				agg.first = &t
+				agg.First = &t
 			}
 		}
 		if last.Valid && last.String != "" {
 			if t, err := parseTimestamp(last.String); err == nil {
-				agg.last = &t
+				agg.Last = &t
 			}
 		}
 		out[project] = agg
@@ -166,11 +166,11 @@ func projectInventoryAggregateQuery() string {
 		ORDER BY project`
 }
 
-// buildProjectInventoryRows groups raw project labels by opaque project key.
+// BuildProjectInventoryRows groups raw project labels by opaque project key.
 // Display-label sanitization is presentation-only: distinct absolute-path
 // projects may both display as empty without losing either row or key.
-func buildProjectInventoryRows(
-	agg map[string]projectInventoryAgg,
+func BuildProjectInventoryRows(
+	agg map[string]ProjectInventoryAgg,
 	rawProjects []string,
 	projects map[string]export.ProjectMapEntry,
 ) ([]ProjectInventoryRow, int) {
@@ -180,7 +180,7 @@ func buildProjectInventoryRows(
 	totalSessions := 0
 	for _, project := range rawProjects {
 		a := agg[project]
-		totalSessions += a.sessions
+		totalSessions += a.Sessions
 		label := export.SafeProjectDisplayLabel(project)
 		projectKey := export.ProjectKeyForEntry(projects[project])
 		row, ok := byKey[projectKey]
@@ -193,12 +193,12 @@ func buildProjectInventoryRows(
 		} else if row.Label == "" && label != "" {
 			row.Label = label
 		}
-		row.Sessions += a.sessions
-		row.Machines += a.machines
-		row.Agents += a.agents
-		row.DistinctCwds += a.distinctCwds
-		row.FirstActivity = minTimePtr(row.FirstActivity, a.first)
-		row.LastActivity = maxTimePtr(row.LastActivity, a.last)
+		row.Sessions += a.Sessions
+		row.Machines += a.Machines
+		row.Agents += a.Agents
+		row.DistinctCwds += a.DistinctCwds
+		row.FirstActivity = MinTimePtr(row.FirstActivity, a.First)
+		row.LastActivity = MaxTimePtr(row.LastActivity, a.Last)
 	}
 
 	rowList := make([]ProjectInventoryRow, 0, len(byKey))
@@ -271,12 +271,12 @@ func (db *DB) projectInventoryCandidateRows(
 	if len(machines) == 0 {
 		return nil, nil
 	}
-	machineList := sortedSetKeys(machines)
+	machineList := SortedKeys(machines)
 	query, args := projectInventoryCandidateQuery(machineList)
 	rows, err := db.getReader().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf(
-			"querying project inventory candidate sessions: %w", err)
+			"querying project inventory candidate Sessions: %w", err)
 	}
 	defer rows.Close()
 
@@ -295,7 +295,7 @@ func (db *DB) projectInventoryCandidateRows(
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf(
-			"iterating project inventory candidate sessions: %w", err)
+			"iterating project inventory candidate Sessions: %w", err)
 	}
 	return out, nil
 }
@@ -322,7 +322,7 @@ func projectInventoryCandidateQuery(machineList []string) (string, []any) {
 	return query, args
 }
 
-// annotateProjectInventoryRows sets EnabledRulesTargeting and
+// AnnotateProjectInventoryRows sets EnabledRulesTargeting and
 // RecordedAsOriginal on rows in place, keyed by opaque project identity.
 //
 // Static attribution counts every enabled explicit-layout rule whose
@@ -334,7 +334,7 @@ func projectInventoryCandidateQuery(machineList []string) (string, []any) {
 // original_project is the historical display label the user renamed away
 // from. A duplicate display label is intentionally left unattributed because
 // the historical field cannot identify which opaque project it represented.
-func annotateProjectInventoryRows(
+func AnnotateProjectInventoryRows(
 	rows []ProjectInventoryRow,
 	mappings []WorktreeProjectMapping,
 	eval GovernedEvaluation,
@@ -371,8 +371,8 @@ func annotateProjectInventoryRows(
 	}
 }
 
-// minTimePtr returns the earlier of a and b, treating nil as "no bound".
-func minTimePtr(a, b *time.Time) *time.Time {
+// MinTimePtr returns the earlier of a and b, treating nil as "no bound".
+func MinTimePtr(a, b *time.Time) *time.Time {
 	if a == nil {
 		return b
 	}
@@ -385,8 +385,8 @@ func minTimePtr(a, b *time.Time) *time.Time {
 	return a
 }
 
-// maxTimePtr returns the later of a and b, treating nil as "no bound".
-func maxTimePtr(a, b *time.Time) *time.Time {
+// MaxTimePtr returns the later of a and b, treating nil as "no bound".
+func MaxTimePtr(a, b *time.Time) *time.Time {
 	if a == nil {
 		return b
 	}

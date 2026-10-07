@@ -135,7 +135,7 @@ func auditAutomatedMatchingHash(ctx context.Context,
 			)
 		}
 		if IsAutomatedSessionMetadata(agent, sessionKind) {
-			setIDs, clearIDs = appendAutomationFlagChange(
+			setIDs, clearIDs = AppendAutomationFlagChange(
 				setIDs, clearIDs, id, rowAutomated, true,
 			)
 			continue
@@ -148,7 +148,7 @@ func auditAutomatedMatchingHash(ctx context.Context,
 			unresolved = append(unresolved, id)
 			continue
 		}
-		setIDs, clearIDs = appendAutomationFlagChange(
+		setIDs, clearIDs = AppendAutomationFlagChange(
 			setIDs, clearIDs, id, rowAutomated, want,
 		)
 	}
@@ -236,7 +236,7 @@ func scanFullAutomationCandidates(
 			patterns.matchesTextCandidates(
 				userCount, firstUser, firstMessage,
 			)
-		setIDs, clearIDs = appendAutomationFlagChange(
+		setIDs, clearIDs = AppendAutomationFlagChange(
 			setIDs, clearIDs, id, rowAutomated, want,
 		)
 	}
@@ -246,7 +246,7 @@ func scanFullAutomationCandidates(
 	return setIDs, clearIDs, nil
 }
 
-func appendAutomationFlagChange(
+func AppendAutomationFlagChange(
 	setIDs, clearIDs []string,
 	id string,
 	rowAutomated, want bool,

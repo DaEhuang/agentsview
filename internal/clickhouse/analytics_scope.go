@@ -13,7 +13,7 @@ import (
 // is defined in package db.
 func messageScopeFilter(f db.AnalyticsFilter) db.ScopeFilter {
 	models := make(map[string]struct{})
-	for _, m := range chAnalyticsCSVValues(f.Model) {
+	for _, m := range db.CSVFilterValues(f.Model) {
 		models[m] = struct{}{}
 	}
 	return db.ScopeFilter{

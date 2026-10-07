@@ -13,7 +13,7 @@ import (
 // into the pure db.ScopeFilter.
 func messageScopeFilter(f db.AnalyticsFilter) db.ScopeFilter {
 	models := make(map[string]struct{})
-	for _, m := range csvFilterValues(f.Model) {
+	for _, m := range db.CSVFilterValues(f.Model) {
 		models[m] = struct{}{}
 	}
 	return db.ScopeFilter{
@@ -108,7 +108,7 @@ func (s *Store) resolveAnalyticsMessageScope(
 			if ts != nil {
 				tsStr = FormatISO8601(*ts)
 			}
-			parsed, has := localTime(tsStr, loc)
+			parsed, has := db.LocalTime(tsStr, loc)
 			if err := reducer.Push(db.MessageInput{
 				SessionID:       sessionID,
 				Ordinal:         ordinal,
