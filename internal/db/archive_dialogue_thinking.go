@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"regexp"
+	"strconv"
 )
 
 // ExtractTextContent renders provider thinking blocks into Content as well as
@@ -25,7 +26,7 @@ func projectStoredDialogueThinkingTx(ctx context.Context, tx *sql.Tx, where stri
 		return err
 	}
 	defer rows.Close()
-	changed := map[string]bool{}
+	changed := map[string]int64{}
 	for rows.Next() {
 		var id int64
 		var session, content string
@@ -39,18 +40,21 @@ func projectStoredDialogueThinkingTx(ctx context.Context, tx *sql.Tx, where stri
 		if _, err := tx.ExecContext(ctx, `UPDATE messages SET content=?,content_length=?,thinking_text='',has_thinking=0 WHERE id=?`, projected, len(projected), id); err != nil {
 			return err
 		}
-		changed[session] = true
+		changed[session] = id
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return err
 	}
-	for session := range changed {
+	for session, id := range changed {
 		if err := bumpTranscriptRevisionTx(contextTransaction{ctx: ctx, tx: tx}, session); err != nil {
 			return err
 		}
-	}
-	if len(changed) > 0 {
-		return refreshConversationMessagesFromArchiveTx(ctx, tx, where)
+		// Refresh only changed sessions. A dialogue archive can retain hundreds
+		// of thousands of empty accounting rows unrelated to this projection.
+		scope := "session_id=(SELECT session_id FROM messages WHERE id=" + strconv.FormatInt(id, 10) + ")"
+		if err := refreshConversationMessagesFromArchiveTx(ctx, tx, scope); err != nil {
+			return err
+		}
 	}
 	return nil
 }
