@@ -48,8 +48,8 @@ func runSync(cfg SyncConfig) {
 	}
 }
 
-// doSync performs the sync run and reports whether any configured
-// remote host failed. It owns the deferred cleanup (profile stop,
+// doSync performs the sync run and reports an incomplete offline local run or
+// a failed configured remote host. It owns the deferred cleanup (profile stop,
 // db close) so runSync can translate the result into a non-zero
 // exit code without skipping that cleanup.
 func doSync(cfg SyncConfig) (hadRemoteFailures bool) {
@@ -217,7 +217,11 @@ func doSync(cfg SyncConfig) (hadRemoteFailures bool) {
 
 	if len(appCfg.RemoteHosts) == 0 {
 		if cfg.Target == "" {
-			runLocalSync(context.Background(), appCfg, database, cfg.Full)
+			_, err := runLocalSyncAuthoritative(context.Background(), appCfg, database, cfg.Full)
+			if err != nil {
+				log.Printf("local sync incomplete: %v", err)
+			}
+			return err != nil
 		} else {
 			result, err := runLocalAndArtifactFolderSync(
 				context.Background(), appCfg, database, cfg,
