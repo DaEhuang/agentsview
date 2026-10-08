@@ -11,6 +11,7 @@ import (
 func TestRetentionExportRejectsIncompleteAndSharedSources(t *testing.T) {
 	cases := []struct{ name, query, reason string }{
 		{"complete", "", ""},
+		{"stable archive identity", `UPDATE conversation_messages SET gap='identity_unavailable'`, ""},
 		{"shared database", `UPDATE sessions SET file_path='/fixture/history.db'`, "shared-or-unsupported-source"},
 		{"malformed", `UPDATE sessions SET parser_malformed_lines=1`, "parser-incomplete"},
 		{"truncated", `UPDATE sessions SET is_truncated=1`, "parser-incomplete"},

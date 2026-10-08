@@ -67,3 +67,27 @@ func TestRetentionExportProvesParsedFileAndPreservesDeletedOriginal(t *testing.T
 		assert.NotEmpty(t, *body.Text)
 	}
 }
+
+func TestRetentionExportCodexUsesStableOpaqueMessageIdentity(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "rollout-fixture.jsonl")
+	source := `{"timestamp":"2026-08-01T10:00:00Z","type":"session_meta","payload":{"id":"opaque-thread","cwd":"/fixture","source":"cli"}}
+{"timestamp":"2026-08-01T10:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Question"}]}}
+{"timestamp":"2026-08-01T10:00:02Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"Answer"}]}}
+{"timestamp":"2026-08-01T10:00:03Z","type":"event_msg","payload":{"type":"task_complete"}}
+`
+	require.NoError(t, os.WriteFile(file, []byte(source), 0o600))
+	database := dbtest.OpenTestDB(t)
+	engine := sync.NewEngine(t.Context(), database, sync.EngineConfig{AgentDirs: map[parser.AgentType][]string{parser.AgentCodex: {root}}, Machine: "local", ArchiveContent: config.ArchiveContentDialogue})
+	t.Cleanup(engine.Close)
+	require.Equal(t, 1, engine.SyncAll(t.Context(), nil).Synced)
+	proof, err := database.ExportRetentionSources(t.Context(), db.RetentionOptions{Machine: "local", Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, proof.Sources, 1)
+	require.Empty(t, proof.Sources[0].Reason)
+	require.Len(t, proof.Sources[0].Messages, 2)
+	for _, m := range proof.Sources[0].Messages {
+		assert.NotEmpty(t, m.MessageID)
+		assert.Equal(t, "identity_unavailable", m.Gap)
+	}
+}

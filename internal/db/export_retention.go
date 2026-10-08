@@ -196,13 +196,13 @@ func retentionSource(ctx context.Context, tx *sql.Tx, id string) (RetentionSourc
 		return block("proof-budget-exceeded")
 	}
 	for _, m := range all {
-		if m.Deleted || m.Gap != "" && m.Gap != "visible_text_unavailable" {
+		if m.Deleted || m.Gap != "" && m.Gap != "visible_text_unavailable" && m.Gap != "identity_unavailable" {
 			return block("archive-gap")
 		}
 		if m.TextBytes == 0 {
 			continue
 		}
-		if m.Timestamp == nil || m.Gap != "" || m.TextBytes > 8388608 {
+		if m.Timestamp == nil || (m.Gap != "" && m.Gap != "identity_unavailable") || m.TextBytes > 8388608 {
 			return block("message-incomplete")
 		}
 		r.Messages = append(r.Messages, m)
