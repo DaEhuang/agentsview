@@ -405,16 +405,19 @@ func reconcileConversationMessagesTx(tx transactionQueries, sessionID string, ms
 			return err
 		}
 	}
-	equal := replace && len(old) == len(incoming)
-	for i := range incoming {
-		if equal && !conversationRowsEqual(old[i], incoming[i]) {
-			equal = false
+	// A complete reparse may append messages while retaining every prior row.
+	// Narrow dialogue storage intentionally disables parser append checkpoints,
+	// so the normalized unchanged prefix is the identity proof in that case.
+	prefix := replace && len(old) <= len(incoming)
+	for i := range old {
+		if prefix && !conversationRowsEqual(old[i], incoming[i]) {
+			prefix = false
 		}
 	}
 	retained := map[string]bool{}
 	for i := range incoming {
 		row := &incoming[i]
-		if equal {
+		if prefix && i < len(old) {
 			row.MessageID = old[i].MessageID
 			// Identity gaps survive an unchanged projection; policy gaps must
 			// reflect this write even when stored text is still absent.
@@ -443,7 +446,7 @@ func reconcileConversationMessagesTx(tx transactionQueries, sessionID string, ms
 				row.Gap = "identity_ambiguous"
 			}
 		}
-		if row.MessageID == "" && row.body != nil && replace && len(old) > 0 && row.sourceID == "" {
+		if row.MessageID == "" && row.body != nil && replace && !prefix && len(old) > 0 && row.sourceID == "" {
 			row.Gap = "identity_ambiguous"
 		}
 		if row.MessageID == "" {
