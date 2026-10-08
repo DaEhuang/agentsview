@@ -1373,6 +1373,14 @@ contains uncached input; cache reads and writes are separate counters.
 `qoder-cn`, `kiro-cli`, and `kiro-crew` are distinct sources. An absent row means
 no archived measurement was found; it is not evidence of zero usage.
 
+If an archived Codex thread still needs parser reconciliation, `blocked` lists
+the affected `date`, `machine`, and `source` with reason
+`parser-reconciliation-required`. Those whole source/day totals are withheld
+from `days`, so temporary inherited-history overcounts cannot become permanent
+maxima in downstream consumers. Other source/days remain readable. Keep any
+previously retained total for a blocked day and retry after the source issue is
+resolved; never substitute zero. Readiness and totals use the same snapshot.
+
 Kiro entries include original `credits`, `credit_authority`, and
 `estimate_policy`. Their tokens have `quality: estimated`; credits remain the
 native measurement. Totals use the fixed credit conversion documented in the
