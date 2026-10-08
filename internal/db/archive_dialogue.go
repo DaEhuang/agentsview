@@ -28,6 +28,9 @@ func dialogueMessages(messages []Message) []Message {
 				(m.SourceSubtype == "final_answer" || (m.SourceSubtype == "" && !lastAssistant[m.SessionID]))
 			lastAssistant[m.SessionID] = true
 		}
+		if keep && m.Role == "assistant" {
+			m.Content = dialogueReplyText(m.Content)
+		}
 		if !keep {
 			m.Content = ""
 		}
@@ -44,6 +47,9 @@ func dialogueMessages(messages []Message) []Message {
 // Copied orphans have no source to reparse. Apply the same turn boundaries and
 // phase rules to their stored rows before publishing the replacement archive.
 func compactCopiedSessionsForDialogueTx(ctx context.Context, tx *sql.Tx, table string) error {
+	if err := projectStoredDialogueThinkingTx(ctx, tx, "session_id IN (SELECT id FROM "+table+")"); err != nil {
+		return err
+	}
 	if err := dropCopiedToolContentTx(ctx, tx, table); err != nil {
 		return err
 	}

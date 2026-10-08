@@ -103,6 +103,14 @@ result updates use the same projection as newly inserted messages.
 
 ## Archive Content Policy
 
+Dialogue storage removes the parser's reserved `[Thinking]` renderings from
+assistant bodies as well as the separate thinking field. A writable dialogue
+open upgrades existing rows in place, including messages whose source files
+are gone. The migration preserves archive/database identity and opaque message
+IDs, advances changed-message revisions, and leaves token facts unchanged.
+Copies use the same projection. User text and incomplete markers are retained.
+
+
 `archive_content` (`internal/config.ArchiveContent`) narrows what the SQLite
 archive stores. The `*db.DB` handle is the single authority: `Open` variants and
 `sync.NewEngine` only tighten it, never loosen it, and every write path projects

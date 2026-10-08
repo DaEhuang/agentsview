@@ -101,6 +101,13 @@ add an archived or maintained mirror without replacing the original identity.
 
 ## Claude Code (`claude`)
 
+- **Dialogue projection check (2026-10-08):** Reverified the local
+  `ExtractTextContent` renderer and its fixtures: thinking blocks appear both
+  in `ThinkingText` and as reserved `[Thinking]` sections in flattened content.
+  Dialogue storage removes both representations, including an in-place
+  upgrade of previously narrowed archives. This is consumer rendering evidence,
+  not a new claim about the producer format.
+
 - **Performance fixture check (2026-09-04):** Rechecked the pinned Codeburn
   format notes below for project-scoped JSONL. `cmd/perfsim` uses the shared
   Claude fixture builder to emit user/assistant pairs with message/request

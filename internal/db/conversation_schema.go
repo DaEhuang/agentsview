@@ -93,7 +93,7 @@ BEGIN
  ON CONFLICT(session_id) DO UPDATE SET revision=excluded.revision,deleted=excluded.deleted;
 END;`
 
-func ensureConversationSchemaLocked(ctx context.Context, w *writerHandle, usageOnly bool) error {
+func ensureConversationSchemaLocked(ctx context.Context, w *writerHandle, usageOnly, dialogue bool) error {
 	tx, err := w.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -130,6 +130,11 @@ func ensureConversationSchemaLocked(ctx context.Context, w *writerHandle, usageO
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO archive_metadata(key,value) VALUES ('conversation_export_initialized','1')`); err != nil {
+			return err
+		}
+	}
+	if dialogue {
+		if err := migrateDialogueThinkingTx(ctx, tx); err != nil {
 			return err
 		}
 	}
