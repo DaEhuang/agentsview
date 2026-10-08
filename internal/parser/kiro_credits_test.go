@@ -13,7 +13,7 @@ func TestKiroCreditAccountingUsesDatedNativeCredits(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "credit-session.jsonl")
 	writeSourceFile(t, path, kiroProviderJSONLFixture("question"))
-	writeSourceFile(t, filepath.Join(root, "credit-session.json"), `{"session_id":"credit-session","session_state":{"agent_name":"kirocrew-example","conversation_metadata":{"user_turn_metadatas":[{"end_timestamp":"2026-06-01T23:59:59+08:00","metering_usage":[{"unit":"credit","value":1},{"unit":"other","value":999}]},{"end_timestamp":"2026-06-02T00:00:01+08:00","metering_usage":[{"unit":"credit","value":1000}]}]}}}`)
+	writeSourceFile(t, filepath.Join(root, "credit-session.json"), `{"session_id":"credit-session","session_state":{"agent_name":"kiro_default","conversation_metadata":{"user_turn_metadatas":[{"end_timestamp":"2026-06-01T23:59:59+08:00","metering_usage":[{"unit":"credit","value":1},{"unit":"other","value":999}]},{"end_timestamp":"2026-06-02T00:00:01+08:00","metering_usage":[{"unit":"credit","value":1000}]}]}}}`)
 	provider, ok := NewProvider(AgentKiro, ProviderConfig{Roots: []string{root}, Machine: "local"})
 	require.True(t, ok)
 	source, found, err := provider.FindSource(t.Context(), FindSourceRequest{RawSessionID: "credit-session"})
@@ -25,7 +25,7 @@ func TestKiroCreditAccountingUsesDatedNativeCredits(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, outcome.Results, 1)
 	result := outcome.Results[0].Result
-	assert.Equal(t, "kiro-crew", result.Session.AgentLabel)
+	assert.Equal(t, "kiro-cli", result.Session.AgentLabel)
 	require.Len(t, result.UsageEvents, 2)
 	events := result.UsageEvents
 	assert.Equal(t, "2026-06-01T15:59:59Z", events[0].OccurredAt)

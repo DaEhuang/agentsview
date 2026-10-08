@@ -266,9 +266,9 @@ func (p *kiroProvider) parseLegacySessionContext(
 
 	sessionID = "kiro:" + sessionID
 
-	// Crew uses this reserved agent for background memory work. Its prompts
-	// and replies are accounting activity, not human conversation.
-	background := meta != nil && meta.SessionState.AgentName == "kirocrew-lite"
+	// Crew-owned CLI replay is not an original conversation. Native Crew
+	// transcripts and billing are collected by the separate Crew provider.
+	background := kiroCreditHarness(meta) == "kiro-crew"
 	if background {
 		firstMessage = ""
 		for i := range messages {

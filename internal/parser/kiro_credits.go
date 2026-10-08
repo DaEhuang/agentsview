@@ -30,7 +30,7 @@ type kiroCreditTurn struct {
 }
 
 func kiroCreditHarness(meta *kiroMeta) string {
-	if meta != nil && strings.HasPrefix(meta.SessionState.AgentName, "kirocrew-") {
+	if meta != nil && (meta.SessionState.AgentName == "kirocrew" || strings.HasPrefix(meta.SessionState.AgentName, "kirocrew-")) {
 		return "kiro-crew"
 	}
 	return "kiro-cli"

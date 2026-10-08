@@ -52,6 +52,7 @@ const (
 	AgentClaudeAI       AgentType = "claude-ai"
 	AgentChatGPT        AgentType = "chatgpt"
 	AgentKiro           AgentType = "kiro"
+	AgentKiroCrew       AgentType = "kiro-crew"
 	AgentKiroIDE        AgentType = "kiro-ide"
 	AgentCortex         AgentType = "cortex"
 	AgentHermes         AgentType = "hermes"
@@ -685,6 +686,10 @@ var Registry = []AgentDef{
 		},
 		IDPrefix:  "kiro:",
 		FileBased: true,
+	},
+	{
+		Type: AgentKiroCrew, DisplayName: "Kiro Crew", EnvVar: "KIRO_CREW_DIR", ConfigKey: "kiro_crew_dirs",
+		DefaultDirs: []string{".kiro/crew"}, IDPrefix: "kiro-crew:", FileBased: true,
 	},
 	{
 		Type:        AgentKiroIDE,

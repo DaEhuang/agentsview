@@ -515,7 +515,8 @@ CREATE INDEX IF NOT EXISTS idx_provider_freshness_updated_at
 // Version 114 retains reply phases and Kiro credit meters, strips Crew prompt
 // envelopes, and corrects Codex/QoderCN accounting. Source-backed sessions
 // reparse; missing-source sessions keep their archived facts.
-const dataVersion = 114
+// Version 115 gives native Crew transcripts and ledgers sole ownership of Crew data.
+const dataVersion = 115
 
 const tokenCoverageRepairStatsKey = "token_coverage_repair_v1"
 

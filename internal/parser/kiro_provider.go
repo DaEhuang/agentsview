@@ -304,6 +304,21 @@ func (p *kiroProvider) parseLegacyJSONL(
 	machine string,
 	fingerprint SourceFingerprint,
 ) (ParseOutcome, error) {
+	meta, err := loadKiroMetaStrict(src.Path)
+	if err != nil {
+		return ParseOutcome{}, err
+	}
+	if kiroCreditHarness(meta) == "kiro-crew" {
+		// Recognize the ownership before reading the potentially huge replay log.
+		id := strings.TrimSuffix(filepath.Base(src.Path), ".jsonl")
+		if meta.SessionID != "" {
+			id = meta.SessionID
+		}
+		sess := ParsedSession{ID: "kiro:" + id, Agent: AgentKiro, AgentLabel: "kiro-crew-replay",
+			Machine: machine, Project: "usage", StartedAt: parseTimestamp(meta.CreatedAt), EndedAt: parseTimestamp(meta.UpdatedAt),
+			File: FileInfo{Path: src.Path, Size: fingerprint.Size, Mtime: fingerprint.MTimeNS, Hash: fingerprint.Hash}}
+		return ParseOutcome{Results: []ParseResultOutcome{{Result: ParseResult{Session: sess}, DataVersion: DataVersionCurrent}}, ResultSetComplete: true}, nil
+	}
 	sess, msgs, err := p.parseLegacySessionContext(ctx, src.Path, machine)
 	if err != nil {
 		return ParseOutcome{}, err
@@ -316,10 +331,6 @@ func (p *kiroProvider) parseLegacyJSONL(
 	}
 	if fingerprint.Hash != "" {
 		sess.File.Hash = fingerprint.Hash
-	}
-	meta, err := loadKiroMetaStrict(src.Path)
-	if err != nil {
-		return ParseOutcome{}, err
 	}
 	ledger, events, err := kiroCreditAccounting(sess.ID, len(msgs), meta)
 	if err != nil {
@@ -1001,6 +1012,24 @@ func (s kiroSourceSet) Fingerprint(
 			Size:    int64(len(row.value)),
 			MTimeNS: row.updatedAt * 1_000_000,
 		}, nil
+	}
+	if src.Kind == kiroSourceLegacyJSONL {
+		meta, err := loadKiroMetaStrict(src.Path)
+		if err != nil {
+			return SourceFingerprint{}, err
+		}
+		if kiroCreditHarness(meta) == "kiro-crew" {
+			sidecar := strings.TrimSuffix(src.Path, ".jsonl") + ".json"
+			body, err := os.ReadFile(sidecar)
+			if err != nil {
+				return SourceFingerprint{}, err
+			}
+			info, err := os.Stat(sidecar)
+			if err != nil {
+				return SourceFingerprint{}, err
+			}
+			return SourceFingerprint{Key: key, Size: int64(len(body)), MTimeNS: info.ModTime().UnixNano(), Hash: crewDigest(string(body))}, nil
+		}
 	}
 	info, err := os.Stat(src.Path)
 	if err != nil {

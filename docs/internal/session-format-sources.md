@@ -2288,20 +2288,12 @@ schemas keep their existing ordering behavior.
   synthetic usage events. The versioned `kiro-credit-equivalent-v1` model
   estimates tokens at $0.04/credit, using 96% cached input at $0.20/M,
   3.5% uncached input at $4/M, and 0.5% output at $20/M. These are explicit
-  policy assumptions, not measured token ratios. Crew's assembled prompt
-  boundary (`[CURRENT USER REQUEST — respond to this]`) separates injected
-  context from user text; the reserved `kirocrew-lite` background agent is
-  system activity. These rules were checked against the locally installed
-  producer's `context.py` and `session.py` on 2026-10-07 and are covered by
-  `TestKiroPromptSeparatesInjectedContext`. Older Crew captures without that
-  boundary still contain injected context inside user messages; this fork
-  preserves those bodies rather than guessing where the user's text starts.
-  Background agents without the reserved name also need separate adaptation.
-  Crew-named CLI sessions retain
-  the `kiro-crew` label. Independent Crew usage logs are not added: they overlap
-  CLI billing and need identity reconciliation. Covered by
-  `TestKiroCreditAccountingUsesDatedNativeCredits`; evidence is local observed
-  metadata plus synthetic fixtures, not a published producer contract.
+  policy assumptions, not measured token ratios. Crew-owned CLI replays are
+  excluded in favor of the native Crew provider below. Ordinary CLI sessions
+  keep dated native credits and their explicitly estimated token equivalent.
+  Covered by `TestKiroCreditAccountingUsesDatedNativeCredits`; evidence is
+  locally observed metadata plus synthetic fixtures, not a published producer
+  contract.
 
 - **Format:** Legacy JSONL plus companion metadata JSON, and newer SQLite
   session databases.
@@ -2355,6 +2347,45 @@ schemas keep their existing ordering behavior.
   and single-session parsing honor the caller's filesystem-discovery policy;
   `TestKiroProviderSQLiteProjectDiscoveryPolicy` verifies project names and
   filesystem probes with discovery enabled and disabled.
+
+## Kiro Crew (`kiro-crew`)
+
+- **Format:** `sessions/<slot>.jsonl` holds the original visible messages;
+  `sessions/archive/<slot>__<stamp>.jsonl` holds rotated segments. Native
+  `meta.mid` identities join overlapping segments. Assistant `meta.turn_stats`
+  identifies a completed response. Unmarked assistant rows stay classified as
+  commentary, including interrupted or still-streaming tails. Older records
+  without completion metadata cannot establish a final reply. Compaction,
+  injected context, tools, and background notices do not become dialogue messages.
+- **Evidence:** `source`.
+- **Upstream:** Clone `https://github.com/kirodotdev/KiroCrew.git` at
+  `c67c5060a82faf6e5e1bc06077122c473d4ca456` (v0.7.2). The
+  [usage writer](https://github.com/kirodotdev/KiroCrew/blob/c67c5060a82faf6e5e1bc06077122c473d4ca456/src/kiro_crew/dashboard/handlers/usage.py),
+  `session_storage.py`, `history.py`, and `dashboard/chat_runner.py` were
+  checked 2026-10-08, alongside the locally installed 0.7.2 producer source.
+- **Usage and cost:** `usage/tokens/<day>.jsonl` appends one bill per completed
+  turn. Every ACP surface and phase is included, including `session_start`,
+  subagents, and background work. Credits are measured; their token equivalent
+  uses the explicit policy described under Kiro CLI. The row's timestamp,
+  rather than its shard filename, determines the reporting day. Non-ACP
+  billing records fail parsing instead of being reported as measured tokens.
+- **Agentsview:** `internal/parser/kiro_crew_provider.go` and
+  `internal/parser/kiro_crew.go`; synthetic fixtures cover archive overlap,
+  stable message IDs, targeted changed-path mapping, every billing surface,
+  partial trailing writes, equal-price separate turns, and midnight bucketing.
+- **Ownership:** CLI sidecars whose agent is `kirocrew` or starts with
+  `kirocrew-` are Crew replays. Their bodies and usage are excluded from the
+  CLI provider even when the original Crew source is absent. Ordinary CLI
+  sessions retain their own usage. Crew records lack historical CLI request
+  IDs, so matching timestamps or credit amounts is not a deduplication method.
+- **Limits:** Old Crew bills already removed before the first import cannot
+  be reconstructed from the current ledger. An untagged CLI invocation cannot
+  be attributed to Crew merely because its cost resembles a Crew bill.
+  This experimental provider is not ready for a production cutover: removing
+  only an older rotated segment before updating its live file can remove
+  archived dialogue. Upgrading an earlier credit-enabled experimental archive
+  can also retain orphaned CLI bills alongside new Crew bills. These handover
+  cases need preservation and reconciliation before rollout.
 
 ## Kiro IDE (`kiro-ide`)
 

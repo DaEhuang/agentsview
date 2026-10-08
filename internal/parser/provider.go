@@ -1208,6 +1208,8 @@ func providerFactoryForDef(def AgentDef) ProviderFactory {
 		return newKimiWorkProviderFactory(def)
 	case AgentKiro:
 		return newKiroProviderFactory(def)
+	case AgentKiroCrew:
+		return newKiroCrewProviderFactory(def)
 	case AgentKiroIDE:
 		return newKiroIDEProviderFactory(def)
 	case AgentKilo:
