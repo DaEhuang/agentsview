@@ -23,7 +23,7 @@ func attachConversationSources(ctx context.Context, tx *sql.Tx, changes []Conver
 		return nil
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
-	rows, err := tx.QueryContext(ctx, `SELECT id, agent, machine, source_session_id FROM sessions WHERE id IN (`+placeholders+`)`, ids...)
+	rows, err := tx.QueryContext(ctx, `SELECT s.id, s.agent, `+usageAgentSQL+`, s.machine, s.source_session_id FROM sessions s WHERE s.id IN (`+placeholders+`)`, ids...)
 	if err != nil {
 		return err
 	}
@@ -31,8 +31,8 @@ func attachConversationSources(ctx context.Context, tx *sql.Tx, changes []Conver
 	type identity struct{ source, machine, session string }
 	bySession := make(map[string]identity)
 	for rows.Next() {
-		var id, agent, machine, raw string
-		if err := rows.Scan(&id, &agent, &machine, &raw); err != nil {
+		var id, agent, source, machine, raw string
+		if err := rows.Scan(&id, &agent, &source, &machine, &raw); err != nil {
 			return err
 		}
 		if raw == "" {
@@ -40,7 +40,7 @@ func attachConversationSources(ctx context.Context, tx *sql.Tx, changes []Conver
 				raw = parser.ProviderRawSessionIDFromFull(definition, id)
 			}
 		}
-		bySession[id] = identity{publicUsageSource(agent), machine, raw}
+		bySession[id] = identity{publicUsageSource(source), machine, raw}
 	}
 	if err := rows.Err(); err != nil {
 		return err
