@@ -1804,6 +1804,11 @@ func (p *codexProvider) parseCodexSessionSnapshotStreaming(
 			codexCursorState{}, false, nil, "", "",
 			fmt.Errorf("reading codex %s: %w", path, err)
 	}
+	// Discovery can receive nonstandard retained filenames. Bind the parsed
+	// provider identity too, before any staged message set is published.
+	if !p.sources.selectsPath(path, b.sessionID) {
+		return nil, nil, codexCursorState{}, false, nil, "", "", nil
+	}
 
 	if err := b.flushPendingAgentResultsContext(ctx); err != nil {
 		return nil, nil, codexCursorState{}, false, nil, "", "", err

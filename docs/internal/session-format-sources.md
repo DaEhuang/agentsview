@@ -406,7 +406,11 @@ add an archived or maintained mirror without replacing the original identity.
   Native index reads reuse the shared read-only SQLite path handling, including Windows drive paths.
   The fork reads that binding without modifying it; only existing files inside
   configured roots are eligible. Unselected files stay on disk. Synthetic
-  coverage: `TestCodexPrimarySourceUsesNativeThreadIndex`.
+  coverage: `TestCodexPrimarySourceUsesNativeThreadIndex`. Retained names with
+  an appended underscore and UUID use the original UUID only as an index
+  lookup hint; the parsed session identity is checked again before publishing.
+  `TestCodexNativeBindingStopsAlternatingOriginals` includes multiple suffixed
+  copies and verifies that a second sync produces no conversation changes.
 
 - **Tool-result image check (2026-09-08):** Reverified the pinned
   [output payload types and array tests](https://github.com/openai/codex/blob/406dc9239492aff6d295cca5eebe2a548548d42f/codex-rs/protocol/src/models.rs).

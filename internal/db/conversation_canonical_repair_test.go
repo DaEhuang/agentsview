@@ -23,6 +23,10 @@ func TestCanonicalConversationRepairIsOnceAndKeepsOpaqueIDs(t *testing.T) {
 		}
 	}
 	require.Equal(t, "identity_ambiguous", current.Gap)
+	// A prior recovery could be followed by an unfiltered suffixed copy.
+	// The corrected native binding gets one new recovery, not repeated resets.
+	_, err = d.getWriter().ExecContext(t.Context(), `INSERT INTO archive_metadata(key,value) VALUES('conversation_primary_repaired:chat','1')`)
+	require.NoError(t, err)
 	repair := func() {
 		tx, err := d.getWriter().Begin(t.Context())
 		require.NoError(t, err)

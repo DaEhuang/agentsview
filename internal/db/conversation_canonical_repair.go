@@ -51,7 +51,7 @@ func (db *DB) ReconcileCanonicalConversation(ctx context.Context, sessionID stri
 // source again; this migration alone never claims that a gap is repaired.
 func prepareCanonicalConversationRepairTx(tx transactionQueries) error {
 	var exists bool
-	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM archive_metadata WHERE key='conversation_primary_repair_v1')`).Scan(&exists); err != nil {
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM archive_metadata WHERE key='conversation_primary_repair_v2')`).Scan(&exists); err != nil {
 		return err
 	}
 	if exists {
@@ -61,7 +61,7 @@ func prepareCanonicalConversationRepairTx(tx transactionQueries) error {
 	 (SELECT session_id FROM conversation_messages WHERE gap='identity_ambiguous' AND removed=0)`); err != nil {
 		return err
 	}
-	_, err := tx.Exec(`INSERT INTO archive_metadata(key,value) VALUES('conversation_primary_repair_v1','1')`)
+	_, err := tx.Exec(`INSERT INTO archive_metadata(key,value) VALUES('conversation_primary_repair_v2','1')`)
 	return err
 }
 
@@ -70,7 +70,7 @@ func prepareCanonicalConversationRepairTx(tx transactionQueries) error {
 // arbitrary rewrites still use the normal ambiguity rules and cannot repeat
 // this initial recovery or conflate repeated provider UUIDs.
 func resolveCanonicalConversationTx(tx transactionQueries, sessionID string) error {
-	key := "conversation_primary_repaired:" + sessionID
+	key := "conversation_primary_repaired_v2:" + sessionID
 	var exists bool
 	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM archive_metadata WHERE key=?)`, key).Scan(&exists); err != nil {
 		return err

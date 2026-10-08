@@ -34,6 +34,11 @@ prevents repeating that recovery for later arbitrary rewrites. Rebuilds retain t
 IDs and tombstones but use the new database generation for revisions and
 cursors.
 
+The second repair generation covers retained underscore-suffixed Codex copies
+that bypassed the original filename lookup. It still requires a fresh parse
+bound by the native index; previous recovery markers do not skip this one-time
+recheck. No source file or archived message is deleted to resolve the binding.
+
 Initialize a missing conversation index from existing database messages on
 writable open. Copied orphans and trash use the same stored records; absent
 source files do not make their archived text unavailable.

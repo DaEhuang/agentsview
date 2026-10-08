@@ -67,6 +67,14 @@ func (s codexSourceSet) primaryPath(id string) string {
 }
 
 func (s codexSourceSet) selectsPath(path, id string) bool {
+	// Retained copies may append a second UUID after an underscore. The
+	// filename is only a lookup hint: the native index still chooses the file.
+	if id == "" {
+		stem := strings.TrimSuffix(filepath.Base(path), ".jsonl")
+		if original, suffix, ok := strings.Cut(stem, "_"); ok && isCodexHistorySessionID(suffix) {
+			id = extractUUIDFromRollout(original + ".jsonl")
+		}
+	}
 	primary := s.primaryPath(id)
 	return primary == "" || samePath(primary, path)
 }

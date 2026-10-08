@@ -20,6 +20,7 @@ func TestCodexNativeBindingStopsAlternatingOriginals(t *testing.T) {
 	id := "01000000-0000-7000-8000-000000000001"
 	sessionID := "codex:" + id
 	oldPath := filepath.Join(root, "rollout-2026-09-01T10-00-00-"+id+".jsonl")
+	shadow := filepath.Join(root, "rollout-2026-09-01T10-30-00-"+id+"_01000000-0000-7000-8000-000000000003.jsonl")
 	selected := filepath.Join(root, "rollout-2026-09-01T11-00-00-"+id+"_01000000-0000-7000-8000-000000000002.jsonl")
 	content := func(text string) string {
 		return testjsonl.JoinJSONL(testjsonl.CodexSessionMetaJSON(id, "/fixture", "codex_cli_rs", "2026-09-01T10:00:00Z"), `{"type":"response_item","timestamp":"2026-09-01T10:00:01Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"`+text+`"}]}}`)
@@ -33,6 +34,7 @@ func TestCodexNativeBindingStopsAlternatingOriginals(t *testing.T) {
 	first.Close()
 	require.NoError(t, database.ReplaceSessionMessages(t.Context(), sessionID, []db.Message{{SessionID: sessionID, Role: "user", Content: "ambiguous previous copy"}}))
 	require.NoError(t, os.WriteFile(selected, []byte(content("selected original")), 0600))
+	require.NoError(t, os.WriteFile(shadow, []byte(content("shadowed retained copy")), 0600))
 	native, err := sql.Open("sqlite3", filepath.Join(home, "state_5.sqlite"))
 	require.NoError(t, err)
 	_, err = native.Exec("CREATE TABLE threads(id TEXT,rollout_path TEXT)")
@@ -62,4 +64,5 @@ func TestCodexNativeBindingStopsAlternatingOriginals(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, after.Changes)
 	assert.FileExists(t, oldPath)
+	assert.FileExists(t, shadow)
 }
