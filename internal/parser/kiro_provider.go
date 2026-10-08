@@ -310,14 +310,10 @@ func (p *kiroProvider) parseLegacyJSONL(
 	}
 	if kiroCreditHarness(meta) == "kiro-crew" {
 		// Recognize the ownership before reading the potentially huge replay log.
-		id := strings.TrimSuffix(filepath.Base(src.Path), ".jsonl")
-		if meta.SessionID != "" {
-			id = meta.SessionID
-		}
-		sess := ParsedSession{ID: "kiro:" + id, Agent: AgentKiro, AgentLabel: "kiro-crew-replay",
-			Machine: machine, Project: "usage", StartedAt: parseTimestamp(meta.CreatedAt), EndedAt: parseTimestamp(meta.UpdatedAt),
-			File: FileInfo{Path: src.Path, Size: fingerprint.Size, Mtime: fingerprint.MTimeNS, Hash: fingerprint.Hash}}
-		return ParseOutcome{Results: []ParseResultOutcome{{Result: ParseResult{Session: sess}, DataVersion: DataVersionCurrent}}, ResultSetComplete: true}, nil
+		// Do not erase an existing experimental archive: it may contain older
+		// days no longer present in Crew's native ledger. Daily accounting
+		// reconciles these overlapping observations without adding them.
+		return ParseOutcome{SkipReason: SkipShadowedBySidecar, ResultSetComplete: true}, nil
 	}
 	sess, msgs, err := p.parseLegacySessionContext(ctx, src.Path, machine)
 	if err != nil {

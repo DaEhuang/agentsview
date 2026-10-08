@@ -39,6 +39,8 @@ type usageQuerySession struct {
 	Project           string
 	Machine           string
 	Agent             string
+	ProviderAgent     string
+	AgentLabel        string
 	GitBranch         string
 	CreatedAt         string
 	StartedAt         string
@@ -69,6 +71,7 @@ type usageQuerySnapshot struct {
 	Versions        []usageSourceVersion
 	Intervals       []usageQueryInterval
 	CursorHighWater int64
+	CreditRows      []archivedCreditRow
 	PricingRows     []export.EffectivePricingRow
 	location        *time.Location
 }
@@ -148,6 +151,10 @@ func (db *DB) captureUsageQuery(
 		records[i].version.UsageEventFingerprint = fingerprints[records[i].session.ID]
 		snapshot.Sessions = append(snapshot.Sessions, records[i].session)
 		snapshot.Versions = append(snapshot.Versions, records[i].version)
+	}
+	snapshot.CreditRows, err = loadArchivedCreditRows(ctx, tx, snapshot.Sessions, filter)
+	if err != nil {
+		return usageQuerySnapshot{}, err
 	}
 	snapshot.Intervals = usageQueryIntervals(filter)
 	var hasCursorTable bool
@@ -279,7 +286,7 @@ func loadUsageQuerySessionRecords(
 				idArgs[i] = id
 			}
 			query := `SELECT
-			s.id, s.project, s.machine, s.agent, COALESCE(s.git_branch, ''),
+			s.id, s.project, s.machine, ` + usageAgentSQL + `, s.agent, COALESCE(s.agent_label, ''), COALESCE(s.git_branch, ''),
 			COALESCE(s.created_at, ''), COALESCE(s.started_at, ''),
 			COALESCE(s.ended_at, ''),
 			COALESCE(NULLIF(COALESCE(s.display_name, s.session_name), ''),
@@ -306,7 +313,7 @@ func loadUsageQuerySessionRecords(
 				var passes, automated, hasTotalOutput, hasPeakContext int
 				if err := rows.Scan(
 					&record.session.ID, &record.session.Project,
-					&record.session.Machine, &record.session.Agent,
+					&record.session.Machine, &record.session.Agent, &record.session.ProviderAgent, &record.session.AgentLabel,
 					&record.session.GitBranch, &record.session.CreatedAt,
 					&record.session.StartedAt, &record.session.EndedAt,
 					&record.session.DisplayName, &record.session.UserMessageCount,

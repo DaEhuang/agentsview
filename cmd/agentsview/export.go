@@ -109,6 +109,7 @@ func newExportCommandWithDeps(deps exportReportingDeps) *cobra.Command {
 	}
 	cmd.AddCommand(newExportSessionsCommand())
 	cmd.AddCommand(newExportConversationsCommand())
+	cmd.AddCommand(newExportUsageDaysCommand())
 	cmd.AddCommand(newExportStatusCommand())
 	cmd.AddCommand(newExportHourCommand(deps))
 	cmd.AddCommand(newExportDayCommand(deps))

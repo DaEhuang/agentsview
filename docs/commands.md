@@ -1353,6 +1353,35 @@ stdout empty, and exit with code 4:
 
 ______________________________________________________________________
 
+### `agentsview export usage-days`
+
+Export local archived usage by calendar day, machine, and source. This command
+reads the same normalized archive facts as local daily usage reports; it does
+not read provider files or start a sync. Run `agentsview sync` first when new
+source data needs importing. Both dates and an IANA timezone are required;
+the inclusive window is limited to one year.
+
+```bash
+agentsview export usage-days --from 2026-06-01 --to 2026-06-01 --timezone UTC
+agentsview export usage-days --from 2026-06-01 --to 2026-06-07 --timezone UTC --source kiro-crew
+```
+
+The JSON schema is `agentsview.usage-days/v1`. `database_id` identifies the
+archive generation. Each `days` entry includes `date`, `machine`, `source`,
+`quality`, four disjoint token counters, and `total_tokens`. `input_tokens`
+contains uncached input; cache reads and writes are separate counters.
+`qoder-cn`, `kiro-cli`, and `kiro-crew` are distinct sources. An absent row means
+no archived measurement was found; it is not evidence of zero usage.
+
+Kiro entries include original `credits`, `credit_authority`, and
+`estimate_policy`. Their tokens have `quality: estimated`; credits remain the
+native measurement. Totals use the fixed credit conversion documented in the
+provider format reference, rounded per archived session and calendar day.
+During an experimental Crew upgrade, the larger native or legacy daily credit
+observation for the same machine wins; the two are never added. A higher legacy
+observation sets `legacy_archive_higher: true`. The archive retains both sets of
+evidence. This export is a local SQLite contract, not a remote replica command.
+
 ### `agentsview export conversations`
 
 List conversation changes without message text, then fetch selected visible

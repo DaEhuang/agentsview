@@ -56,7 +56,7 @@ func readCrewRows(ctx context.Context, path string, visit func(gjson.Result) err
 }
 
 func parseCrewDialogue(ctx context.Context, files []string, stem, machine string) (ParseResult, error) {
-	result := ParseResult{Session: ParsedSession{ID: "kiro-crew:dialogue:" + stem,
+	result := ParseResult{Session: ParsedSession{RetainMissingNativeMessages: true, ID: "kiro-crew:dialogue:" + stem,
 		Agent: AgentKiroCrew, AgentLabel: "kiro-crew", Machine: machine, Project: "unknown"}}
 	seen := map[string]int{}
 	for _, path := range files {

@@ -13,7 +13,8 @@ import (
 
 // Credits are the native measurement. The separate usage event is an explicit
 // cost-equivalent estimate, never a claim of provider-reported token counts.
-const kiroCreditEstimateModel = "kiro-credit-equivalent-v1"
+const KiroCreditEstimateModel = "kiro-credit-equivalent-v1"
+const kiroCreditEstimateModel = KiroCreditEstimateModel
 
 type kiroCreditState struct {
 	AgentName            string `json:"agent_name"`
@@ -60,17 +61,12 @@ func kiroCreditAccounting(sessionID string, ordinal int, meta *kiroMeta) ([]Pars
 		if err != nil {
 			return nil, nil, fmt.Errorf("invalid credit timestamp in turn %d", i)
 		}
-		// $0.04 / credit; weighted price = .96*.20 + .035*4 + .005*20
-		// = $0.432 per million tokens. Allocate the rounded total without drift.
-		totalFloat := credits * 2_500_000 / 27
-		if math.IsInf(totalFloat, 0) || totalFloat >= float64(math.MaxInt64) {
-			return nil, nil, fmt.Errorf("credit estimate overflows in turn %d", i)
+		estimate, err := EstimateKiroCredits(credits)
+		if err != nil {
+			return nil, nil, err
 		}
-		total := int64(math.Round(totalFloat))
-		cached := int64(math.Round(float64(total) * .96))
-		input := int64(math.Round(float64(total) * .035))
-		output := total - cached - input
-		cost := money.Money{Microdollars: int64(math.Round(credits * 40_000))}
+		total, cached, input, output, cost := estimate.Total, estimate.CacheRead, estimate.Input, estimate.Output, estimate.Cost
+
 		key := "credit-turn:" + strconv.Itoa(i)
 		payload, err := json.Marshal(map[string]any{
 			"measurement": "credit", "credits": credits, "source": kiroCreditHarness(meta),
@@ -89,4 +85,29 @@ func kiroCreditAccounting(sessionID string, ordinal int, meta *kiroMeta) ([]Pars
 			OccurredAt: timestamp.UTC().Format(time.RFC3339Nano)})
 	}
 	return messages, events, nil
+}
+
+// CreditEquivalent explicitly labels an estimate derived from native credits.
+// Input is uncached input; total includes input, cache reads, and output.
+type CreditEquivalent struct {
+	Total, Input, CacheRead, Output int64
+	Cost                            money.Money
+}
+
+// EstimateKiroCredits is shared by the parser and archive daily exports.
+func EstimateKiroCredits(credits float64) (CreditEquivalent, error) {
+	if math.IsNaN(credits) || math.IsInf(credits, 0) || credits < 0 {
+		return CreditEquivalent{}, fmt.Errorf("invalid credit measurement")
+	}
+	// $0.04 / credit; 96% cache at $.20/M, 3.5% fresh input at $4/M,
+	// and .5% output at $20/M give a weighted $.432 per million tokens.
+	totalFloat := credits * 2_500_000 / 27
+	if math.IsInf(totalFloat, 0) || totalFloat >= float64(math.MaxInt64) {
+		return CreditEquivalent{}, fmt.Errorf("credit estimate overflows")
+	}
+	total := int64(math.Round(totalFloat))
+	cached := int64(math.Round(float64(total) * .96))
+	input := int64(math.Round(float64(total) * .035))
+	return CreditEquivalent{Total: total, CacheRead: cached, Input: input,
+		Output: total - cached - input, Cost: money.Money{Microdollars: int64(math.Round(credits * 40_000))}}, nil
 }

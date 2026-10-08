@@ -13,7 +13,7 @@ func newKiroCrewProviderFactory(def AgentDef) ProviderFactory {
 		FirstMessage: CapabilitySupported, Cwd: CapabilitySupported, Model: CapabilitySupported,
 	}, Sync: ProviderSyncSemantics{FingerprintHashRequiredForFreshness: true}}
 	return NewSourceSetFactory(def, caps, func(cfg ProviderConfig) SourceSet {
-		return NewJSONLSourceSet(AgentKiroCrew, cfg.Roots, WithRecursive(), WithContentHashing(), WithRejectSymlinkCompanions(),
+		return NewJSONLSourceSet(AgentKiroCrew, cfg.Roots, WithRecursive(), WithContentHashing(), WithRejectSymlinkCompanions(), WithForceReplace(),
 			WithDescendPath(func(root, path string) bool {
 				rel, err := filepath.Rel(root, path)
 				if err != nil {

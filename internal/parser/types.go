@@ -1339,12 +1339,16 @@ type FileInfo struct {
 
 // ParsedSession holds session metadata extracted from a JSONL file.
 type ParsedSession struct {
-	ID         string
-	Project    string
-	Machine    string
-	Agent      AgentType
-	AgentLabel string
-	Entrypoint string
+	// RetainMissingNativeMessages preserves archived messages when a rotating
+	// transcript no longer contains them. Every message must have a stable
+	// source UUID. This is for dialogue sources, not usage snapshots.
+	RetainMissingNativeMessages bool
+	ID                          string
+	Project                     string
+	Machine                     string
+	Agent                       AgentType
+	AgentLabel                  string
+	Entrypoint                  string
 	// SessionKind is a provider-owned top-level session classification marker
 	// (for example, Claude Code "bg" or Grok "non-interactive"); empty for
 	// interactive sessions and for agents that do not emit one.

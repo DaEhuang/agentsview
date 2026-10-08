@@ -219,7 +219,7 @@ func (f UsageFilter) appendUsageSessionFilterClauses(
 		return appendValues(q, a, col, strings.Split(csv, ","), include)
 	}
 
-	where, args = appendCSV(where, args, "s.agent", f.Agent, true)
+	where, args = appendCSV(where, args, usageAgentSQL, f.Agent, true)
 	where, args = appendValues(
 		where, args, "s.project", f.ProjectFilterLabels(), true,
 	)
@@ -232,7 +232,7 @@ func (f UsageFilter) appendUsageSessionFilterClauses(
 	where, args = appendValues(
 		where, args, "s.project", f.ExcludedProjectFilterLabels(), false,
 	)
-	where, args = appendCSV(where, args, "s.agent", f.ExcludeAgent, false)
+	where, args = appendCSV(where, args, usageAgentSQL, f.ExcludeAgent, false)
 
 	if f.MinUserMessages > 0 {
 		where += "\n\tAND s.user_message_count >= ?"
@@ -411,6 +411,13 @@ const usageEventEligibility = `
 
 const usageEventSourceEligibility = `
     ue.model != ''`
+
+// Provider identity remains stable in storage; reports distinguish regional
+// and harness variants using the parser-owned source label.
+const usageAgentSQL = `CASE
+ WHEN s.agent = 'qoder' AND s.agent_label = 'qoder-cn' THEN 'qoder-cn'
+ WHEN s.agent = 'kiro' AND s.agent_label = 'kiro-crew' THEN 'kiro-crew'
+ ELSE s.agent END`
 
 const usageSessionEligibility = `s.deleted_at IS NULL`
 

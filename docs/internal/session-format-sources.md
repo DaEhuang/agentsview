@@ -2381,11 +2381,24 @@ schemas keep their existing ordering behavior.
 - **Limits:** Old Crew bills already removed before the first import cannot
   be reconstructed from the current ledger. An untagged CLI invocation cannot
   be attributed to Crew merely because its cost resembles a Crew bill.
-  This experimental provider is not ready for a production cutover: removing
-  only an older rotated segment before updating its live file can remove
-  archived dialogue. Upgrading an earlier credit-enabled experimental archive
-  can also retain orphaned CLI bills alongside new Crew bills. These handover
-  cases need preservation and reconciliation before rollout.
+- **Archive retention:** Incremental imports and full rebuilds merge dialogue
+  by native message identity. Removed rotated segments remain in the archive;
+  completed replies cannot be downgraded to earlier streaming fragments.
+- **Experimental archive handover:** Local SQLite daily reports retain older
+  CLI credit evidence. For each machine, source, and calendar day, they choose
+  the larger of the native Crew ledger and archived Crew-owned CLI total.
+  They never add overlapping observations or match individual bills by amount
+  or timestamp. A higher legacy total is exposed as `legacy_archive_higher` in
+  `export usage-days`. Days without native coverage retain the legacy total.
+  This is a daily snapshot handover, not proof of individual bill identity.
+  The public daily export is the local archive integration contract; remote
+  database replicas do not implement this experimental handover.
+- **Regression evidence:** `TestRetainedNativeDialogueSurvivesRotationAndRebuild`,
+  `TestRetainedNativeArchiveReadIsBoundedByChangedSession`, and
+  `TestUsageDaysNativeCreditsAndLegacyDailyHandover` cover partial source
+  removal, rebuild preservation, bounded per-source reads, and overlapping
+  old/new daily observations. Native credits remain distinct from their
+  explicitly estimated token equivalent.
 
 ## Kiro IDE (`kiro-ide`)
 
@@ -3039,7 +3052,8 @@ schemas keep their existing ordering behavior.
   summing the buckets. This observation does not establish the international
   variant's accounting semantics. Reverified 2026-10-07 with a synthetic
   100-input/80-cached/20-output record: its total is 120, not 200. Covered by
-  `TestQoderCNCachedInputIsNotCountedTwice`; CN retains the `qoder-cn` label.
+  `TestQoderCNCachedInputIsNotCountedTwice`; CN retains the `qoder-cn` label. Local archive daily filters and
+  `export usage-days` report this source separately from international Qoder.
 - **Agentsview:** `internal/parser/qoder.go` and
   `internal/parser/qoder_provider.go`.
 

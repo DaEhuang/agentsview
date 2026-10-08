@@ -29,6 +29,7 @@ type usageFactsGroup struct {
 }
 
 type usageFactsResult struct {
+	Credits          []CreditDay
 	Groups           []usageFactsGroup
 	MatchingSessions map[string]UsageSessionInfo
 }

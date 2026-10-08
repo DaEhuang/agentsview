@@ -17331,7 +17331,13 @@ func (e *Engine) writeBatchWithOutcomeContext(
 			ctx, pw, resolveWorktreeProject,
 		)
 		if prepErr != nil {
-			return outcome
+			if ctx.Err() != nil {
+				return outcome
+			}
+			log.Printf("prepare session write: %v", prepErr)
+			e.markStaleFailedMemberWrite(ctx, pw)
+			outcome.failedSessions++
+			continue
 		}
 		if verdict != sessionWriteOK {
 			if verdict == sessionWriteCwdFiltered {
@@ -17610,6 +17616,16 @@ func (e *Engine) prepareSessionWriteContext(
 	}
 	if err := ctx.Err(); err != nil {
 		return db.Session{}, nil, sessionWritePreserved, err
+	}
+
+	if pw.sess.RetainMissingNativeMessages {
+		msgs, err = e.retainNativeArchiveMessages(ctx, &s, msgs)
+		if err != nil {
+			return db.Session{}, nil, sessionWritePreserved, err
+		}
+		if err := applySessionMessageDerivedFieldsContext(ctx, &s, msgs, false); err != nil {
+			return db.Session{}, nil, sessionWritePreserved, err
+		}
 	}
 
 	if e.shouldPreserveOpenCodeFormatArchive(
@@ -18572,7 +18588,13 @@ func (e *Engine) writeBatchBulkWithOutcomeContext(
 			ctx, pw, resolveWorktreeProject,
 		)
 		if prepErr != nil {
-			return outcome
+			if ctx.Err() != nil {
+				return outcome
+			}
+			log.Printf("prepare session write: %v", prepErr)
+			e.markStaleFailedMemberWrite(ctx, pw)
+			outcome.failedSessions++
+			continue
 		}
 		e.phaseStats.PrepNanos.Add(int64(time.Since(tPrep)))
 		if verdict != sessionWriteOK {
