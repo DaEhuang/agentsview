@@ -172,3 +172,24 @@ Activity history uses `agentsview export range` to discover a starting date,
 then the existing hour, day and digest exports. This does not make historical
 activity digest calculation incremental or establish a text-collection policy
 for a downstream system.
+
+## Original-file retention evidence
+
+`agentsview export retention-sources --machine MACHINE --limit 1` returns
+`agentsview.retention-sources/v1`. Continue with `--after` and the returned
+`next`, or recheck one session with `--session`. Reads use the existing archive;
+they never parse or remove original files. Each eligible source reports its
+parser-committed full SHA-256, byte count, activity window, archive/database
+identity, and every retained dialogue message's identity, revision and digest.
+
+Only independently owned Codex, Claude and Qoder JSONL sources with the current
+parser version are eligible. Shared containers, linked sessions, parse failures,
+missing timestamps, unfinished dialogue and archive identity gaps return an
+explicit reason and no deletion manifest. Reads are bounded to eight sources
+and 4,096 dialogue messages per source; larger sources remain retained.
+
+A consumer must still verify the on-disk hash and unchanged file generation,
+its inactivity policy, exact downstream dialogue and daily-usage coverage, and
+exclusive access before removing an original. These manifests alone never
+prove downstream delivery or authorize deletion. Source removal leaves archived
+conversations and usage intact, including subsequent resync orphan preservation.
