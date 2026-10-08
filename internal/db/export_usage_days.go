@@ -29,12 +29,13 @@ type UsageDay struct {
 }
 
 type UsageDaysExport struct {
-	Schema     string     `json:"schema"`
-	DatabaseID string     `json:"database_id"`
-	Timezone   string     `json:"timezone"`
-	From       string     `json:"from"`
-	To         string     `json:"to"`
-	Days       []UsageDay `json:"days"`
+	Schema     string          `json:"schema"`
+	DatabaseID string          `json:"database_id"`
+	Timezone   string          `json:"timezone"`
+	From       string          `json:"from"`
+	To         string          `json:"to"`
+	Days       []UsageDay      `json:"days"`
+	Blocked    []UsageDayBlock `json:"blocked,omitempty"`
 }
 
 // ExportUsageDays is the local archive's public integration boundary. It uses
@@ -61,6 +62,7 @@ func (d *DB) ExportUsageDays(ctx context.Context, options UsageDaysOptions) (Usa
 	if err != nil {
 		return UsageDaysExport{}, err
 	}
+	blocks := usageDayBlocks(snapshot, options, loc, from, to)
 	days := map[creditDayKey]*UsageDay{}
 	get := func(key creditDayKey) *UsageDay {
 		if days[key] == nil {
@@ -92,8 +94,15 @@ func (d *DB) ExportUsageDays(ctx context.Context, options UsageDaysOptions) (Usa
 		day.CreditAuthority, day.LegacyArchiveHigher = credit.Authority, credit.LegacyArchiveHigher
 	}
 	result := UsageDaysExport{Schema: "agentsview.usage-days/v1", DatabaseID: snapshot.DatabaseID,
-		Timezone: options.Timezone, From: options.From, To: options.To, Days: []UsageDay{}}
-	for _, day := range days {
+		Timezone: options.Timezone, From: options.From, To: options.To, Days: []UsageDay{}, Blocked: blocks}
+	blocked := map[creditDayKey]bool{}
+	for _, block := range blocks {
+		blocked[creditDayKey{block.Date, block.Machine, block.Source}] = true
+	}
+	for key, day := range days {
+		if blocked[key] {
+			continue
+		}
 		day.TotalTokens = day.InputTokens + day.OutputTokens + day.CacheReadTokens + day.CacheWriteTokens
 		result.Days = append(result.Days, *day)
 	}

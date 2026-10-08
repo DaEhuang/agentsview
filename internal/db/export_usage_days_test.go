@@ -90,3 +90,37 @@ func TestUsageDaysRejectsInvalidWindow(t *testing.T) {
 		require.Error(t, err)
 	}
 }
+
+func TestUsageDaysWithholdsOnlyUnreconciledSourceDays(t *testing.T) {
+	d := testDB(t)
+	for _, f := range []struct {
+		id, machine, day string
+		current          bool
+	}{
+		{"codex:retry", "local", "2026-06-01", false},
+		{"codex:ready", "local", "2026-06-02", true},
+		{"codex:other", "remote", "2026-06-01", true},
+	} {
+		stamp := f.day + "T12:00:00Z"
+		require.NoError(t, d.UpsertSession(t.Context(), Session{ID: f.id, Machine: f.machine, Agent: "codex", Project: "sample", StartedAt: new(stamp), EndedAt: new(stamp), FilePath: new("/synthetic/" + f.id)}))
+		require.NoError(t, d.ReplaceSessionMessages(t.Context(), f.id, []Message{{SessionID: f.id, Role: "assistant", Model: "model", Timestamp: stamp, TokenUsage: []byte(`{"input_tokens":100,"output_tokens":20}`)}}))
+		if f.current {
+			require.NoError(t, d.SetSessionDataVersion(t.Context(), f.id, CurrentDataVersion()))
+		}
+	}
+	seedCreditDay(t, d, "kiro:valid", "local", "kiro", "kiro-cli", "kiro-cli", "2026-06-01T12:00:00Z", 1)
+	opts := UsageDaysOptions{From: "2026-06-01", To: "2026-06-02", Timezone: "UTC"}
+	got, err := d.ExportUsageDays(t.Context(), opts)
+	require.NoError(t, err)
+	require.Len(t, got.Blocked, 1)
+	assert.Equal(t, UsageDayBlock{Date: "2026-06-01", Machine: "local", Source: "codex", Reason: "parser-reconciliation-required"}, got.Blocked[0])
+	require.Len(t, got.Days, 3)
+	for _, day := range got.Days {
+		assert.False(t, day.Date == "2026-06-01" && day.Machine == "local" && day.Source == "codex")
+	}
+	require.NoError(t, d.SetSessionDataVersion(t.Context(), "codex:retry", CurrentDataVersion()))
+	got, err = d.ExportUsageDays(t.Context(), opts)
+	require.NoError(t, err)
+	assert.Empty(t, got.Blocked)
+	assert.Len(t, got.Days, 4)
+}

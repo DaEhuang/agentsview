@@ -35,6 +35,7 @@ func (v usageSourceVersion) Equal(other usageSourceVersion) bool {
 }
 
 type usageQuerySession struct {
+	ParserDataVersion int
 	ID                string
 	Project           string
 	Machine           string
@@ -297,7 +298,7 @@ func loadUsageQuerySessionRecords(
 			COALESCE(s.is_automated, 0),
 			COALESCE(s.termination_status, ''),
 			CASE WHEN (` + filterWhere + `) THEN 1 ELSE 0 END,
-			COALESCE(s.sync_marker, ''), COALESCE(s.transcript_revision, '0')
+			COALESCE(s.sync_marker, ''), COALESCE(s.transcript_revision, '0'), s.data_version
 		FROM sessions s
 		WHERE s.deleted_at IS NULL AND s.id IN (` +
 				strings.Join(placeholders, ",") + `)
@@ -321,7 +322,7 @@ func loadUsageQuerySessionRecords(
 					&record.session.PeakContextTokens,
 					&hasTotalOutput, &hasPeakContext,
 					&automated, &record.session.TerminationStatus, &passes,
-					&record.version.SyncMarker, &record.version.TranscriptRevision,
+					&record.version.SyncMarker, &record.version.TranscriptRevision, &record.session.ParserDataVersion,
 				); err != nil {
 					_ = rows.Close()
 					return fmt.Errorf("scanning usage candidate metadata: %w", err)
