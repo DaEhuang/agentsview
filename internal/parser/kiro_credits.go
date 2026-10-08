@@ -23,7 +23,8 @@ type kiroCreditState struct {
 	} `json:"conversation_metadata"`
 }
 type kiroCreditTurn struct {
-	EndTimestamp string `json:"end_timestamp"`
+	EndTimestamp string   `json:"end_timestamp"`
+	MessageIDs   []string `json:"message_ids"`
 	Metering     []struct {
 		Unit  string  `json:"unit"`
 		Value float64 `json:"value"`

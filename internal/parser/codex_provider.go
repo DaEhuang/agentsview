@@ -764,13 +764,14 @@ type codexSourceSet struct {
 	agent    AgentType
 	roots    []string
 	metadata CodexMetadata
+	primary  *codexPrimarySources
 }
 
 func newCodexSourceSet(agent AgentType, roots []string) codexSourceSet {
 	if agent == "" {
 		agent = AgentCodex
 	}
-	return codexSourceSet{agent: agent, roots: cleanJSONLRoots(roots)}
+	return codexSourceSet{agent: agent, roots: cleanJSONLRoots(roots), primary: &codexPrimarySources{}}
 }
 
 // ownsCodexSidecars reports whether this source set's agent is the one that
@@ -1190,6 +1191,9 @@ func (s codexSourceSet) sourceRef(
 	if !ok || uuid == "" {
 		return SourceRef{}, false
 	}
+	if !s.selectsPath(path, uuid) {
+		return SourceRef{}, false
+	}
 	if requireRegular && !IsRegularFile(path) {
 		return SourceRef{}, false
 	}
@@ -1215,6 +1219,9 @@ func (s codexSourceSet) directPathSource(
 	root = filepath.Clean(root)
 	path = filepath.Clean(path)
 	if !strings.HasSuffix(path, ".jsonl") || !pathUnderRoot(root, path) {
+		return SourceRef{}, false
+	}
+	if !s.selectsPath(path, extractUUIDFromRollout(filepath.Base(path))) {
 		return SourceRef{}, false
 	}
 	if requireRegular && !IsRegularFile(path) {

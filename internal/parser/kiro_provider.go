@@ -1116,7 +1116,9 @@ func hashKiroJSONLSource(transcript, sidecar string) (string, error) {
 			return "", fmt.Errorf("stat %s: %w", sidecar, err)
 		}
 	}
-	digest := sha256.Sum256([]byte("kiro-current\x00" + transcriptHash + "\x00" + sidecarHash))
+	// Reparse existing JSONL once for seconds timestamps and ID-bound reply
+	// times. This leaves archive identity, orphaned sessions and SQLite intact.
+	digest := sha256.Sum256([]byte("kiro-times-v2\x00" + transcriptHash + "\x00" + sidecarHash))
 	return hex.EncodeToString(digest[:]), nil
 }
 

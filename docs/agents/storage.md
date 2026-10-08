@@ -27,7 +27,10 @@ every message.
 Message IDs are opaque archive identities, not row IDs, ordinals, timestamps, or
 text hashes. Preserve them through verified appends, unchanged complete
 reparses, and unambiguous native source IDs, including retained tombstones.
-Changed no-ID replacements must report identity ambiguity. Rebuilds retain these
+Changed no-ID replacements must report identity ambiguity. The one-time
+Codex repair can accept current opaque identities only after a fresh parse of
+the file selected by the native thread index; a durable per-session marker
+prevents repeating that recovery for later arbitrary rewrites. Rebuilds retain these
 IDs and tombstones but use the new database generation for revisions and
 cursors.
 

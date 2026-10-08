@@ -135,6 +135,11 @@ identified reliably by matching positions, timestamps or repeated text. Such
 ambiguity is a coverage gap, not proof that a previous citation still identifies
 the same utterance.
 
+A native Codex thread-index binding can repair an existing ambiguous archive
+once, after normal parsing reads the selected original file. The repair keeps
+current opaque IDs, publishes updated revisions, and preserves tombstones.
+Repeated native UUID collisions and later arbitrary rewrites remain gaps.
+
 A full resync is a replacement too. If a session's complete projection changes,
 messages without native IDs can become `identity_ambiguous` even when their own
 text is unchanged. An identical complete projection preserves those IDs. Each

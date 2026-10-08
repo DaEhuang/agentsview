@@ -400,6 +400,13 @@ add an archived or maintained mirror without replacing the original identity.
 
 ## Codex (`codex`)
 
+- **Retained rollout selection (2026-10-08):** Local producer evidence shows
+  multiple archived rollouts can retain one `session_meta.id`. The native
+  `state_5.sqlite` table `threads(id, rollout_path)` selects the current file.
+  The fork reads that binding without modifying it; only existing files inside
+  configured roots are eligible. Unselected files stay on disk. Synthetic
+  coverage: `TestCodexPrimarySourceUsesNativeThreadIndex`.
+
 - **Tool-result image check (2026-09-08):** Reverified the pinned
   [output payload types and array tests](https://github.com/openai/codex/blob/406dc9239492aff6d295cca5eebe2a548548d42f/codex-rs/protocol/src/models.rs).
   `function_call_output.output` accepts a string or a content-item array.
@@ -2288,6 +2295,13 @@ schemas keep their existing ordering behavior.
   display and the importer does not claim billing completeness.
 
 ## Kiro CLI (`kiro`)
+
+- **Message times (2026-10-08):** Locally observed legacy prompts use Unix
+  seconds in `data.meta.timestamp`; other layouts also accept milliseconds
+  and RFC3339. Missing final-reply times come from a companion turn only when
+  its last `message_ids` entry identifies that exact reply. Conflicting
+  bindings remain undated. Reverified with synthetic coverage in
+  `TestKiroMessageTimeUnitsAndIdentity`; credit accounting is unchanged.
 
 - **Fork credit accounting:** Legacy CLI sidecars can carry
   `session_state.conversation_metadata.user_turn_metadatas[].metering_usage`

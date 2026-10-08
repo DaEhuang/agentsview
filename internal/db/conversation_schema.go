@@ -138,6 +138,9 @@ func ensureConversationSchemaLocked(ctx context.Context, w *writerHandle, usageO
 			return err
 		}
 	}
+	if err := prepareCanonicalConversationRepairTx(contextTransaction{ctx: ctx, tx: tx}); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 

@@ -560,6 +560,7 @@ func writeOneSessionBatchTx(
 		if err := reconcileConversationMessagesTx(queries, write.Session.ID, msgs, true, usageOnly); err != nil {
 			return 0, err
 		}
+
 		pins, err = savePinsTx(queries, write.Session.ID)
 		if err != nil {
 			return 0, err
@@ -574,6 +575,11 @@ func writeOneSessionBatchTx(
 		}
 		msgs = messagesAfterOrdinal(msgs, maxOrd)
 		if err := reconcileConversationMessagesTx(queries, write.Session.ID, msgs, false, usageOnly); err != nil {
+			return 0, err
+		}
+	}
+	if write.Session.CanonicalDialogueSource && !usageOnly {
+		if err := resolveCanonicalConversationTx(queries, write.Session.ID); err != nil {
 			return 0, err
 		}
 	}

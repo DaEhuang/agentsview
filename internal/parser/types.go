@@ -1339,6 +1339,9 @@ type FileInfo struct {
 
 // ParsedSession holds session metadata extracted from a JSONL file.
 type ParsedSession struct {
+	// CanonicalDialogueSource is set only by a provider's native file binding.
+	// It permits the one-time recovery of previously ambiguous archive rows.
+	CanonicalDialogueSource bool
 	// RetainMissingNativeMessages preserves archived messages when a rotating
 	// transcript no longer contains them. Every message must have a stable
 	// source UUID. This is for dialogue sources, not usage snapshots.

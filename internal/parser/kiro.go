@@ -234,6 +234,7 @@ func (p *kiroProvider) parseLegacySessionContext(
 	if err != nil {
 		return nil, nil, err
 	}
+	restoreKiroReplyTimes(messages, meta)
 	if !hasContent && (meta == nil || len(meta.SessionState.ConversationMetadata.Turns) == 0) {
 		return nil, nil, nil
 	}
@@ -439,12 +440,45 @@ func kiroCurrentMessageTimestamp(value gjson.Result) time.Time {
 		return ts
 	}
 	if value.Type == gjson.Number {
-		millis := value.Int()
-		if millis != 0 {
-			return time.UnixMilli(millis).UTC()
+		stamp := value.Int()
+		if stamp != 0 {
+			if stamp > -100_000_000_000 && stamp < 100_000_000_000 {
+				return time.Unix(stamp, 0).UTC()
+			}
+			return time.UnixMilli(stamp).UTC()
 		}
 	}
 	return time.Time{}
+}
+
+// Legacy transcripts omit the final assistant timestamp. The companion turn
+// names its last message explicitly; only that ID inherits the recorded end.
+func restoreKiroReplyTimes(messages []ParsedMessage, meta *kiroMeta) {
+	if meta == nil {
+		return
+	}
+	times := map[string]time.Time{}
+	ambiguous := map[string]bool{}
+	for _, turn := range meta.SessionState.ConversationMetadata.Turns {
+		if len(turn.MessageIDs) == 0 {
+			continue
+		}
+		id := turn.MessageIDs[len(turn.MessageIDs)-1]
+		stamp := parseTimestamp(turn.EndTimestamp)
+		if id == "" || stamp.IsZero() {
+			continue
+		}
+		if previous, exists := times[id]; exists && !previous.Equal(stamp) {
+			ambiguous[id] = true
+		}
+		times[id] = stamp
+	}
+	for i := range messages {
+		m := &messages[i]
+		if m.Role == RoleAssistant && m.Timestamp.IsZero() && !ambiguous[m.SourceUUID] {
+			m.Timestamp = times[m.SourceUUID]
+		}
+	}
 }
 
 // kiroExtractText extracts concatenated text from a Kiro message's

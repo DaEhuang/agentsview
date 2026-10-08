@@ -17444,6 +17444,9 @@ func (e *Engine) writeBatchWithOutcomeContext(
 			}
 			werr = e.writeMessages(ctx, s.ID, msgs)
 		}
+		if werr == nil && s.CanonicalDialogueSource {
+			werr = e.db.ReconcileCanonicalConversation(ctx, s.ID, msgs)
+		}
 		if werr != nil {
 			if ctx.Err() != nil {
 				return outcome
@@ -20209,25 +20212,26 @@ func toDBSessionContext(
 		return db.Session{}, err
 	}
 	s := db.Session{
-		ID:                   pw.sess.ID,
-		Project:              pw.sess.Project,
-		Machine:              pw.sess.Machine,
-		MessageCount:         pw.sess.MessageCount,
-		UserMessageCount:     pw.sess.UserMessageCount,
-		ParentSessionID:      strPtr(pw.sess.ParentSessionID),
-		RelationshipType:     string(pw.sess.RelationshipType),
-		TotalOutputTokens:    pw.sess.TotalOutputTokens,
-		PeakContextTokens:    pw.sess.PeakContextTokens,
-		HasTotalOutputTokens: hasTotal,
-		HasPeakContextTokens: hasPeak,
-		Cwd:                  pw.sess.Cwd,
-		GitBranch:            pw.sess.GitBranch,
-		SourceSessionID:      pw.sess.SourceSessionID,
-		SourceVersion:        pw.sess.SourceVersion,
-		TranscriptFidelity:   pw.sess.TranscriptFidelity,
-		ParserMalformedLines: pw.sess.MalformedLines,
-		IsTruncated:          pw.sess.IsTruncated,
-		TerminationStatus:    strPtr(string(pw.sess.TerminationStatus)),
+		CanonicalDialogueSource: pw.sess.CanonicalDialogueSource,
+		ID:                      pw.sess.ID,
+		Project:                 pw.sess.Project,
+		Machine:                 pw.sess.Machine,
+		MessageCount:            pw.sess.MessageCount,
+		UserMessageCount:        pw.sess.UserMessageCount,
+		ParentSessionID:         strPtr(pw.sess.ParentSessionID),
+		RelationshipType:        string(pw.sess.RelationshipType),
+		TotalOutputTokens:       pw.sess.TotalOutputTokens,
+		PeakContextTokens:       pw.sess.PeakContextTokens,
+		HasTotalOutputTokens:    hasTotal,
+		HasPeakContextTokens:    hasPeak,
+		Cwd:                     pw.sess.Cwd,
+		GitBranch:               pw.sess.GitBranch,
+		SourceSessionID:         pw.sess.SourceSessionID,
+		SourceVersion:           pw.sess.SourceVersion,
+		TranscriptFidelity:      pw.sess.TranscriptFidelity,
+		ParserMalformedLines:    pw.sess.MalformedLines,
+		IsTruncated:             pw.sess.IsTruncated,
+		TerminationStatus:       strPtr(string(pw.sess.TerminationStatus)),
 		// data_version is intentionally left at the
 		// existing column default (0). UpsertSession does
 		// not persist this field; the caller bumps it via
