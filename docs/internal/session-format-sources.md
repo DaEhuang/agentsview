@@ -403,6 +403,7 @@ add an archived or maintained mirror without replacing the original identity.
 - **Retained rollout selection (2026-10-08):** Local producer evidence shows
   multiple archived rollouts can retain one `session_meta.id`. The native
   `state_5.sqlite` table `threads(id, rollout_path)` selects the current file.
+  Native index reads reuse the shared read-only SQLite path handling, including Windows drive paths.
   The fork reads that binding without modifying it; only existing files inside
   configured roots are eligible. Unselected files stay on disk. Synthetic
   coverage: `TestCodexPrimarySourceUsesNativeThreadIndex`.

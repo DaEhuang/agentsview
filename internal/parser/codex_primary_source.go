@@ -1,8 +1,6 @@
 package parser
 
 import (
-	"database/sql"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -44,8 +42,7 @@ func (s codexSourceSet) primaryPath(id string) string {
 		if !IsRegularFile(file) {
 			continue
 		}
-		u := url.URL{Scheme: "file", Path: filepath.ToSlash(file), RawQuery: "mode=ro&_busy_timeout=1000"}
-		d, err := sql.Open("sqlite3", u.String())
+		d, err := openSQLiteReadOnly(file, sqliteReadOptions{busyTimeoutMS: 1000})
 		if err != nil {
 			continue
 		}
