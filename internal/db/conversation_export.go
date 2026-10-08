@@ -31,18 +31,21 @@ type ConversationExportOptions struct {
 }
 
 type ConversationChange struct {
-	Type      string                  `json:"type"`
-	SessionID string                  `json:"session_id"`
-	MessageID string                  `json:"message_id"`
-	Revision  string                  `json:"revision"`
-	Ordinal   int                     `json:"ordinal"`
-	Role      string                  `json:"role"`
-	Timestamp *string                 `json:"timestamp"`
-	Deleted   bool                    `json:"deleted"`
-	Gap       string                  `json:"gap,omitempty"`
-	Digest    string                  `json:"digest"`
-	TextBytes int64                   `json:"text_bytes"`
-	Project   export.ProjectReference `json:"project"`
+	Type            string                  `json:"type"`
+	Source          string                  `json:"source"`
+	Machine         string                  `json:"machine"`
+	SourceSessionID string                  `json:"source_session_id"`
+	SessionID       string                  `json:"session_id"`
+	MessageID       string                  `json:"message_id"`
+	Revision        string                  `json:"revision"`
+	Ordinal         int                     `json:"ordinal"`
+	Role            string                  `json:"role"`
+	Timestamp       *string                 `json:"timestamp"`
+	Deleted         bool                    `json:"deleted"`
+	Gap             string                  `json:"gap,omitempty"`
+	Digest          string                  `json:"digest"`
+	TextBytes       int64                   `json:"text_bytes"`
+	Project         export.ProjectReference `json:"project"`
 }
 
 type ConversationExportResult struct {
@@ -164,6 +167,9 @@ func (db *DB) ExportConversationChanges(ctx context.Context, opts ConversationEx
 	if more {
 		result.Changes = result.Changes[:opts.Limit]
 	}
+	if err := attachConversationSources(ctx, tx, result.Changes); err != nil {
+		return result, err
+	}
 	if err := db.attachConversationProjects(ctx, tx, result.ArchiveID, result.Changes); err != nil {
 		return result, err
 	}
@@ -257,6 +263,10 @@ func (db *DB) GetConversationMessage(ctx context.Context, opts ConversationMessa
 		return ConversationMessage{}, errors.New("offset exceeds message text length")
 	}
 	changes := []ConversationChange{result.ConversationChange}
+	if err := attachConversationSources(ctx, tx, changes); err != nil {
+		return result, err
+	}
+	result.Source, result.Machine, result.SourceSessionID = changes[0].Source, changes[0].Machine, changes[0].SourceSessionID
 	if err := db.attachConversationProjects(ctx, tx, result.ArchiveID, changes); err != nil {
 		return ConversationMessage{}, err
 	}

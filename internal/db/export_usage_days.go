@@ -69,10 +69,7 @@ func (d *DB) ExportUsageDays(ctx context.Context, options UsageDaysOptions) (Usa
 		return days[key]
 	}
 	for _, group := range facts.Groups {
-		source := group.Agent
-		if source == "kiro" {
-			source = "kiro-cli"
-		}
+		source := publicUsageSource(group.Agent)
 		if options.Source != "" && options.Source != source {
 			continue
 		}

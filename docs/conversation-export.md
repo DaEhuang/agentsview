@@ -51,9 +51,18 @@ Continue polling to catch up. Do not infer deletion from absence in a page or
 from an interrupted walk.
 
 Message changes identify the session and stable message, its revision, order,
-role, optional source timestamp, text digest and byte count. Session changes
-refresh project evidence independently of text. Resolve project sharing before
-fetching bodies; a display label alone does not establish repository identity.
+role, optional source timestamp, text digest and byte count. Both listings and
+body chunks also include `source`, `machine`, and `source_session_id` from the
+same archive snapshot. `source` uses the same names as daily usage exports,
+including separate `kiro-cli` and `kiro-crew` values. The stored source session
+ID is preferred; otherwise the provider registry resolves its normal local
+identifier. Unrecognized identifiers and permanently deleted session metadata
+remain empty, so consumers must retain known identity rather than guess. These
+fields do not replace the archive/session/message logical key. Source identity
+corrections publish a session change without changing the text revision.
+
+Session changes refresh project evidence independently of text. Resolve project
+sharing before fetching bodies; a display label alone does not establish repository identity.
 The project reference follows the evidence rules in
 [Session Export](/docs/session-export/#project-evidence).
 
