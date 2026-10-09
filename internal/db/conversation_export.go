@@ -492,7 +492,11 @@ func reconcileConversationMessagesTx(tx transactionQueries, sessionID string, ms
 
 func conversationRowsEqual(a, b conversationRow) bool {
 	sameTime := a.Timestamp == nil && b.Timestamp == nil || a.Timestamp != nil && b.Timestamp != nil && *a.Timestamp == *b.Timestamp
-	return a.Ordinal == b.Ordinal && a.Role == b.Role && sameTime && a.sourceID == b.sourceID && a.Digest == b.Digest && (a.body == nil) == (b.body == nil)
+	// Compare the entire ordered conversation projection. Native ordinals also
+	// include accounting/system rows that are not exported: adding such a row
+	// must not change the identities of otherwise identical dialogue. A changed
+	// timestamp, role, source identity, body or sequence still breaks the proof.
+	return a.Role == b.Role && sameTime && a.sourceID == b.sourceID && a.Digest == b.Digest && (a.body == nil) == (b.body == nil)
 }
 
 func putConversationRowTx(tx transactionQueries, row conversationRow) error {
