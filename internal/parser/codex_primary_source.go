@@ -6,8 +6,8 @@ import (
 	"sync"
 )
 
-// Codex's own thread index selects a rollout when several retained files
-// carry the same session metadata. Filenames alone never choose the winner.
+// Codex's thread index can bind a nonstandard source filename for recovery.
+// It never excludes other rollouts of that thread from discovery.
 // Lookups seek one primary key, including providers constructed for a single
 // streaming parse; they must not walk every native thread for each source.
 type codexPrimarySources struct {
@@ -66,15 +66,16 @@ func (s codexSourceSet) primaryPath(id string) string {
 	return selected
 }
 
-func (s codexSourceSet) selectsPath(path, id string) bool {
-	// Retained copies may append a second UUID after an underscore. The
-	// filename is only a lookup hint: the native index still chooses the file.
-	if id == "" {
-		stem := strings.TrimSuffix(filepath.Base(path), ".jsonl")
-		if original, suffix, ok := strings.Cut(stem, "_"); ok && isCodexHistorySessionID(suffix) {
-			id = extractUUIDFromRollout(original + ".jsonl")
-		}
+// isBoundRollout authorizes a one-time repair only after the source's native
+// identity is verified. The thread index is metadata, never a filter: a
+// reverted thread's older rollouts remain valid archive sources.
+func (s codexSourceSet) isBoundRollout(path, id string) bool {
+	if s.agent != AgentCodex || id == "" {
+		return false
+	}
+	if CodexThreadIDFromFilename(filepath.Base(path)) == id {
+		return true
 	}
 	primary := s.primaryPath(id)
-	return primary == "" || samePath(primary, path)
+	return primary != "" && samePath(primary, path)
 }

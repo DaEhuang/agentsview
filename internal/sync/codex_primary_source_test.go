@@ -13,7 +13,7 @@ import (
 	"testing"
 )
 
-func TestCodexNativeBindingStopsAlternatingOriginals(t *testing.T) {
+func TestCodexNativeBindingRetainsEveryRolloutAndRepairsLegacyArchive(t *testing.T) {
 	home := t.TempDir()
 	root := filepath.Join(home, "archived_sessions")
 	require.NoError(t, os.MkdirAll(root, 0700))
@@ -32,6 +32,13 @@ func TestCodexNativeBindingStopsAlternatingOriginals(t *testing.T) {
 	first := NewEngine(t.Context(), database, cfg)
 	require.Zero(t, first.SyncAll(t.Context(), nil).Failed)
 	first.Close()
+	// Emulate the previous parser generation, including its recovery marker.
+	legacy, err := sql.Open("sqlite3", database.Path())
+	require.NoError(t, err)
+	_, err = legacy.Exec("DELETE FROM archive_metadata WHERE key LIKE 'conversation_rollout_%'")
+	require.NoError(t, err)
+	require.NoError(t, legacy.Close())
+	require.NoError(t, database.SetSessionDataVersion(t.Context(), sessionID, db.CurrentDataVersion()-1))
 	require.NoError(t, database.ReplaceSessionMessages(t.Context(), sessionID, []db.Message{{SessionID: sessionID, Role: "user", Content: "ambiguous previous copy"}}))
 	require.NoError(t, os.WriteFile(selected, []byte(content("selected original")), 0600))
 	require.NoError(t, os.WriteFile(shadow, []byte(content("shadowed retained copy")), 0600))
@@ -49,16 +56,19 @@ func TestCodexNativeBindingStopsAlternatingOriginals(t *testing.T) {
 	page, err := database.ExportConversationChanges(t.Context(), db.ConversationExportOptions{})
 	require.NoError(t, err)
 	visible := 0
+	var bodies []string
 	for _, c := range page.Changes {
 		if !c.Deleted && c.Type == "message" {
 			visible++
+			assert.Equal(t, id, c.SourceSessionID, "all retained rollouts export the native thread identity")
 			assert.NotEqual(t, "identity_ambiguous", c.Gap)
 			body, err := database.GetConversationMessage(t.Context(), db.ConversationMessageOptions{DatabaseID: page.DatabaseID, SessionID: c.SessionID, MessageID: c.MessageID, Revision: c.Revision})
 			require.NoError(t, err)
-			assert.Equal(t, "selected original", *body.Text)
+			bodies = append(bodies, *body.Text)
 		}
 	}
-	assert.Equal(t, 1, visible)
+	assert.Equal(t, 3, visible)
+	assert.ElementsMatch(t, []string{"old original", "selected original", "shadowed retained copy"}, bodies)
 	require.Zero(t, engine.SyncAll(t.Context(), nil).Failed)
 	after, err := database.ExportConversationChanges(t.Context(), db.ConversationExportOptions{Checkpoint: page.Checkpoint})
 	require.NoError(t, err)

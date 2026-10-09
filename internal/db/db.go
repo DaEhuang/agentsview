@@ -516,7 +516,8 @@ CREATE INDEX IF NOT EXISTS idx_provider_freshness_updated_at
 // envelopes, and corrects Codex/QoderCN accounting. Source-backed sessions
 // reparse; missing-source sessions keep their archived facts.
 // Version 115 gives native Crew transcripts and ledgers sole ownership of Crew data.
-const dataVersion = 116
+// Version 117 retains every Codex revert rollout and metered empty replies.
+const dataVersion = 117
 
 const tokenCoverageRepairStatsKey = "token_coverage_repair_v1"
 
@@ -2124,6 +2125,7 @@ type schemaColumnMigration struct {
 // that must exist before db.init executes schema.sql.
 func legacySchemaColumnMigrations() []schemaColumnMigration {
 	return []schemaColumnMigration{
+		{"excluded_sessions", "file_path", "ALTER TABLE excluded_sessions ADD COLUMN file_path TEXT"},
 		{
 			"tool_result_events", "raw_content_digest",
 			"ALTER TABLE tool_result_events ADD COLUMN raw_content_digest BLOB",

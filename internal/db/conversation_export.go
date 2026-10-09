@@ -357,6 +357,10 @@ func conversationRowsTx(tx transactionQueries, sessionID string) ([]conversation
 }
 
 func conversationRowFromMessage(m Message) (conversationRow, bool) {
+	// A native empty final response is a usage carrier, not missing dialogue.
+	if m.Content == "" && m.SourceSubtype == "final_answer" {
+		return conversationRow{}, false
+	}
 	if m.IsSystem || m.Role != "user" && m.Role != "assistant" || m.SourceSubtype == "tool_result" {
 		return conversationRow{}, false
 	}

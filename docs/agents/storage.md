@@ -29,15 +29,19 @@ text hashes. Preserve them through verified appends, unchanged complete
 reparses, and unambiguous native source IDs, including retained tombstones.
 Changed no-ID replacements must report identity ambiguity. The one-time
 Codex repair can accept current opaque identities only after a fresh parse of
-the file selected by the native thread index; a durable per-session marker
+a source verified by its native rollout identity; a durable per-session marker
 prevents repeating that recovery for later arbitrary rewrites. Rebuilds retain these
 IDs and tombstones but use the new database generation for revisions and
 cursors.
 
-The second repair generation covers retained underscore-suffixed Codex copies
+The second repair generation covered retained underscore-suffixed Codex copies
 that bypassed the original filename lookup. It still requires a fresh parse
 bound by the native index; previous recovery markers do not skip this one-time
-recheck. No source file or archived message is deleted to resolve the binding.
+recheck. No source file or archived message is deleted to resolve the binding. The
+third generation preserves every native rollout and verifies its filename and
+parsed thread ID (or the native index for nonstandard filenames). Stored source
+ownership preserves existing session IDs; other rollouts receive linked IDs.
+The index is no longer used to filter out historical rollouts.
 
 Initialize a missing conversation index from existing database messages on
 writable open. Copied orphans and trash use the same stored records; absent

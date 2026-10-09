@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestCodexPrimarySourceUsesNativeThreadIndex(t *testing.T) {
+func TestCodexNativeThreadIndexDoesNotExcludeHistoricalRollouts(t *testing.T) {
 	home := t.TempDir()
 	root := filepath.Join(home, "archived_sessions")
 	id := "01000000-0000-7000-8000-000000000001"
@@ -28,14 +28,12 @@ func TestCodexPrimarySourceUsesNativeThreadIndex(t *testing.T) {
 	sources := newCodexSourceSet(AgentCodex, []string{root})
 	all, err := sources.Discover(t.Context())
 	require.NoError(t, err)
-	require.Len(t, all, 1)
-	assert.Equal(t, primary, all[0].DisplayPath)
+	require.Len(t, all, 3)
 	var streamed []SourceRef
 	require.NoError(t, sources.DiscoverEach(t.Context(), func(s SourceRef) error { streamed = append(streamed, s); return nil }))
-	require.Len(t, streamed, 1)
-	assert.Equal(t, primary, streamed[0].DisplayPath)
+	require.Len(t, streamed, 3)
 	_, ok := sources.directPathSource(root, older, true)
-	assert.False(t, ok)
+	assert.True(t, ok)
 	assert.FileExists(t, older, "a shadowed original is never removed")
 	renamed := filepath.Join(root, "rollout-retained-copy.jsonl")
 	writeSourceFile(t, renamed, `{"type":"session_meta","payload":{"id":"`+id+`"}}`+"\n")
@@ -45,8 +43,10 @@ func TestCodexPrimarySourceUsesNativeThreadIndex(t *testing.T) {
 	require.True(t, ok)
 	outcome, err := provider.Parse(t.Context(), ParseRequest{Source: source})
 	require.NoError(t, err)
-	assert.Empty(t, outcome.Results)
-	assert.Equal(t, SkipNoSession, outcome.SkipReason)
+	require.Len(t, outcome.Results, 1)
+	assert.False(t, outcome.Results[0].Result.Session.CanonicalDialogueSource)
 	fallback := newCodexSourceSet(AgentTraeX, []string{root})
-	assert.True(t, fallback.selectsPath(older, id), "other providers do not inherit Codex metadata")
+	assert.False(t, fallback.isBoundRollout(older, id), "other providers do not inherit Codex repair")
+	assert.True(t, sources.isBoundRollout(older, id))
+	assert.True(t, sources.isBoundRollout(primary, id))
 }

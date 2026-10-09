@@ -400,6 +400,24 @@ add an archived or maintained mirror without replacing the original identity.
 
 ## Codex (`codex`)
 
+Local compatibility repair (verified 2026-10-09): Codex `thread/revert` writes
+another rollout with the same thread ID and a `history_base` reference. Keep
+all physical rollouts as linked sessions, following upstream
+[PR #2155](https://github.com/kenn-io/agentsview/pull/2155) at
+`899fd53ea2a4baa63296569d039c4bc723588e60`, with its shared-source ownership
+prerequisite `7fb07fd7e33f055960dd680d5d3c049a6b2cb9b2`. The native thread
+index identifies the active rollout; it does not invalidate historical files.
+This backport does not reconstruct a single active branch from `history_base`.
+S3 collision handling remains outside this local repair.
+
+An assistant `response_item` with `phase=final_answer` may contain empty text
+while the following `token_count` reports nonzero usage. Preserve that native
+row for accounting; an explicitly empty final reply is not a conversation
+export gap. Repeated cumulative usage markers still count once. These temporary
+repairs can be reconsidered after a stable upstream release passes archive
+upgrade and export regression checks.
+
+
 - **Retained rollout selection (2026-10-08):** Local producer evidence shows
   multiple archived rollouts can retain one `session_meta.id`. The native
   `state_5.sqlite` table `threads(id, rollout_path)` selects the current file.

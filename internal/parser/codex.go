@@ -473,7 +473,9 @@ func (b *codexSessionBuilder) handleResponseItem(ctx context.Context,
 		}
 		content = preprocessCodexUserTextBlocks(extractCodexTextBlocks(payload), !b.firstUserSeen)
 	}
-	if strings.TrimSpace(content) == "" {
+	// An empty final response can still have billed token_count metadata.
+	// Keep its native row so the following usage event has its own target.
+	if strings.TrimSpace(content) == "" && !(role == "assistant" && payload.Get("phase").Str == "final_answer") {
 		return
 	}
 
@@ -1804,11 +1806,6 @@ func (p *codexProvider) parseCodexSessionSnapshotStreaming(
 			codexCursorState{}, false, nil, "", "",
 			fmt.Errorf("reading codex %s: %w", path, err)
 	}
-	// Discovery can receive nonstandard retained filenames. Bind the parsed
-	// provider identity too, before any staged message set is published.
-	if !p.sources.selectsPath(path, b.sessionID) {
-		return nil, nil, codexCursorState{}, false, nil, "", "", nil
-	}
 
 	if err := b.flushPendingAgentResultsContext(ctx); err != nil {
 		return nil, nil, codexCursorState{}, false, nil, "", "", err
@@ -1876,7 +1873,8 @@ func (p *codexProvider) parseCodexSessionSnapshotStreaming(
 	}
 
 	sess := &ParsedSession{
-		CanonicalDialogueSource: p.sources.primaryPath(b.sessionID) != "" && samePath(p.sources.primaryPath(b.sessionID), path),
+		CanonicalDialogueSource: p.sources.isBoundRollout(path, b.sessionID),
+		SourceSessionID:         b.sessionID,
 		ID:                      sessionID,
 		Project:                 b.project,
 		Machine:                 machine,
