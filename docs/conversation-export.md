@@ -198,3 +198,27 @@ its inactivity policy, exact downstream dialogue and daily-usage coverage, and
 exclusive access before removing an original. These manifests alone never
 prove downstream delivery or authorize deletion. Source removal leaves archived
 conversations and usage intact, including subsequent resync orphan preservation.
+
+## Retained-history consumers
+
+`export conversations changes --retained` uses a partial revision index to
+exclude message tombstones and textless accounting rows before pagination.
+Explicit identity and content-policy gaps and session invalidations remain in
+the result. This view suits consumers that retain previously received text when
+a local source disappears. The default changes stream still includes deletions.
+
+Run normal writable initialization after upgrading to build the index once.
+Read-only exports never build it or change archive content. An existing default
+cursor can continue in the retained view at the same position; its fixed upper
+revision remains unchanged. A retained cursor cannot later be used for the
+unfiltered stream. Empty filtered ranges advance to their upper checkpoint, and
+concurrent writes are read in the next cycle.
+
+Consumers with saved unresolved identities can use
+`export conversations states --references '[{"session_id":"chat","message_id":"message"}]'`
+to read up to 32 current metadata records in one snapshot. The JSON argument is
+limited to 8192 bytes. An empty message ID addresses a session invalidation.
+Only explicitly returned tombstones prove removal. A missing result never
+proves deletion. This lookup uses stable identity keys, so reviewing a few gaps
+does not require walking unrelated historical changes. Neither command returns
+message bodies; the revision-pinned `message` command remains their authority.

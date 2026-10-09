@@ -490,3 +490,14 @@ To use an existing dedicated instance, run:
 TEST_PG_URL="postgres://user:pass@host:5432/dbname?sslmode=disable" \
   CGO_ENABLED=1 go test -tags "fts5,pgtest" ./internal/postgres/... -v
 ```
+
+### Retained conversation change reads
+
+The optional retained conversation stream uses
+`idx_conversation_messages_retained_revision`, a partial revision index over
+nondeleted rows except textless accounting gaps. Use the index explicitly;
+without archive statistics SQLite can choose the full revision index and walk
+millions of irrelevant tombstones. Normal writable initialization builds the
+index once without changing parser versions or rebuilding the archive.
+Keep the default stream, explicit gaps, snapshot upper bounds, and tombstone
+identity lookups intact. A missing lookup must never resolve a saved gap.

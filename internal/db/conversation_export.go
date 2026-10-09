@@ -28,6 +28,7 @@ type ConversationExportOptions struct {
 	Checkpoint string
 	Cursor     string
 	Limit      int
+	Retained   bool
 }
 
 type ConversationChange struct {
@@ -82,6 +83,7 @@ type conversationPosition struct {
 	DatabaseID string `json:"database_id"`
 	After      int64  `json:"after,string"`
 	Through    int64  `json:"through,string"`
+	Projection string `json:"projection,omitempty"`
 }
 
 const conversationChangeColumns = `session_id, message_id, CAST(revision AS TEXT), ordinal,
@@ -122,6 +124,9 @@ func (db *DB) ExportConversationChanges(ctx context.Context, opts ConversationEx
 		if position.Version != 1 || position.Kind != kind || position.DatabaseID == "" || position.After < 0 || position.Through < position.After || kind == "checkpoint" && position.After != position.Through {
 			return result, fmt.Errorf("%w: invalid conversation position", ErrInvalidCursor)
 		}
+		if position.Projection != "" && (position.Projection != "retained" || !opts.Retained) {
+			return result, fmt.Errorf("%w: conversation projection mismatch", ErrInvalidCursor)
+		}
 	}
 	tx, err := db.getReader().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -143,8 +148,18 @@ func (db *DB) ExportConversationChanges(ctx context.Context, opts ConversationEx
 	if opts.Cursor == "" {
 		position.Through = current
 	}
+	messageFilter := ""
+	messageTable := "conversation_messages"
+	if opts.Retained {
+		// This is an append-preserving consumer view, not a deletion mirror.
+		// Keep explicit identity/policy gaps; skip accounting-only rows and
+		// tombstones with the partial index, before pagination or source joins.
+		messageFilter = " AND " + retainedConversationPredicate
+		messageTable += " INDEXED BY idx_conversation_messages_retained_revision"
+		position.Projection = "retained"
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT 'message',`+conversationChangeColumns+`,revision AS publication_revision
-		FROM conversation_messages WHERE revision > ? AND revision <= ?
+		FROM `+messageTable+` WHERE revision > ? AND revision <= ?`+messageFilter+`
 		UNION ALL SELECT 'session',session_id,'',CAST(revision AS TEXT),0,'',NULL,deleted,gap,'',0,revision
 		FROM conversation_session_changes WHERE revision > ? AND revision <= ?
 		ORDER BY publication_revision LIMIT ?`, position.After, position.Through, position.After, position.Through, opts.Limit+1)

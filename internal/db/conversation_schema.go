@@ -7,6 +7,8 @@ import (
 	"fmt"
 )
 
+const retainedConversationPredicate = "deleted = 0 AND gap != 'visible_text_unavailable'"
+
 // This additive migration owns only local conversation export state. Historical
 // rows become explicit prose gaps only when writable reparsing cannot supply
 // evidence. A pending rebuild must not publish temporary message identities.
@@ -140,6 +142,12 @@ func ensureConversationSchemaLocked(ctx context.Context, w *writerHandle, usageO
 	}
 	if err := prepareCanonicalConversationRepairTx(contextTransaction{ctx: ctx, tx: tx}); err != nil {
 		return err
+	}
+	// Non-destructive and built once on writable open. No parser-version bump
+	// or archive rebuild is needed for the retained export projection.
+	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_conversation_messages_retained_revision
+		ON conversation_messages(revision) WHERE `+retainedConversationPredicate); err != nil {
+		return fmt.Errorf("indexing retained conversation changes: %w", err)
 	}
 	return tx.Commit()
 }
