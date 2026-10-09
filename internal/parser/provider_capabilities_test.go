@@ -52,6 +52,21 @@ func TestProviderCapabilitiesS3DiscoveryMatchConsumers(t *testing.T) {
 	}
 }
 
+// Only the providers with same-id files opt into keeping both: Gemini chat
+// segments, Cursor transcripts copied between projects, and reverted Codex
+// threads in the rollout format that also serves TraeX and Augure Code.
+func TestProviderCapabilitiesSharedSessionIDsOptIn(t *testing.T) {
+	for _, factory := range ProviderFactories() {
+		agent := factory.Definition().Type
+		want := CapabilityUnsupported
+		if agent == AgentGemini || agent == AgentCursor ||
+			agent == AgentCodex || agent == AgentTraeX || agent == AgentAugureCode {
+			want = CapabilitySupported
+		}
+		assert.Equalf(t, want, factory.Capabilities().Source.SharedSessionIDs, "%s", agent)
+	}
+}
+
 func TestProviderCapabilitiesActivityHintsMatchConsumers(t *testing.T) {
 	assert.Equal(t, CapabilityUnsupported, (SourceCapabilities{}).ActivityHints,
 		"new providers must opt in explicitly")

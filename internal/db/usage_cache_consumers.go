@@ -128,6 +128,11 @@ func (db *DB) queryUsageRollups(
 		timings.read = time.Since(readStarted)
 		if queryErr == nil {
 			release()
+			if kind == usageQueryKindToken {
+				if err := reconcileArchivedCredits(snapshot, filter, &facts); err != nil {
+					return usageQuerySnapshot{}, usageFactsResult{}, nil, err
+				}
+			}
 			timings.logIfSlow(started)
 			return snapshot, facts, resolver, nil
 		}

@@ -1626,7 +1626,7 @@ func TestArchiveContentRejectsInvalidValue(t *testing.T) {
 	require.NoError(t, err)
 	err = cfg.applyConfigTOML(`archive_content = "metadata"`)
 	require.EqualError(t, err,
-		`archive_content must be "full", "transcripts", or "usage" (got "metadata")`)
+		`archive_content must be "full", "transcripts", "dialogue", or "usage" (got "metadata")`)
 }
 
 func TestArchiveContentFromEnvironment(t *testing.T) {

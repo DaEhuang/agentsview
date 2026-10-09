@@ -518,7 +518,7 @@ func buildUsageRollupSessions(
 }
 
 func usageRollupSnapshotKey(fact usageRollupFact) string {
-	if fact.Fact.ClaudeMessageID == "" || fact.Fact.ClaudeRequestID == "" {
+	if fact.Fact.ClaudeMessageID == "" {
 		return ""
 	}
 	return fmt.Sprintf("%d:%s%s", len(fact.Fact.ClaudeMessageID),

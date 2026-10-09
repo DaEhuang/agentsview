@@ -27,9 +27,21 @@ every message.
 Message IDs are opaque archive identities, not row IDs, ordinals, timestamps, or
 text hashes. Preserve them through verified appends, unchanged complete
 reparses, and unambiguous native source IDs, including retained tombstones.
-Changed no-ID replacements must report identity ambiguity. Rebuilds retain these
+Changed no-ID replacements must report identity ambiguity. The one-time
+Codex repair can accept current opaque identities only after a fresh parse of
+a source verified by its native rollout identity; a durable per-session marker
+prevents repeating that recovery for later arbitrary rewrites. Rebuilds retain these
 IDs and tombstones but use the new database generation for revisions and
 cursors.
+
+The second repair generation covered retained underscore-suffixed Codex copies
+that bypassed the original filename lookup. It still requires a fresh parse
+bound by the native index; previous recovery markers do not skip this one-time
+recheck. No source file or archived message is deleted to resolve the binding. The
+third generation preserves every native rollout and verifies its filename and
+parsed thread ID (or the native index for nonstandard filenames). Stored source
+ownership preserves existing session IDs; other rollouts receive linked IDs.
+The index is no longer used to filter out historical rollouts.
 
 Initialize a missing conversation index from existing database messages on
 writable open. Copied orphans and trash use the same stored records; absent
@@ -96,12 +108,20 @@ command counts raw `tool_calls.result_content` and `tool_result_events.content`
 bytes separately from decoded image bytes. `db compact` reports file-size
 reclamation separately.
 
-Transcript-only and usage-only writes omit parser checkpoints because resumable
+Transcript-only, dialogue-only, and usage-only writes omit parser checkpoints because resumable
 hash state can contain raw trailing transcript bytes. They retain staged parsing
 but publish projected messages and tool metadata without staged output. Late
 result updates use the same projection as newly inserted messages.
 
 ## Archive Content Policy
+
+Dialogue storage removes the parser's reserved `[Thinking]` renderings from
+assistant bodies as well as the separate thinking field. A writable dialogue
+open upgrades existing rows in place, including messages whose source files
+are gone. The migration preserves archive/database identity and opaque message
+IDs, advances changed-message revisions, and leaves token facts unchanged.
+Copies use the same projection. User text and incomplete markers are retained.
+
 
 `archive_content` (`internal/config.ArchiveContent`) narrows what the SQLite
 archive stores. The `*db.DB` handle is the single authority: `Open` variants and
@@ -470,3 +490,14 @@ To use an existing dedicated instance, run:
 TEST_PG_URL="postgres://user:pass@host:5432/dbname?sslmode=disable" \
   CGO_ENABLED=1 go test -tags "fts5,pgtest" ./internal/postgres/... -v
 ```
+
+### Retained conversation change reads
+
+The optional retained conversation stream uses
+`idx_conversation_messages_retained_revision`, a partial revision index over
+nondeleted rows except textless accounting gaps. Use the index explicitly;
+without archive statistics SQLite can choose the full revision index and walk
+millions of irrelevant tombstones. Normal writable initialization builds the
+index once without changing parser versions or rebuilding the archive.
+Keep the default stream, explicit gaps, snapshot upper bounds, and tombstone
+identity lookups intact. A missing lookup must never resolve a saved gap.

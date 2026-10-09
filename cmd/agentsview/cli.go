@@ -357,6 +357,7 @@ func newSyncCommandWithRunner(run func(SyncConfig)) *cobra.Command {
 			"Incremental local-only sync waits if the default daemon is busy, with\n" +
 			"status and Ctrl+C cancellation. For a one-shot offline run,\n" +
 			"stop the daemon first, then use `AGENTSVIEW_NO_DAEMON=1 agentsview sync`.\n\n" +
+			"Offline local sync exits non-zero if discovery or processing is incomplete.\n\n" +
 			"With no --host, sync runs the local sync and then fans out to\n" +
 			"every host listed in the [[remote_hosts]] array in config.toml,\n" +
 			"syncing each by its configured transport. A failure on one\n" +

@@ -101,6 +101,13 @@ add an archived or maintained mirror without replacing the original identity.
 
 ## Claude Code (`claude`)
 
+- **Dialogue projection check (2026-10-08):** Reverified the local
+  `ExtractTextContent` renderer and its fixtures: thinking blocks appear both
+  in `ThinkingText` and as reserved `[Thinking]` sections in flattened content.
+  Dialogue storage removes both representations, including an in-place
+  upgrade of previously narrowed archives. This is consumer rendering evidence,
+  not a new claim about the producer format.
+
 - **Performance fixture check (2026-09-04):** Rechecked the pinned Codeburn
   format notes below for project-scoped JSONL. `cmd/perfsim` uses the shared
   Claude fixture builder to emit user/assistant pairs with message/request
@@ -225,6 +232,12 @@ add an archived or maintained mirror without replacing the original identity.
   SQLite archive. Reverified 2026-08-22 that activity buckets carry the
   selected Claude input-token snapshots identically across SQLite, PostgreSQL,
   and DuckDB.
+
+- **Fork accounting:** Reverified 2026-10-07 against local source records:
+  some transcripts have stable `message.id` but no `requestId`. Their streamed
+  snapshots are ranked by message ID alone; the request ID stays empty.
+  Rows without a message ID retain the existing source-UUID fallback.
+  `TestClaudeUsageSnapshotWithoutRequestID` covers streaming and fork replay.
 
 - **Agentsview:** `internal/parser/claude.go` and
   `internal/parser/claude_provider.go`; local observations and fixtures are
@@ -387,6 +400,36 @@ add an archived or maintained mirror without replacing the original identity.
 
 ## Codex (`codex`)
 
+Local compatibility repair (verified 2026-10-09): Codex `thread/revert` writes
+another rollout with the same thread ID and a `history_base` reference. Keep
+all physical rollouts as linked sessions, following upstream
+[PR #2155](https://github.com/kenn-io/agentsview/pull/2155) at
+`899fd53ea2a4baa63296569d039c4bc723588e60`, with its shared-source ownership
+prerequisite `7fb07fd7e33f055960dd680d5d3c049a6b2cb9b2`. The native thread
+index identifies the active rollout; it does not invalidate historical files.
+This backport does not reconstruct a single active branch from `history_base`.
+S3 collision handling remains outside this local repair.
+
+An assistant `response_item` with `phase=final_answer` may contain empty text
+while the following `token_count` reports nonzero usage. Preserve that native
+row for accounting; an explicitly empty final reply is not a conversation
+export gap. Repeated cumulative usage markers still count once. These temporary
+repairs can be reconsidered after a stable upstream release passes archive
+upgrade and export regression checks.
+
+
+- **Retained rollout selection (2026-10-08):** Local producer evidence shows
+  multiple archived rollouts can retain one `session_meta.id`. The native
+  `state_5.sqlite` table `threads(id, rollout_path)` selects the current file.
+  Native index reads reuse the shared read-only SQLite path handling, including Windows drive paths.
+  The fork reads that binding without modifying it; only existing files inside
+  configured roots are eligible. Unselected files stay on disk. Synthetic
+  coverage: `TestCodexPrimarySourceUsesNativeThreadIndex`. Retained names with
+  an appended underscore and UUID use the original UUID only as an index
+  lookup hint; the parsed session identity is checked again before publishing.
+  `TestCodexNativeBindingStopsAlternatingOriginals` includes multiple suffixed
+  copies and verifies that a second sync produces no conversation changes.
+
 - **Tool-result image check (2026-09-08):** Reverified the pinned
   [output payload types and array tests](https://github.com/openai/codex/blob/406dc9239492aff6d295cca5eebe2a548548d42f/codex-rs/protocol/src/models.rs).
   `function_call_output.output` accepts a string or a content-item array.
@@ -407,6 +450,13 @@ add an archived or maintained mirror without replacing the original identity.
   `cmd/perfsim` generates dated rollouts with session metadata, turn context,
   response items and token-count events through the shared fixture builder.
   Its integration test checks parsed messages and aggregate output tokens.
+
+- **Fork accounting:** Reverified 2026-10-07 using synthetic equal-size
+  requests. Deduplication uses `total_token_usage` when present, falling back
+  to `last_token_usage` for legacy records. Assistant `phase` is retained for
+  final-reply storage. `TestCodexEqualRequestsAdvanceCumulativeUsage` and
+  `TestCodexPreservesResponsePhase` cover both rules. Daily attribution remains
+  the associated assistant timestamp; it is not a previous-request timestamp.
 
 - **Format:** Rollout JSONL files, with a separate JSONL session index used by
   older releases for discovery and metadata. Current releases no longer write
@@ -2269,6 +2319,26 @@ schemas keep their existing ordering behavior.
 
 ## Kiro CLI (`kiro`)
 
+- **Message times (2026-10-08):** Locally observed legacy prompts use Unix
+  seconds in `data.meta.timestamp`; other layouts also accept milliseconds
+  and RFC3339. Missing final-reply times come from a companion turn only when
+  its last `message_ids` entry identifies that exact reply. Conflicting
+  bindings remain undated. Reverified with synthetic coverage in
+  `TestKiroMessageTimeUnitsAndIdentity`; credit accounting is unchanged.
+
+- **Fork credit accounting:** Legacy CLI sidecars can carry
+  `session_state.conversation_metadata.user_turn_metadatas[].metering_usage`
+  and `end_timestamp`. Native credit records are archived separately from
+  synthetic usage events. The versioned `kiro-credit-equivalent-v1` model
+  estimates tokens at $0.04/credit, using 96% cached input at $0.20/M,
+  3.5% uncached input at $4/M, and 0.5% output at $20/M. These are explicit
+  policy assumptions, not measured token ratios. Crew-owned CLI replays are
+  excluded in favor of the native Crew provider below. Ordinary CLI sessions
+  keep dated native credits and their explicitly estimated token equivalent.
+  Covered by `TestKiroCreditAccountingUsesDatedNativeCredits`; evidence is
+  locally observed metadata plus synthetic fixtures, not a published producer
+  contract.
+
 - **Format:** Legacy JSONL plus companion metadata JSON, and newer SQLite
   session databases.
 
@@ -2310,8 +2380,9 @@ schemas keep their existing ordering behavior.
   USD fields. The companion state can contain model/window metadata, context
   percentage, and per-turn credit metering; the recorded Kiro 2.5.1 evidence
   found input/output counters present but zero and no cache split. Agentsview
-  currently consumes none of those sidecar usage fields, so it emits no Kiro
-  usage or cost metrics.
+  reads dated legacy-sidecar credit meters in this fork and retains their
+  native values alongside explicitly labeled cost-equivalent estimates. The
+  newer SQLite format still has no measured token or credit coverage here.
 
 - **Agentsview:** `internal/parser/kiro.go`, `internal/parser/kiro_sqlite.go`,
   and `internal/parser/kiro_provider.go`; both generations must remain
@@ -2320,6 +2391,58 @@ schemas keep their existing ordering behavior.
   and single-session parsing honor the caller's filesystem-discovery policy;
   `TestKiroProviderSQLiteProjectDiscoveryPolicy` verifies project names and
   filesystem probes with discovery enabled and disabled.
+
+## Kiro Crew (`kiro-crew`)
+
+- **Format:** `sessions/<slot>.jsonl` holds the original visible messages;
+  `sessions/archive/<slot>__<stamp>.jsonl` holds rotated segments. Native
+  `meta.mid` identities join overlapping segments. Assistant `meta.turn_stats`
+  identifies a completed response. Unmarked assistant rows stay classified as
+  commentary, including interrupted or still-streaming tails. Older records
+  without completion metadata cannot establish a final reply. Compaction,
+  injected context, tools, and background notices do not become dialogue messages.
+- **Evidence:** `source`.
+- **Upstream:** Clone `https://github.com/kirodotdev/KiroCrew.git` at
+  `c67c5060a82faf6e5e1bc06077122c473d4ca456` (v0.7.2). The
+  [usage writer](https://github.com/kirodotdev/KiroCrew/blob/c67c5060a82faf6e5e1bc06077122c473d4ca456/src/kiro_crew/dashboard/handlers/usage.py),
+  `session_storage.py`, `history.py`, and `dashboard/chat_runner.py` were
+  checked 2026-10-08, alongside the locally installed 0.7.2 producer source.
+- **Usage and cost:** `usage/tokens/<day>.jsonl` appends one bill per completed
+  turn. Every ACP surface and phase is included, including `session_start`,
+  subagents, and background work. Credits are measured; their token equivalent
+  uses the explicit policy described under Kiro CLI. The row's timestamp,
+  rather than its shard filename, determines the reporting day. Non-ACP
+  billing records fail parsing instead of being reported as measured tokens.
+- **Agentsview:** `internal/parser/kiro_crew_provider.go` and
+  `internal/parser/kiro_crew.go`; synthetic fixtures cover archive overlap,
+  stable message IDs, targeted changed-path mapping, every billing surface,
+  partial trailing writes, equal-price separate turns, and midnight bucketing.
+- **Ownership:** CLI sidecars whose agent is `kirocrew` or starts with
+  `kirocrew-` are Crew replays. Their bodies and usage are excluded from the
+  CLI provider even when the original Crew source is absent. Ordinary CLI
+  sessions retain their own usage. Crew records lack historical CLI request
+  IDs, so matching timestamps or credit amounts is not a deduplication method.
+- **Limits:** Old Crew bills already removed before the first import cannot
+  be reconstructed from the current ledger. An untagged CLI invocation cannot
+  be attributed to Crew merely because its cost resembles a Crew bill.
+- **Archive retention:** Incremental imports and full rebuilds merge dialogue
+  by native message identity. Removed rotated segments remain in the archive;
+  completed replies cannot be downgraded to earlier streaming fragments.
+- **Experimental archive handover:** Local SQLite daily reports retain older
+  CLI credit evidence. For each machine, source, and calendar day, they choose
+  the larger of the native Crew ledger and archived Crew-owned CLI total.
+  They never add overlapping observations or match individual bills by amount
+  or timestamp. A higher legacy total is exposed as `legacy_archive_higher` in
+  `export usage-days`. Days without native coverage retain the legacy total.
+  This is a daily snapshot handover, not proof of individual bill identity.
+  The public daily export is the local archive integration contract; remote
+  database replicas do not implement this experimental handover.
+- **Regression evidence:** `TestRetainedNativeDialogueSurvivesRotationAndRebuild`,
+  `TestRetainedNativeArchiveReadIsBoundedByChangedSession`, and
+  `TestUsageDaysNativeCreditsAndLegacyDailyHandover` cover partial source
+  removal, rebuild preservation, bounded per-source reads, and overlapping
+  old/new daily observations. Native credits remain distinct from their
+  explicitly estimated token equivalent.
 
 ## Kiro IDE (`kiro-ide`)
 
@@ -2967,9 +3090,14 @@ schemas keep their existing ordering behavior.
   `<session-id>.jsonl`. This is a user-reported local observation, not
   producer-side evidence, and does not establish storage behavior for all
   Qoder CN releases or platforms.
-- **Usage and cost:** The consumed files provide transcript and model/session
-  metadata but no authoritative token, cache, reasoning, credit, or USD events
-  to Agentsview.
+- **Usage and cost:** Locally observed Qoder CN project transcripts contain
+  `message.usage.input_tokens`, `cache_read_input_tokens`, and `output_tokens`.
+  CN input includes cached tokens; normalize the uncached remainder before
+  summing the buckets. This observation does not establish the international
+  variant's accounting semantics. Reverified 2026-10-07 with a synthetic
+  100-input/80-cached/20-output record: its total is 120, not 200. Covered by
+  `TestQoderCNCachedInputIsNotCountedTwice`; CN retains the `qoder-cn` label. Local archive daily filters and
+  `export usage-days` report this source separately from international Qoder.
 - **Agentsview:** `internal/parser/qoder.go` and
   `internal/parser/qoder_provider.go`.
 

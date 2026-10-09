@@ -251,12 +251,12 @@ func TestApplyUsage_DedupBySourceUUIDFallback(t *testing.T) {
 		{
 			SessionID: "earlier", Model: "m1", Timestamp: "2026-06-16T10:00:00Z",
 			OutputTokens: 500, Cost: money.MustParseDollars("5.0"), Agent: "claude",
-			ClaudeMessageID: "dup-m", SourceUUID: "src-dup",
+			ClaudeMessageID: "", SourceUUID: "src-dup",
 		},
 		{
 			SessionID: "later", Model: "m1", Timestamp: "2026-06-16T10:01:00Z",
 			OutputTokens: 900, Cost: money.MustParseDollars("9.0"), Agent: "claude",
-			ClaudeMessageID: "dup-m", SourceUUID: "src-dup",
+			ClaudeMessageID: "", SourceUUID: "src-dup",
 		},
 	}
 	start := mustStart(t, "2026-06-16T00:00:00Z")

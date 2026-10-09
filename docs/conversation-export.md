@@ -51,9 +51,18 @@ Continue polling to catch up. Do not infer deletion from absence in a page or
 from an interrupted walk.
 
 Message changes identify the session and stable message, its revision, order,
-role, optional source timestamp, text digest and byte count. Session changes
-refresh project evidence independently of text. Resolve project sharing before
-fetching bodies; a display label alone does not establish repository identity.
+role, optional source timestamp, text digest and byte count. Both listings and
+body chunks also include `source`, `machine`, and `source_session_id` from the
+same archive snapshot. `source` uses the same names as daily usage exports,
+including separate `kiro-cli` and `kiro-crew` values. The stored source session
+ID is preferred; otherwise the provider registry resolves its normal local
+identifier. Unrecognized identifiers and permanently deleted session metadata
+remain empty, so consumers must retain known identity rather than guess. These
+fields do not replace the archive/session/message logical key. Source identity
+corrections publish a session change without changing the text revision.
+
+Session changes refresh project evidence independently of text. Resolve project
+sharing before fetching bodies; a display label alone does not establish repository identity.
 The project reference follows the evidence rules in
 [Session Export](/docs/session-export/#project-evidence).
 
@@ -126,6 +135,11 @@ identified reliably by matching positions, timestamps or repeated text. Such
 ambiguity is a coverage gap, not proof that a previous citation still identifies
 the same utterance.
 
+A native Codex thread-index binding can repair an existing ambiguous archive
+once, after normal parsing reads the selected original file. The repair keeps
+current opaque IDs, publishes updated revisions, and preserves tombstones.
+Repeated native UUID collisions and later arbitrary rewrites remain gaps.
+
 A full resync is a replacement too. If a session's complete projection changes,
 messages without native IDs can become `identity_ambiguous` even when their own
 text is unchanged. An identical complete projection preserves those IDs. Each
@@ -163,3 +177,48 @@ Activity history uses `agentsview export range` to discover a starting date,
 then the existing hour, day and digest exports. This does not make historical
 activity digest calculation incremental or establish a text-collection policy
 for a downstream system.
+
+## Original-file retention evidence
+
+`agentsview export retention-sources --machine MACHINE --limit 1` returns
+`agentsview.retention-sources/v1`. Continue with `--after` and the returned
+`next`, or recheck one session with `--session`. Reads use the existing archive;
+they never parse or remove original files. Each eligible source reports its
+parser-committed full SHA-256, byte count, activity window, archive/database
+identity, and every retained dialogue message's identity, revision and digest.
+
+Only independently owned Codex, Claude and Qoder JSONL sources with the current
+parser version are eligible. Shared containers, linked sessions, parse failures,
+missing timestamps, unfinished dialogue and archive identity gaps return an
+explicit reason and no deletion manifest. Reads are bounded to eight sources
+and 4,096 dialogue messages per source; larger sources remain retained.
+
+A consumer must still verify the on-disk hash and unchanged file generation,
+its inactivity policy, exact downstream dialogue and daily-usage coverage, and
+exclusive access before removing an original. These manifests alone never
+prove downstream delivery or authorize deletion. Source removal leaves archived
+conversations and usage intact, including subsequent resync orphan preservation.
+
+## Retained-history consumers
+
+`export conversations changes --retained` uses a partial revision index to
+exclude message tombstones and textless accounting rows before pagination.
+Explicit identity and content-policy gaps and session invalidations remain in
+the result. This view suits consumers that retain previously received text when
+a local source disappears. The default changes stream still includes deletions.
+
+Run normal writable initialization after upgrading to build the index once.
+Read-only exports never build it or change archive content. An existing default
+cursor can continue in the retained view at the same position; its fixed upper
+revision remains unchanged. A retained cursor cannot later be used for the
+unfiltered stream. Empty filtered ranges advance to their upper checkpoint, and
+concurrent writes are read in the next cycle.
+
+Consumers with saved unresolved identities can use
+`export conversations states --references '[{"session_id":"chat","message_id":"message"}]'`
+to read up to 32 current metadata records in one snapshot. The JSON argument is
+limited to 8192 bytes. An empty message ID addresses a session invalidation.
+Only explicitly returned tombstones prove removal. A missing result never
+proves deletion. This lookup uses stable identity keys, so reviewing a few gaps
+does not require walking unrelated historical changes. Neither command returns
+message bodies; the revision-pinned `message` command remains their authority.

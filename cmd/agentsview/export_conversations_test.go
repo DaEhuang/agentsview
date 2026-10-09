@@ -235,3 +235,34 @@ func TestExportConversationsPagesBodiesAndCorrections(t *testing.T) {
 	assert.Empty(t, stdout)
 	assert.Contains(t, stderr, `"error":"reconciliation_required"`)
 }
+
+func TestExportConversationsRetainedStatesAreReadOnly(t *testing.T) {
+	p := filepath.Join(testDataDir(t), "sessions.db")
+	database := dbtest.OpenTestDBAt(t, p)
+	insertExportSessionsTestSession(t, database, db.Session{ID: "chat", Project: "sample", Machine: "local", Agent: "codex"})
+	require.NoError(t, database.InsertMessages(t.Context(), []db.Message{{SessionID: "chat", Role: "user", Content: "Saved", SourceUUID: "q"}}))
+	initial, err := database.ExportConversationChanges(t.Context(), db.ConversationExportOptions{})
+	require.NoError(t, err)
+	require.NoError(t, database.SoftDeleteSession(t.Context(), "chat"))
+	require.NoError(t, database.Close())
+	before, err := os.ReadFile(p)
+	require.NoError(t, err)
+	stdout, _, err := executeExportSessionsCommand(newRootCommand(), "export", "conversations", "changes", "--retained")
+	require.NoError(t, err)
+	var page db.ConversationExportResult
+	require.NoError(t, json.Unmarshal([]byte(stdout), &page))
+	require.Len(t, page.Changes, 1)
+	assert.Equal(t, "session", page.Changes[0].Type)
+	refs, err := json.Marshal([]db.ConversationReference{{SessionID: "chat", MessageID: initial.Changes[0].MessageID}})
+	require.NoError(t, err)
+	stdout, _, err = executeExportSessionsCommand(newRootCommand(), "export", "conversations", "states", "--references", string(refs))
+	require.NoError(t, err)
+	var states db.ConversationStates
+	require.NoError(t, json.Unmarshal([]byte(stdout), &states))
+	require.Len(t, states.Changes, 1)
+	assert.True(t, states.Changes[0].Deleted)
+	assert.NotContains(t, stdout, "Saved")
+	after, err := os.ReadFile(p)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+}

@@ -473,7 +473,9 @@ func (b *codexSessionBuilder) handleResponseItem(ctx context.Context,
 		}
 		content = preprocessCodexUserTextBlocks(extractCodexTextBlocks(payload), !b.firstUserSeen)
 	}
-	if strings.TrimSpace(content) == "" {
+	// An empty final response can still have billed token_count metadata.
+	// Keep its native row so the following usage event has its own target.
+	if strings.TrimSpace(content) == "" && !(role == "assistant" && payload.Get("phase").Str == "final_answer") {
 		return
 	}
 
@@ -505,6 +507,7 @@ func (b *codexSessionBuilder) handleResponseItem(ctx context.Context,
 	}
 	if role == string(RoleAssistant) {
 		msg.ReasoningEffort = b.reasoningEffort
+		msg.SourceSubtype = payload.Get("phase").Str
 	}
 	b.sink.AppendMessage(msg)
 }
@@ -558,7 +561,14 @@ func (b *codexSessionBuilder) handleTokenCountEvent(
 	payload gjson.Result,
 ) {
 	raw := payload.Get("info.last_token_usage").Raw
-	if raw == "" || b.observeTokenUsage(raw) {
+	// Equal per-request counts do not identify a repeated event. Prefer the
+	// cumulative watermark when available; identical requests advance it.
+	total := payload.Get("info.total_token_usage")
+	identity := total.Raw
+	if total.Get("total_tokens").Int() <= 0 && total.Get("input_tokens").Int() <= 0 && total.Get("output_tokens").Int() <= 0 {
+		identity = raw
+	}
+	if raw == "" || b.observeTokenUsage(identity) {
 		return
 	}
 
@@ -1863,23 +1873,25 @@ func (p *codexProvider) parseCodexSessionSnapshotStreaming(
 	}
 
 	sess := &ParsedSession{
-		ID:                 sessionID,
-		Project:            b.project,
-		Machine:            machine,
-		Agent:              AgentCodex,
-		ParentSessionID:    b.parentSessionID,
-		RelationshipType:   b.relationshipType,
-		SessionKind:        b.sessionKind,
-		Cwd:                b.cwd,
-		FirstMessage:       b.firstMessage,
-		SessionName:        sessionName,
-		SessionNamePresent: sessionNamePresent,
-		MalformedLines:     malformedLines,
-		StartedAt:          b.startedAt,
-		EndedAt:            b.endedAt,
-		MessageCount:       len(msgs),
-		UserMessageCount:   userCount,
-		TerminationStatus:  classifyCodexTermination(b.lastTaskEvent),
+		CanonicalDialogueSource: p.sources.isBoundRollout(path, b.sessionID),
+		SourceSessionID:         b.sessionID,
+		ID:                      sessionID,
+		Project:                 b.project,
+		Machine:                 machine,
+		Agent:                   AgentCodex,
+		ParentSessionID:         b.parentSessionID,
+		RelationshipType:        b.relationshipType,
+		SessionKind:             b.sessionKind,
+		Cwd:                     b.cwd,
+		FirstMessage:            b.firstMessage,
+		SessionName:             sessionName,
+		SessionNamePresent:      sessionNamePresent,
+		MalformedLines:          malformedLines,
+		StartedAt:               b.startedAt,
+		EndedAt:                 b.endedAt,
+		MessageCount:            len(msgs),
+		UserMessageCount:        userCount,
+		TerminationStatus:       classifyCodexTermination(b.lastTaskEvent),
 		File: FileInfo{
 			Path:       path,
 			Size:       info.Size(),

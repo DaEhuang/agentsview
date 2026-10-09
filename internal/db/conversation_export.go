@@ -28,21 +28,25 @@ type ConversationExportOptions struct {
 	Checkpoint string
 	Cursor     string
 	Limit      int
+	Retained   bool
 }
 
 type ConversationChange struct {
-	Type      string                  `json:"type"`
-	SessionID string                  `json:"session_id"`
-	MessageID string                  `json:"message_id"`
-	Revision  string                  `json:"revision"`
-	Ordinal   int                     `json:"ordinal"`
-	Role      string                  `json:"role"`
-	Timestamp *string                 `json:"timestamp"`
-	Deleted   bool                    `json:"deleted"`
-	Gap       string                  `json:"gap,omitempty"`
-	Digest    string                  `json:"digest"`
-	TextBytes int64                   `json:"text_bytes"`
-	Project   export.ProjectReference `json:"project"`
+	Type            string                  `json:"type"`
+	Source          string                  `json:"source"`
+	Machine         string                  `json:"machine"`
+	SourceSessionID string                  `json:"source_session_id"`
+	SessionID       string                  `json:"session_id"`
+	MessageID       string                  `json:"message_id"`
+	Revision        string                  `json:"revision"`
+	Ordinal         int                     `json:"ordinal"`
+	Role            string                  `json:"role"`
+	Timestamp       *string                 `json:"timestamp"`
+	Deleted         bool                    `json:"deleted"`
+	Gap             string                  `json:"gap,omitempty"`
+	Digest          string                  `json:"digest"`
+	TextBytes       int64                   `json:"text_bytes"`
+	Project         export.ProjectReference `json:"project"`
 }
 
 type ConversationExportResult struct {
@@ -79,6 +83,7 @@ type conversationPosition struct {
 	DatabaseID string `json:"database_id"`
 	After      int64  `json:"after,string"`
 	Through    int64  `json:"through,string"`
+	Projection string `json:"projection,omitempty"`
 }
 
 const conversationChangeColumns = `session_id, message_id, CAST(revision AS TEXT), ordinal,
@@ -119,6 +124,9 @@ func (db *DB) ExportConversationChanges(ctx context.Context, opts ConversationEx
 		if position.Version != 1 || position.Kind != kind || position.DatabaseID == "" || position.After < 0 || position.Through < position.After || kind == "checkpoint" && position.After != position.Through {
 			return result, fmt.Errorf("%w: invalid conversation position", ErrInvalidCursor)
 		}
+		if position.Projection != "" && (position.Projection != "retained" || !opts.Retained) {
+			return result, fmt.Errorf("%w: conversation projection mismatch", ErrInvalidCursor)
+		}
 	}
 	tx, err := db.getReader().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -140,8 +148,18 @@ func (db *DB) ExportConversationChanges(ctx context.Context, opts ConversationEx
 	if opts.Cursor == "" {
 		position.Through = current
 	}
+	messageFilter := ""
+	messageTable := "conversation_messages"
+	if opts.Retained {
+		// This is an append-preserving consumer view, not a deletion mirror.
+		// Keep explicit identity/policy gaps; skip accounting-only rows and
+		// tombstones with the partial index, before pagination or source joins.
+		messageFilter = " AND " + retainedConversationPredicate
+		messageTable += " INDEXED BY idx_conversation_messages_retained_revision"
+		position.Projection = "retained"
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT 'message',`+conversationChangeColumns+`,revision AS publication_revision
-		FROM conversation_messages WHERE revision > ? AND revision <= ?
+		FROM `+messageTable+` WHERE revision > ? AND revision <= ?`+messageFilter+`
 		UNION ALL SELECT 'session',session_id,'',CAST(revision AS TEXT),0,'',NULL,deleted,gap,'',0,revision
 		FROM conversation_session_changes WHERE revision > ? AND revision <= ?
 		ORDER BY publication_revision LIMIT ?`, position.After, position.Through, position.After, position.Through, opts.Limit+1)
@@ -163,6 +181,9 @@ func (db *DB) ExportConversationChanges(ctx context.Context, opts ConversationEx
 	more := len(result.Changes) > opts.Limit
 	if more {
 		result.Changes = result.Changes[:opts.Limit]
+	}
+	if err := attachConversationSources(ctx, tx, result.Changes); err != nil {
+		return result, err
 	}
 	if err := db.attachConversationProjects(ctx, tx, result.ArchiveID, result.Changes); err != nil {
 		return result, err
@@ -257,6 +278,10 @@ func (db *DB) GetConversationMessage(ctx context.Context, opts ConversationMessa
 		return ConversationMessage{}, errors.New("offset exceeds message text length")
 	}
 	changes := []ConversationChange{result.ConversationChange}
+	if err := attachConversationSources(ctx, tx, changes); err != nil {
+		return result, err
+	}
+	result.Source, result.Machine, result.SourceSessionID = changes[0].Source, changes[0].Machine, changes[0].SourceSessionID
 	if err := db.attachConversationProjects(ctx, tx, result.ArchiveID, changes); err != nil {
 		return ConversationMessage{}, err
 	}
@@ -347,6 +372,10 @@ func conversationRowsTx(tx transactionQueries, sessionID string) ([]conversation
 }
 
 func conversationRowFromMessage(m Message) (conversationRow, bool) {
+	// A native empty final response is a usage carrier, not missing dialogue.
+	if m.Content == "" && m.SourceSubtype == "final_answer" {
+		return conversationRow{}, false
+	}
 	if m.IsSystem || m.Role != "user" && m.Role != "assistant" || m.SourceSubtype == "tool_result" {
 		return conversationRow{}, false
 	}
@@ -395,16 +424,19 @@ func reconcileConversationMessagesTx(tx transactionQueries, sessionID string, ms
 			return err
 		}
 	}
-	equal := replace && len(old) == len(incoming)
-	for i := range incoming {
-		if equal && !conversationRowsEqual(old[i], incoming[i]) {
-			equal = false
+	// A complete reparse may append messages while retaining every prior row.
+	// Narrow dialogue storage intentionally disables parser append checkpoints,
+	// so the normalized unchanged prefix is the identity proof in that case.
+	prefix := replace && len(old) <= len(incoming)
+	for i := range old {
+		if prefix && !conversationRowsEqual(old[i], incoming[i]) {
+			prefix = false
 		}
 	}
 	retained := map[string]bool{}
 	for i := range incoming {
 		row := &incoming[i]
-		if equal {
+		if prefix && i < len(old) {
 			row.MessageID = old[i].MessageID
 			// Identity gaps survive an unchanged projection; policy gaps must
 			// reflect this write even when stored text is still absent.
@@ -433,7 +465,7 @@ func reconcileConversationMessagesTx(tx transactionQueries, sessionID string, ms
 				row.Gap = "identity_ambiguous"
 			}
 		}
-		if row.MessageID == "" && row.body != nil && replace && len(old) > 0 && row.sourceID == "" {
+		if row.MessageID == "" && row.body != nil && replace && !prefix && len(old) > 0 && row.sourceID == "" {
 			row.Gap = "identity_ambiguous"
 		}
 		if row.MessageID == "" {
@@ -475,7 +507,11 @@ func reconcileConversationMessagesTx(tx transactionQueries, sessionID string, ms
 
 func conversationRowsEqual(a, b conversationRow) bool {
 	sameTime := a.Timestamp == nil && b.Timestamp == nil || a.Timestamp != nil && b.Timestamp != nil && *a.Timestamp == *b.Timestamp
-	return a.Ordinal == b.Ordinal && a.Role == b.Role && sameTime && a.sourceID == b.sourceID && a.Digest == b.Digest && (a.body == nil) == (b.body == nil)
+	// Compare the entire ordered conversation projection. Native ordinals also
+	// include accounting/system rows that are not exported: adding such a row
+	// must not change the identities of otherwise identical dialogue. A changed
+	// timestamp, role, source identity, body or sequence still breaks the proof.
+	return a.Role == b.Role && sameTime && a.sourceID == b.sourceID && a.Digest == b.Digest && (a.body == nil) == (b.body == nil)
 }
 
 func putConversationRowTx(tx transactionQueries, row conversationRow) error {

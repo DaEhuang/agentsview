@@ -7,6 +7,8 @@ import (
 	"fmt"
 )
 
+const retainedConversationPredicate = "deleted = 0 AND gap != 'visible_text_unavailable'"
+
 // This additive migration owns only local conversation export state. Historical
 // rows become explicit prose gaps only when writable reparsing cannot supply
 // evidence. A pending rebuild must not publish temporary message identities.
@@ -45,6 +47,20 @@ BEGIN
  INSERT INTO conversation_session_changes(session_id,revision,deleted) SELECT NEW.id,CAST(value AS INTEGER),(NEW.deleted_at IS NOT NULL) FROM archive_metadata WHERE key='conversation_publication_revision'
  ON CONFLICT(session_id) DO UPDATE SET revision=excluded.revision,deleted=excluded.deleted;
 END;
+CREATE TRIGGER IF NOT EXISTS conversation_session_source AFTER UPDATE OF agent,source_session_id ON sessions
+WHEN (OLD.agent IS NOT NEW.agent OR OLD.source_session_id IS NOT NEW.source_session_id) AND (EXISTS(SELECT 1 FROM conversation_messages WHERE session_id=NEW.id AND removed=0) OR EXISTS(SELECT 1 FROM conversation_session_changes WHERE session_id=NEW.id))
+BEGIN
+ INSERT INTO archive_metadata(key,value) VALUES ('conversation_publication_revision','1') ON CONFLICT(key) DO UPDATE SET value=CAST(CAST(value AS INTEGER)+1 AS TEXT);
+ INSERT INTO conversation_session_changes(session_id,revision,deleted) SELECT NEW.id,CAST(value AS INTEGER),(NEW.deleted_at IS NOT NULL) FROM archive_metadata WHERE key='conversation_publication_revision'
+ ON CONFLICT(session_id) DO UPDATE SET revision=excluded.revision,deleted=excluded.deleted;
+END;
+CREATE TRIGGER IF NOT EXISTS conversation_session_source_label AFTER UPDATE OF agent_label ON sessions
+WHEN (OLD.agent_label IS NOT NEW.agent_label) AND (EXISTS(SELECT 1 FROM conversation_messages WHERE session_id=NEW.id AND removed=0) OR EXISTS(SELECT 1 FROM conversation_session_changes WHERE session_id=NEW.id))
+BEGIN
+ INSERT INTO archive_metadata(key,value) VALUES ('conversation_publication_revision','1') ON CONFLICT(key) DO UPDATE SET value=CAST(CAST(value AS INTEGER)+1 AS TEXT);
+ INSERT INTO conversation_session_changes(session_id,revision,deleted) SELECT NEW.id,CAST(value AS INTEGER),(NEW.deleted_at IS NOT NULL) FROM archive_metadata WHERE key='conversation_publication_revision'
+ ON CONFLICT(session_id) DO UPDATE SET revision=excluded.revision,deleted=excluded.deleted;
+END;
 CREATE TRIGGER IF NOT EXISTS conversation_session_project AFTER UPDATE OF project,machine ON sessions
 WHEN (OLD.project IS NOT NEW.project OR OLD.machine IS NOT NEW.machine) AND (EXISTS(SELECT 1 FROM conversation_messages WHERE session_id=NEW.id AND removed=0) OR EXISTS(SELECT 1 FROM conversation_session_changes WHERE session_id=NEW.id))
 BEGIN
@@ -79,7 +95,7 @@ BEGIN
  ON CONFLICT(session_id) DO UPDATE SET revision=excluded.revision,deleted=excluded.deleted;
 END;`
 
-func ensureConversationSchemaLocked(ctx context.Context, w *writerHandle, usageOnly bool) error {
+func ensureConversationSchemaLocked(ctx context.Context, w *writerHandle, usageOnly, dialogue bool) error {
 	tx, err := w.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -118,6 +134,20 @@ func ensureConversationSchemaLocked(ctx context.Context, w *writerHandle, usageO
 		if _, err := tx.ExecContext(ctx, `INSERT INTO archive_metadata(key,value) VALUES ('conversation_export_initialized','1')`); err != nil {
 			return err
 		}
+	}
+	if dialogue {
+		if err := migrateDialogueThinkingTx(ctx, tx); err != nil {
+			return err
+		}
+	}
+	if err := prepareCanonicalConversationRepairTx(contextTransaction{ctx: ctx, tx: tx}); err != nil {
+		return err
+	}
+	// Non-destructive and built once on writable open. No parser-version bump
+	// or archive rebuild is needed for the retained export projection.
+	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_conversation_messages_retained_revision
+		ON conversation_messages(revision) WHERE `+retainedConversationPredicate); err != nil {
+		return fmt.Errorf("indexing retained conversation changes: %w", err)
 	}
 	return tx.Commit()
 }

@@ -20,12 +20,13 @@ const (
 	// codexCursorCheckpointVersion is the wire version for the persisted
 	// cursor encoding. Bump when the encoding changes; decode failures fall
 	// back to a full parse.
+	// Version 5 hashes the cumulative usage watermark when present.
 	// Version 4 stores the current reasoning effort alongside the model.
 	// Version 3 replaces duplicate IDs with their latest occurrence, matching
 	// full parsing; version 2 retained the oldest unresolved occurrence.
 	// The fork replay gate is process-only state: it is re-armed from the
 	// transcript on every parse and is not part of the persisted cursor.
-	codexCursorCheckpointVersion   = 4
+	codexCursorCheckpointVersion   = 5
 	codexCursorCheckpointMaxString = 1 << 20
 
 	// Account for the map bucket, list element, pointers, string headers, and

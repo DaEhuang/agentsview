@@ -2,6 +2,8 @@ package parser
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"strings"
@@ -52,6 +54,7 @@ const (
 	AgentClaudeAI       AgentType = "claude-ai"
 	AgentChatGPT        AgentType = "chatgpt"
 	AgentKiro           AgentType = "kiro"
+	AgentKiroCrew       AgentType = "kiro-crew"
 	AgentKiroIDE        AgentType = "kiro-ide"
 	AgentCortex         AgentType = "cortex"
 	AgentHermes         AgentType = "hermes"
@@ -687,6 +690,10 @@ var Registry = []AgentDef{
 		FileBased: true,
 	},
 	{
+		Type: AgentKiroCrew, DisplayName: "Kiro Crew", EnvVar: "KIRO_CREW_DIR", ConfigKey: "kiro_crew_dirs",
+		DefaultDirs: []string{".kiro/crew"}, IDPrefix: "kiro-crew:", FileBased: true,
+	},
+	{
 		Type:        AgentKiroIDE,
 		DisplayName: "Kiro IDE",
 		EnvVar:      "KIRO_IDE_DIR",
@@ -1282,6 +1289,31 @@ const (
 	RelFork         RelationshipType = "fork"
 )
 
+// altSessionMarker joins a session id to the source-path hash of a second
+// file that resolved to the same id. "~" is reserved for host prefixes.
+const altSessionMarker = "_alt-"
+
+// AltSessionID returns the id under which the source file at path is stored
+// when another file already owns id.
+func AltSessionID(id, path string) string {
+	sum := sha256.Sum256([]byte(path))
+	return id + altSessionMarker + hex.EncodeToString(sum[:8])
+}
+
+// BaseSessionID strips an AltSessionID suffix, returning the id the agent
+// itself recorded. Only agents whose provider declares SharedSessionIDs have
+// derived ids; their native ids never end in the suffix.
+func BaseSessionID(id string) string {
+	i := strings.LastIndex(id, altSessionMarker)
+	if i < 0 || len(id)-i != len(altSessionMarker)+16 {
+		return id
+	}
+	if _, err := hex.DecodeString(id[i+len(altSessionMarker):]); err != nil {
+		return id
+	}
+	return id[:i]
+}
+
 // RoleType identifies the role of a message sender.
 type RoleType string
 
@@ -1334,12 +1366,19 @@ type FileInfo struct {
 
 // ParsedSession holds session metadata extracted from a JSONL file.
 type ParsedSession struct {
-	ID         string
-	Project    string
-	Machine    string
-	Agent      AgentType
-	AgentLabel string
-	Entrypoint string
+	// CanonicalDialogueSource is set only by a verified native rollout binding.
+	// It permits the one-time recovery of previously ambiguous archive rows.
+	CanonicalDialogueSource bool
+	// RetainMissingNativeMessages preserves archived messages when a rotating
+	// transcript no longer contains them. Every message must have a stable
+	// source UUID. This is for dialogue sources, not usage snapshots.
+	RetainMissingNativeMessages bool
+	ID                          string
+	Project                     string
+	Machine                     string
+	Agent                       AgentType
+	AgentLabel                  string
+	Entrypoint                  string
 	// SessionKind is a provider-owned top-level session classification marker
 	// (for example, Claude Code "bg" or Grok "non-interactive"); empty for
 	// interactive sessions and for agents that do not emit one.
