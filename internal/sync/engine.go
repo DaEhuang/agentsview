@@ -3302,7 +3302,7 @@ func (e *Engine) resyncBuildLocked(
 			phaseSnapshot("local", &e.phaseStats))
 	}
 	localStats := stats
-	if localStats.Deferred > 0 || stats.Aborted || ctx.Err() != nil {
+	if localStats.Deferred > localStats.codexLineageDeferred || stats.Aborted || ctx.Err() != nil {
 		newDB.Close()
 		removeTempDB(tempPath)
 		restoreSkipCache()
@@ -4602,6 +4602,16 @@ func (stats *SyncStats) AuthoritativeDiscoveryComplete() bool {
 func (stats *SyncStats) ProcessingComplete() bool {
 	return !stats.Aborted && stats.Failed == 0 &&
 		stats.providerFailures == 0 && stats.Deferred == 0
+}
+
+// CodexLineagePending reports only successfully retained Codex bodies whose
+// parent transcript is unavailable. It never acknowledges parser retry state;
+// daily exports still withhold those sessions' usage until parents resolve.
+func (stats *SyncStats) CodexLineagePending() int {
+	if !stats.Aborted && stats.Failed == 0 && stats.providerFailures == 0 && stats.Deferred > 0 && stats.Deferred == stats.codexLineageDeferred {
+		return stats.codexLineageDeferred
+	}
+	return 0
 }
 
 // RunStartupMaintenance waits for the daemon-launching foreground sync, then
@@ -6787,6 +6797,7 @@ func mergeReconciliationSyncStats(dst *SyncStats, src SyncStats) {
 	} else {
 		dst.Deferred += src.Deferred
 	}
+	dst.codexLineageDeferred += src.codexLineageDeferred
 }
 
 // tombstoneMissingWatchSourcesLocked adapts a raw changed-path root list to
@@ -10331,6 +10342,7 @@ func (e *Engine) collectAndBatchWithOptions(
 		for range r.deferredCount {
 			stats.recordDeferred(r.path)
 		}
+		stats.codexLineageDeferred += r.codexLineageDeferred
 		proofWithheld := r.sourceProofWithheld(false)
 		if proofWithheld {
 			if tracker := reconciliationBaselineTrackerFor(ctx); tracker != nil {
@@ -11151,8 +11163,9 @@ type processResult struct {
 	cacheKey     string
 	// retrySessionIDs carries provider per-result data-version state.
 	// Legacy parsers use needsRetry as a source-wide fallback.
-	retrySessionIDs map[string]bool
-	deferredCount   int
+	retrySessionIDs      map[string]bool
+	deferredCount        int
+	codexLineageDeferred int
 	// suppressPresenceSweep marks a source result that must not authorize
 	// presence or tombstone reconciliation, including clean unsupported skips.
 	suppressPresenceSweep bool
@@ -12598,6 +12611,9 @@ func (e *Engine) processProviderFile(
 			res.retrySessionIDs[result.Result.Session.ID] = true
 			if isCodexFormatAgent(file.Agent) {
 				res.deferredCount++
+				if file.Agent == parser.AgentCodex && strings.HasPrefix(result.RetryReason, "codex parent turns unresolved for ") {
+					res.codexLineageDeferred++
+				}
 			} else {
 				res.providerFailureCount++
 			}

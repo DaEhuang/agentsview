@@ -217,11 +217,17 @@ func doSync(cfg SyncConfig) (hadRemoteFailures bool) {
 
 	if len(appCfg.RemoteHosts) == 0 {
 		if cfg.Target == "" {
-			_, err := runLocalSyncAuthoritative(context.Background(), appCfg, database, cfg.Full)
-			if err != nil {
+			_, stats, err := runLocalSyncResult(context.Background(), appCfg, database, cfg.Full)
+			incomplete := err != nil || !stats.AuthoritativeDiscoveryComplete() || !stats.ProcessingComplete()
+			if incomplete {
 				log.Printf("local sync incomplete: %v", err)
+				if pending := stats.CodexLineagePending(); pending > 0 && errors.Is(err, errLocalSyncProcessingIncomplete) && !database.NeedsResync() {
+					// Public fork protocol: bodies are current; retry markers and
+					// usage-day withholding remain authoritative in the archive.
+					fmt.Printf("{\"schema\":\"xplan.archive-sync/v1\",\"status\":\"codex-lineage-pending\",\"pending\":%d}\n", pending)
+				}
 			}
-			return err != nil
+			return incomplete
 		} else {
 			result, err := runLocalAndArtifactFolderSync(
 				context.Background(), appCfg, database, cfg,
@@ -866,6 +872,8 @@ func primaryCoordinatorError(err error) error {
 	return nil
 }
 
+var errLocalSyncProcessingIncomplete = errors.New("local sync processing incomplete")
+
 // runLocalSync runs a local sync (incremental or full resync).
 // It returns true if a full resync was performed, which callers
 // can use to force a full PG push (watermarks become stale after
@@ -895,7 +903,7 @@ func runLocalSyncAuthoritative(
 		return didResync, errors.New("local sync discovery incomplete")
 	}
 	if !stats.ProcessingComplete() {
-		return didResync, errors.New("local sync processing incomplete")
+		return didResync, errLocalSyncProcessingIncomplete
 	}
 	return didResync, nil
 }
@@ -1029,7 +1037,7 @@ func coordinateLocalSync(
 		return didResync, stats, errUnifiedRebuildAborted
 	}
 	if !stats.ProcessingComplete() {
-		return didResync, stats, errors.New("local sync processing incomplete")
+		return didResync, stats, errLocalSyncProcessingIncomplete
 	}
 	return didResync, stats, nil
 }
