@@ -67,7 +67,17 @@ a bounded list of blocking session IDs without changing totals or the archive.
 A stale child repaired against its verified parent keeps message identities only
 when its complete retained suffix matches and has a unique first-row anchor.
 Removed replay rows remain tombstones. Ambiguous matches and unrelated rewrites
-keep their existing identity checks; a repair never clears an identity gap.
+keep their existing identity checks.
+
+Empty accounting records do not participate in visible-message identity checks.
+An unchanged complete visible prefix keeps its IDs even when those records
+change. The first compressed-source upgrade also repairs a previously replaced
+visible projection only after a fresh canonical parse matches the complete
+ordered former projection. A shorter suffix additionally requires verified
+parent replay and a unique anchor. Former coordinates must be unambiguous;
+multiple generations or changed content remain gaps. This one-time recovery
+restores the original IDs and tombstones the erroneous replacements, so retained
+upload references can reconcile without duplicating bodies or resetting history.
 
 ### Codex incremental import state
 

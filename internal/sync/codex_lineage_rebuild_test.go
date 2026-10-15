@@ -48,6 +48,15 @@ func TestCodexLineageRebuildRetainsBodiesWithholdsUsageAndRecovers(t *testing.T)
 				require.NoError(t, err)
 			}
 			write(parent+"_33333333-3333-4333-8333-333333333333", testjsonl.JoinJSONL(testjsonl.CodexSessionMetaJSON(parent, "/project", "codex_cli_rs", at), testjsonl.CodexTurnContextWithIDJSON("gpt-5.4", "parent-turn", at)))
+			beforeCompression, err := database.ExportConversationChanges(t.Context(), db.ConversationExportOptions{Retained: true})
+			require.NoError(t, err)
+			priorIDs := map[string]bool{}
+			for _, change := range beforeCompression.Changes {
+				priorIDs[change.MessageID] = true
+			}
+			// An archived child may already carry the current parser version.
+			// A newly discoverable compressed parent still needs the same proof.
+			require.NoError(t, database.SetSessionDataVersion(t.Context(), "codex:"+child, db.CurrentDataVersion()))
 			// Historical originals may be compressed and moved after ingestion.
 			// Both child and retained parent must be found without expanding in place.
 			encoder, err := zstd.NewWriter(nil)
@@ -75,6 +84,7 @@ func TestCodexLineageRebuildRetainsBodiesWithholdsUsageAndRecovers(t *testing.T)
 				if change.SessionID == "codex:"+child && !change.Deleted {
 					active++
 					require.NotEqual(t, "identity_ambiguous", change.Gap)
+					require.True(t, priorIDs[change.MessageID], "compressed upgrade must keep prior identities")
 				}
 			}
 			require.Equal(t, 2, active)

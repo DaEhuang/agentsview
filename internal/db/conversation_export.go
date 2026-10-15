@@ -450,6 +450,9 @@ func reconcileConversationMessagesTx(tx transactionQueries, sessionID string, ms
 		}
 	}
 	retained := map[string]bool{}
+	// Textless accounting rows are not conversation identity. A parser may
+	// change those rows while preserving the entire ordered visible projection.
+	visiblePrefix := conversationVisiblePrefix(old, incoming)
 	for i := range incoming {
 		row := &incoming[i]
 		if prefix && i < len(old) {
@@ -461,6 +464,8 @@ func reconcileConversationMessagesTx(tx transactionQueries, sessionID string, ms
 			}
 		} else if parentOffset >= 0 {
 			previous := old[parentOffset+i]
+			row.MessageID, row.Gap = previous.MessageID, previous.Gap
+		} else if previous, ok := visiblePrefix[i]; ok {
 			row.MessageID, row.Gap = previous.MessageID, previous.Gap
 		} else if row.sourceID != "" {
 			var count int

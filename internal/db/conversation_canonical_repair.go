@@ -41,6 +41,9 @@ func (db *DB) ReconcileCanonicalConversation(ctx context.Context, sessionID stri
 			return errors.New("canonical conversation changed before reconciliation")
 		}
 	}
+	if err := recoverCompressedConversationTx(tx, sessionID, msgs); err != nil {
+		return err
+	}
 	if err := resolveCanonicalConversationTx(tx, sessionID); err != nil {
 		return err
 	}

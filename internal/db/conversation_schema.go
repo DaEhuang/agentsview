@@ -143,6 +143,9 @@ func ensureConversationSchemaLocked(ctx context.Context, w *writerHandle, usageO
 	if err := prepareCanonicalConversationRepairTx(contextTransaction{ctx: ctx, tx: tx}); err != nil {
 		return err
 	}
+	if err := prepareCompressedConversationRepairTx(contextTransaction{ctx: ctx, tx: tx}); err != nil {
+		return err
+	}
 	// Non-destructive and built once on writable open. No parser-version bump
 	// or archive rebuild is needed for the retained export projection.
 	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_conversation_messages_retained_revision
