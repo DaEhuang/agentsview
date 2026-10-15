@@ -396,6 +396,7 @@ func workerEngineConfig(cfg config.Config) sync.EngineConfig {
 		IncludeCwdPrefixes:      cfg.SyncIncludeCwdPrefixes,
 		ScanProtectedPaths:      cfg.ScanProtectedPaths,
 		Machine:                 cfg.InstallationID,
+		LocalProjectMachines:    cfg.LocalProjectMachines,
 		BlockedResultCategories: cfg.ResultContentBlockedCategories,
 		ToolResultImages:        cfg.ToolResultImages,
 		AssetsDir:               filepath.Join(cfg.DataDir, "assets"),

@@ -1153,7 +1153,8 @@ func (d *DB) CopyExcludedSessionsFrom(
 // archive metadata, project identity observations, worktree project mappings,
 // and explicit session project assignments across full DB rebuilds. Immutable
 // project snapshots are restored only from source versions that recorded
-// parser-source labels reliably.
+// parser-source labels reliably. A previously unknown snapshot may gain verified
+// repository evidence for the same project, machine, and root during reparse.
 func (d *DB) CopySessionMetadataFrom(
 	sourcePath string,
 ) error {
@@ -1598,7 +1599,16 @@ func (d *DB) CopySessionMetadataFrom(
 					observed_at = excluded.observed_at,
 					normalized_remote = excluded.normalized_remote,
 					key_source = excluded.key_source,
-					key = excluded.key`); err != nil {
+					key = excluded.key
+			WHERE NOT (
+				excluded.remote_resolution = 'unknown'
+				AND excluded.git_remote = '' AND excluded.repository_path = ''
+				AND excluded.worktree_relationship IN ('', 'unknown')
+				AND session_project_identity_snapshots.remote_resolution = 'resolved'
+				AND session_project_identity_snapshots.project = excluded.project
+				AND session_project_identity_snapshots.machine = excluded.machine
+				AND session_project_identity_snapshots.root_path = excluded.root_path
+			)`); err != nil {
 			return fmt.Errorf("copying session project identity snapshots: %w", err)
 		}
 	}

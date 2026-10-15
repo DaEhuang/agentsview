@@ -1011,6 +1011,7 @@ func coordinateLocalSync(
 		IncludeCwdPrefixes:      appCfg.SyncIncludeCwdPrefixes,
 		ScanProtectedPaths:      appCfg.ScanProtectedPaths,
 		Machine:                 appCfg.InstallationID,
+		LocalProjectMachines:    appCfg.LocalProjectMachines,
 		BlockedResultCategories: appCfg.ResultContentBlockedCategories,
 		ArchiveContent:          appCfg.ArchiveContent,
 	})

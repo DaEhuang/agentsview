@@ -9580,6 +9580,43 @@ func TestCopySessionMetadataPreservesHistoricalUnknownSessionSnapshot(t *testing
 	assert.Empty(t, snapshots["session-a"].GitRemote)
 }
 
+func TestCopySessionMetadataRetainsNewEvidenceForSameUnknownRoot(t *testing.T) {
+	dir := t.TempDir()
+	ctx := t.Context()
+	oldPath := filepath.Join(dir, "old.db")
+	oldDB, err := Open(ctx, oldPath)
+	requireNoError(t, err, "open old")
+	requireNoError(t, oldDB.UpsertSession(ctx, Session{
+		ID: "session-a", Project: "app", Machine: "host", Agent: "codex",
+		Cwd: "/historical/app",
+	}), "insert old session")
+	requireNoError(t, oldDB.Close(), "close old")
+
+	fresh := testDB(t)
+	requireNoError(t, fresh.UpsertSession(ctx, Session{
+		ID: "session-a", Project: "app", Machine: "host", Agent: "codex",
+		Cwd: "/historical/app",
+	}), "insert fresh session")
+	requireNoError(t, fresh.UpsertProjectIdentityObservation(ctx,
+		export.ProjectIdentityObservation{
+			SessionID: "session-a", Project: "app", Machine: "host",
+			RootPath:   "/historical/app",
+			GitRemote:  "https://example.com/acme/app.git",
+			ObservedAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+		}), "insert fresh resolved snapshot")
+
+	requireNoError(t, fresh.CopySessionMetadataFrom(oldPath), "copy")
+	snapshots, err := fresh.listSessionProjectIdentitySnapshots(
+		ctx, []string{"session-a"},
+	)
+	requireNoError(t, err, "list snapshots")
+	require.Contains(t, snapshots, "session-a")
+	assert.Equal(t, export.ProjectResolutionResolved,
+		snapshots["session-a"].RemoteResolution)
+	assert.Equal(t, "/historical/app", snapshots["session-a"].RootPath)
+	assert.Equal(t, "https://example.com/acme/app.git", snapshots["session-a"].GitRemote)
+}
+
 func TestCopySessionMetadataSuppressesOldRootFallbackWhenFreshRemoteExists(t *testing.T) {
 	dir := t.TempDir()
 	ctx := t.Context()

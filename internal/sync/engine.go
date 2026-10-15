@@ -438,8 +438,9 @@ type Emitter interface {
 // EngineConfig holds the configuration needed by the sync
 // engine, replacing per-agent positional parameters.
 type EngineConfig struct {
-	AgentDirs      map[parser.AgentType][]string
-	SourceMachines map[parser.AgentType]map[string]string
+	AgentDirs            map[parser.AgentType][]string
+	SourceMachines       map[parser.AgentType]map[string]string
+	LocalProjectMachines []string
 	// ProviderMetadata carries the resolved metadata directories used to
 	// configure provider instances, including temporary remote imports.
 	ProviderMetadata map[parser.AgentType]map[string][]string
@@ -561,6 +562,7 @@ type Engine struct {
 	deferredSourceCwd       *sourceCwdReconciliationBatch
 	agentDirs               map[parser.AgentType][]string
 	sourceMachines          map[parser.AgentType]map[string]string
+	localProjectMachines    []string
 	preserveAgents          []parser.AgentType
 	machine                 string
 	blockedResultCategories map[string]bool
@@ -979,6 +981,7 @@ func NewEngine(ctx context.Context,
 		lstat:                   os.Lstat,
 		agentDirs:               dirs,
 		sourceMachines:          sourceMachines,
+		localProjectMachines:    slices.Clone(cfg.LocalProjectMachines),
 		preserveAgents:          disabledAgents,
 		machine:                 cfg.Machine,
 		blockedResultCategories: blockedCategorySet(cfg.BlockedResultCategories),
@@ -17183,7 +17186,7 @@ func (e *Engine) skipSourceProjectProbe(pw *pendingWrite) bool {
 	if sess.ID == "" || cwd == "" || pw.sourceIdentityUnverified {
 		return true
 	}
-	if !e.isLocalMachineAttribution(sess.Machine) ||
+	if !e.isLocalProjectMachine(sess.Machine) ||
 		!safeLocalAbsolutePath(cwd) {
 		return true
 	}
@@ -17301,6 +17304,12 @@ func (e *Engine) mayProbeLocalPath(p string) bool {
 		return true
 	}
 	return true
+}
+
+// Local project probing is explicitly configured and does not widen source
+// ownership, installation adoption, or message identity equivalence.
+func (e *Engine) isLocalProjectMachine(machine string) bool {
+	return e.isLocalMachineAttribution(machine) || slices.Contains(e.localProjectMachines, machine)
 }
 
 // isLocalMachineAttribution recognizes empty and the legacy "local" sentinel
@@ -18994,7 +19003,7 @@ func (e *Engine) cachedProjectIdentity(machine, rootPath string) projectIdentity
 	// mayProbeLocalPath also guards export.NormalizeRootPath below, which
 	// resolves symlinks and would reach into a protected location on its own.
 	if !e.disableProjectDiscovery && e.idPrefix == "" && e.pathRewriter == nil &&
-		e.isLocalMachineAttribution(machine) && e.mayProbeLocalPath(rootPath) {
+		e.isLocalProjectMachine(machine) && e.mayProbeLocalPath(rootPath) {
 		if normalized, ok, err := export.NormalizeRootPath(rootPath); err == nil && ok {
 			identity.rootPath = normalized
 		}

@@ -165,3 +165,20 @@ func TestInstallationIdentityConcurrentCreation(t *testing.T) {
 	require.NoError(t, cfg.ensureInstallationID())
 	assert.Equal(t, ids[0], cfg.InstallationID)
 }
+
+func TestLocalProjectMachinesDoNotChangeInstallationOrSources(t *testing.T) {
+	dir := setupTestEnv(t)
+	before, err := LoadMinimal()
+	require.NoError(t, err)
+	writeConfig(t, dir, map[string]any{"local_project_machines": []string{"bound-device"}, "session_sources": []map[string]string{{"agent": "codex", "dir": filepath.Join(dir, "sessions"), "machine": "bound-device"}}})
+	after, err := LoadMinimal()
+	require.NoError(t, err)
+	assert.Equal(t, before.InstallationID, after.InstallationID)
+	assert.Equal(t, []string{"bound-device"}, after.LocalProjectMachines)
+	assert.Equal(t, "bound-device", after.SessionSources[0].Machine)
+	for _, aliases := range [][]string{{""}, make([]string, 17)} {
+		writeConfig(t, dir, map[string]any{"local_project_machines": aliases})
+		_, err = LoadMinimal()
+		require.ErrorContains(t, err, "local_project_machines")
+	}
+}

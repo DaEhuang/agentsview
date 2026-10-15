@@ -156,6 +156,16 @@ Creating the identity does not rewrite `config.toml` or its comments. A missing
 cursor secret is still generated and saved. Machine filters use keys;
 `/api/v1/machines` returns display labels and known aliases separately.
 
+If local session roots use a custom `session_sources.machine` key, list that
+key in `local_project_machines = ["bound-device"]` to allow repository discovery
+from those sessions' local working directories. Unlisted foreign machines keep
+filesystem probing disabled. This setting does not adopt or rewrite machine,
+archive, session, or message identities. After correcting an existing setup,
+`agentsview sync --full` reparses available sources through the normal archive
+rebuild while retaining orphaned history. Missing repositories remain unknown. Rebuilt sessions can fill an unknown project only
+when the stored project label, machine, and root still match; previously
+resolved or ambiguous identities remain preserved.
+
 ### Upgrading Historical Machine Keys
 
 At writable startup, AgentsView moves sessions from the archive's recorded local

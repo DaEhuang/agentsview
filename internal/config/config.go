@@ -804,6 +804,8 @@ type Config struct {
 	InstallationID string `json:"-" toml:"-"`
 	// LocalMachineName is the display label, defaulting to the system hostname.
 	LocalMachineName string `json:"-" toml:"local_machine_name"`
+	// Explicit local project probing authority; never rewrites stored machine IDs.
+	LocalProjectMachines []string `json:"-" toml:"local_project_machines"`
 
 	// AgentDirs maps each AgentType to its configured
 	// directories. Single-dir agents store a one-element
@@ -1563,6 +1565,7 @@ func (c *Config) applyConfigTOML(data string) error {
 	}
 	var file struct {
 		LocalMachineName               *string                `toml:"local_machine_name"`
+		LocalProjectMachines           []string               `toml:"local_project_machines"`
 		GithubToken                    string                 `toml:"github_token"`
 		CursorSecret                   string                 `toml:"cursor_secret"`
 		CursorAdminAPIKey              string                 `toml:"cursor_admin_api_key"`
@@ -1630,6 +1633,15 @@ func (c *Config) applyConfigTOML(data string) error {
 	if file.CursorSecret != "" {
 		c.CursorSecret = file.CursorSecret
 	}
+	if len(file.LocalProjectMachines) > 16 {
+		return errors.New("local_project_machines allows at most 16 identities")
+	}
+	for _, machine := range file.LocalProjectMachines {
+		if strings.TrimSpace(machine) == "" || len(machine) > 4096 || strings.ContainsRune(machine, 0) {
+			return errors.New("local_project_machines requires nonempty machine identities")
+		}
+	}
+	c.LocalProjectMachines = append([]string(nil), file.LocalProjectMachines...)
 	if file.LocalMachineName != nil {
 		name := strings.TrimSpace(*file.LocalMachineName)
 		if name == "" {

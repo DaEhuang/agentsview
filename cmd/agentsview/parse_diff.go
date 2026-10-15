@@ -135,6 +135,7 @@ func doParseDiff(ctx context.Context, cfg ParseDiffConfig) (failed bool) {
 		IncludeCwdPrefixes:      appCfg.SyncIncludeCwdPrefixes,
 		ScanProtectedPaths:      appCfg.ScanProtectedPaths,
 		Machine:                 appCfg.InstallationID,
+		LocalProjectMachines:    appCfg.LocalProjectMachines,
 		BlockedResultCategories: appCfg.ResultContentBlockedCategories,
 		ArchiveContent:          appCfg.ArchiveContent,
 	})
