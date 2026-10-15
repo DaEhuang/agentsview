@@ -433,6 +433,22 @@ func reconcileConversationMessagesTx(tx transactionQueries, sessionID string, ms
 			prefix = false
 		}
 	}
+	parentOffset := -1
+	if replace && !prefix && len(msgs) > 0 && len(incoming) > 0 && len(old) > len(incoming) {
+		verified := true
+		for _, msg := range msgs {
+			verified = verified && msg.ParentReplayResolved
+		}
+		if verified {
+			var stale bool
+			if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM sessions WHERE id=? AND agent='codex' AND data_version>0 AND data_version<?)`, sessionID, CurrentDataVersion()).Scan(&stale); err != nil {
+				return err
+			}
+			if stale {
+				parentOffset = verifiedConversationSuffix(old, incoming)
+			}
+		}
+	}
 	retained := map[string]bool{}
 	for i := range incoming {
 		row := &incoming[i]
@@ -443,6 +459,9 @@ func reconcileConversationMessagesTx(tx transactionQueries, sessionID string, ms
 			if old[i].Gap != "archive_content_excluded" {
 				row.Gap = old[i].Gap
 			}
+		} else if parentOffset >= 0 {
+			previous := old[parentOffset+i]
+			row.MessageID, row.Gap = previous.MessageID, previous.Gap
 		} else if row.sourceID != "" {
 			var count int
 			var id string

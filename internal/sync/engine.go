@@ -17574,7 +17574,7 @@ func (e *Engine) writeBatchWithOutcomeContext(
 			werr = e.writeMessages(ctx, s.ID, msgs)
 		}
 		if werr == nil && s.CanonicalDialogueSource {
-			werr = e.db.ReconcileCanonicalConversation(ctx, s.ID, msgs, stale && !pw.needsRetry && s.Agent == "codex" && s.ParentReplayResolved)
+			werr = e.db.ReconcileCanonicalConversation(ctx, s.ID, msgs)
 		}
 		if werr != nil {
 			if ctx.Err() != nil {
@@ -18743,9 +18743,6 @@ func (e *Engine) writeBatchBulkWithOutcomeContext(
 			// The bulk batch would normally create the session row, so
 			// mirror the standard write path's session upsert and
 			// post-write sequence here.
-			priorVersion := e.db.GetSessionDataVersion(ctx, s.ID)
-			parentReconciled := priorVersion > 0 && priorVersion < db.CurrentDataVersion() &&
-				!pw.needsRetry && s.Agent == "codex" && s.ParentReplayResolved
 			_, err := e.upsertSessionPendingContentForWrite(ctx, pw, s)
 			if err != nil {
 				if isIntentionalSessionSkip(err) {
@@ -18765,9 +18762,6 @@ func (e *Engine) writeBatchBulkWithOutcomeContext(
 			}
 			tWrite := time.Now()
 			err = e.writeStagedFullParse(ctx, s, msgs, pw)
-			if err == nil && s.CanonicalDialogueSource {
-				err = e.db.ReconcileCanonicalConversation(ctx, s.ID, msgs, parentReconciled)
-			}
 			e.phaseStats.WriteNanos.Add(int64(time.Since(tWrite)))
 			if err != nil {
 				log.Printf(
@@ -20348,7 +20342,6 @@ func toDBSessionContext(
 	}
 	s := db.Session{
 		CanonicalDialogueSource: pw.sess.CanonicalDialogueSource,
-		ParentReplayResolved:    pw.sess.ParentReplayResolved,
 		ID:                      pw.sess.ID,
 		Project:                 pw.sess.Project,
 		Machine:                 pw.sess.Machine,
@@ -20431,35 +20424,36 @@ func toDBMessagesContext(
 			return nil, err
 		}
 		msgs[i] = db.Message{
-			SessionID:         pw.sess.ID,
-			Ordinal:           m.Ordinal,
-			Role:              string(m.Role),
-			Content:           m.Content,
-			ThinkingText:      m.ThinkingText,
-			Timestamp:         timeutil.Format(m.Timestamp),
-			HasThinking:       m.HasThinking,
-			HasToolUse:        m.HasToolUse,
-			ContentLength:     m.ContentLength,
-			IsSystem:          m.IsSystem,
-			Model:             m.Model,
-			ReasoningEffort:   m.ReasoningEffort,
-			ProviderID:        m.ProviderID,
-			TokenUsage:        m.TokenUsage,
-			ContextTokens:     m.ContextTokens,
-			OutputTokens:      m.OutputTokens,
-			HasContextTokens:  hasCtx,
-			HasOutputTokens:   hasOut,
-			ClaudeMessageID:   m.ClaudeMessageID,
-			ClaudeRequestID:   m.ClaudeRequestID,
-			SourceType:        m.SourceType,
-			SourceSubtype:     m.SourceSubtype,
-			PromptSource:      m.PromptSource,
-			SourceUUID:        m.SourceUUID,
-			SourceParentUUID:  m.SourceParentUUID,
-			IsSidechain:       m.IsSidechain,
-			IsCompactBoundary: m.IsCompactBoundary,
-			ToolCalls:         toolCalls,
-			ToolResults:       toolResults,
+			ParentReplayResolved: pw.sess.CanonicalDialogueSource && pw.sess.ParentReplayResolved && !pw.needsRetry && !pw.sourceIdentityUnverified,
+			SessionID:            pw.sess.ID,
+			Ordinal:              m.Ordinal,
+			Role:                 string(m.Role),
+			Content:              m.Content,
+			ThinkingText:         m.ThinkingText,
+			Timestamp:            timeutil.Format(m.Timestamp),
+			HasThinking:          m.HasThinking,
+			HasToolUse:           m.HasToolUse,
+			ContentLength:        m.ContentLength,
+			IsSystem:             m.IsSystem,
+			Model:                m.Model,
+			ReasoningEffort:      m.ReasoningEffort,
+			ProviderID:           m.ProviderID,
+			TokenUsage:           m.TokenUsage,
+			ContextTokens:        m.ContextTokens,
+			OutputTokens:         m.OutputTokens,
+			HasContextTokens:     hasCtx,
+			HasOutputTokens:      hasOut,
+			ClaudeMessageID:      m.ClaudeMessageID,
+			ClaudeRequestID:      m.ClaudeRequestID,
+			SourceType:           m.SourceType,
+			SourceSubtype:        m.SourceSubtype,
+			PromptSource:         m.PromptSource,
+			SourceUUID:           m.SourceUUID,
+			SourceParentUUID:     m.SourceParentUUID,
+			IsSidechain:          m.IsSidechain,
+			IsCompactBoundary:    m.IsCompactBoundary,
+			ToolCalls:            toolCalls,
+			ToolResults:          toolResults,
 		}
 	}
 	return pairAndFilterContext(ctx, msgs, blocked)

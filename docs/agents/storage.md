@@ -58,9 +58,10 @@ native session identity before accepting their turn IDs. It unions retained
 branches so replayed parent history is not counted as child activity. Unresolved
 parents continue to withhold usage; `export usage-days --explain-blocked` gives
 a bounded list of blocking session IDs without changing totals or the archive.
-A verified parent-replay repair can establish the corrected child projection once
-when a stale parse becomes current. Removed replay rows remain tombstones; later
-arbitrary rewrites and reused native message IDs retain their ambiguity checks.
+A stale child repaired against its verified parent keeps message identities only
+when its complete retained suffix matches and has a unique first-row anchor.
+Removed replay rows remain tombstones. Ambiguous matches and unrelated rewrites
+keep their existing identity checks; a repair never clears an identity gap.
 
 ### Codex incremental import state
 

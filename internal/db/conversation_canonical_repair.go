@@ -8,7 +8,7 @@ import (
 // ReconcileCanonicalConversation is the ordinary-write counterpart of the
 // batch transaction. Recheck the entire projected body in one snapshot before
 // publishing any recovery; concurrent changes fail instead of clearing gaps.
-func (db *DB) ReconcileCanonicalConversation(ctx context.Context, sessionID string, messages []Message, parentReconciled bool) error {
+func (db *DB) ReconcileCanonicalConversation(ctx context.Context, sessionID string, messages []Message) error {
 	if db.usageOnlyStorage() {
 		return nil
 	}
@@ -41,11 +41,6 @@ func (db *DB) ReconcileCanonicalConversation(ctx context.Context, sessionID stri
 			return errors.New("canonical conversation changed before reconciliation")
 		}
 	}
-	if parentReconciled {
-		if err := resolveCanonicalConversationWithKeyTx(tx, sessionID, "conversation_parent_reconciled_v1:"+sessionID); err != nil {
-			return err
-		}
-	}
 	if err := resolveCanonicalConversationTx(tx, sessionID); err != nil {
 		return err
 	}
@@ -75,10 +70,7 @@ func prepareCanonicalConversationRepairTx(tx transactionQueries) error {
 // arbitrary rewrites still use the normal ambiguity rules and cannot repeat
 // this initial recovery or conflate repeated provider UUIDs.
 func resolveCanonicalConversationTx(tx transactionQueries, sessionID string) error {
-	return resolveCanonicalConversationWithKeyTx(tx, sessionID, "conversation_rollout_repaired_v3:"+sessionID)
-}
-
-func resolveCanonicalConversationWithKeyTx(tx transactionQueries, sessionID, key string) error {
+	key := "conversation_rollout_repaired_v3:" + sessionID
 	var exists bool
 	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM archive_metadata WHERE key=?)`, key).Scan(&exists); err != nil {
 		return err
