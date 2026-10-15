@@ -1369,6 +1369,8 @@ type ParsedSession struct {
 	// CanonicalDialogueSource is set only by a verified native rollout binding.
 	// It permits the one-time recovery of previously ambiguous archive rows.
 	CanonicalDialogueSource bool
+	// ParentReplayResolved means a native replay prefix was resolved against its verified parent.
+	ParentReplayResolved bool
 	// RetainMissingNativeMessages preserves archived messages when a rotating
 	// transcript no longer contains them. Every message must have a stable
 	// source UUID. This is for dialogue sources, not usage snapshots.

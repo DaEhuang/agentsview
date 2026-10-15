@@ -53,6 +53,15 @@ revisions. Manifest and bounded body reads resolve project evidence in their own
 SQLite snapshot; body reads also pin the database generation and message
 revision. This local contract does not widen raw artifacts or mirror schemas.
 
+Codex parent lookup includes retained suffixed rollouts and verifies the first
+native session identity before accepting their turn IDs. It unions retained
+branches so replayed parent history is not counted as child activity. Unresolved
+parents continue to withhold usage; `export usage-days --explain-blocked` gives
+a bounded list of blocking session IDs without changing totals or the archive.
+A verified parent-replay repair can establish the corrected child projection once
+when a stale parse becomes current. Removed replay rows remain tombstones; later
+arbitrary rewrites and reused native message IDs retain their ambiguity checks.
+
 ### Codex incremental import state
 
 Four SQLite-only tables support local Codex imports: `parser_checkpoints` holds

@@ -27,7 +27,7 @@ func TestCodexLineageRebuildRetainsBodiesWithholdsUsageAndRecovers(t *testing.T)
 			write := func(id, body string) {
 				require.NoError(t, os.WriteFile(filepath.Join(root, "rollout-2026-10-01T10-00-00-"+id+".jsonl"), []byte(body), 0600))
 			}
-			write(child, testjsonl.JoinJSONL(testjsonl.CodexForkedSessionMetaJSON(child, parent, "/project", "codex_cli_rs", at), testjsonl.CodexTurnContextWithIDJSON("gpt-5.4", "child-turn", at), testjsonl.CodexMsgJSON("user", "child question", at), testjsonl.CodexMsgJSON("assistant", "child answer", at), testjsonl.CodexTokenCountJSON(at, 1000, 100, 600)))
+			write(child, testjsonl.JoinJSONL(testjsonl.CodexForkedSessionMetaJSON(child, parent, "/project", "codex_cli_rs", at), testjsonl.CodexTurnContextWithIDJSON("gpt-5.4", "parent-turn", at), testjsonl.CodexMsgJSON("user", "parent replay", at), testjsonl.CodexTurnContextWithIDJSON("gpt-5.4", "child-turn", at), testjsonl.CodexMsgJSON("user", "child question", at), testjsonl.CodexMsgJSON("assistant", "child answer", at), testjsonl.CodexTokenCountJSON(at, 1000, 100, 600)))
 			for range 2 {
 				stats := engine.ResyncAll(t.Context(), nil)
 				require.False(t, stats.Aborted)
@@ -36,8 +36,8 @@ func TestCodexLineageRebuildRetainsBodiesWithholdsUsageAndRecovers(t *testing.T)
 				require.False(t, database.NeedsResync())
 				messages, err := database.GetAllMessages(t.Context(), "codex:"+child)
 				require.NoError(t, err)
-				require.Len(t, messages, 2)
-				require.Equal(t, "child answer", messages[1].Content)
+				require.Len(t, messages, 3)
+				require.Equal(t, "child answer", messages[2].Content)
 				usage, err := database.ExportUsageDays(t.Context(), db.UsageDaysOptions{From: "2026-10-01", To: "2026-10-01", Timezone: "UTC"})
 				require.NoError(t, err)
 				require.Len(t, usage.Blocked, 1)
@@ -45,13 +45,28 @@ func TestCodexLineageRebuildRetainsBodiesWithholdsUsageAndRecovers(t *testing.T)
 				_, err = database.ExportConversationChanges(t.Context(), db.ConversationExportOptions{})
 				require.NoError(t, err)
 			}
-			write(parent, testjsonl.JoinJSONL(testjsonl.CodexSessionMetaJSON(parent, "/project", "codex_cli_rs", at)))
+			write(parent+"_33333333-3333-4333-8333-333333333333", testjsonl.JoinJSONL(testjsonl.CodexSessionMetaJSON(parent, "/project", "codex_cli_rs", at), testjsonl.CodexTurnContextWithIDJSON("gpt-5.4", "parent-turn", at)))
 			stats := engine.SyncAll(t.Context(), nil)
 			require.True(t, stats.ProcessingComplete())
 			require.Zero(t, stats.CodexLineagePending())
 			usage, err := database.ExportUsageDays(t.Context(), db.UsageDaysOptions{From: "2026-10-01", To: "2026-10-01", Timezone: "UTC"})
 			require.NoError(t, err)
 			require.Empty(t, usage.Blocked)
+			all, err := database.ExportConversationChanges(t.Context(), db.ConversationExportOptions{})
+			require.NoError(t, err)
+			active := 0
+			for _, change := range all.Changes {
+				if change.SessionID == "codex:"+child && !change.Deleted {
+					active++
+					require.NotEqual(t, "identity_ambiguous", change.Gap)
+				}
+			}
+			require.Equal(t, 2, active)
+			again := engine.SyncAll(t.Context(), nil)
+			require.True(t, again.ProcessingComplete())
+			delta, err := database.ExportConversationChanges(t.Context(), db.ConversationExportOptions{Checkpoint: all.Checkpoint})
+			require.NoError(t, err)
+			require.Empty(t, delta.Changes)
 		})
 	}
 }

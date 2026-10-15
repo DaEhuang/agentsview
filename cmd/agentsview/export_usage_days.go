@@ -30,5 +30,6 @@ func newExportUsageDaysCommand() *cobra.Command {
 	command.Flags().StringVar(&options.To, "to", "", "Last calendar date (YYYY-MM-DD, required)")
 	command.Flags().StringVar(&options.Timezone, "timezone", "", "IANA calendar timezone (required)")
 	command.Flags().StringVar(&options.Source, "source", "", "Exact source, such as codex, qoder-cn, kiro-cli, or kiro-crew")
+	command.Flags().BoolVar(&options.ExplainBlocked, "explain-blocked", false, "Include up to 32 archived session IDs per blocked source/day and the total blocker count")
 	return command
 }

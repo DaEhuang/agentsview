@@ -400,6 +400,17 @@ add an archived or maintained mirror without replacing the original identity.
 
 ## Codex (`codex`)
 
+Parent-rollout lookup (verified 2026-10-16): retained local rollouts use
+`rollout-<timestamp>-<thread>_<rollout>.jsonl` while their first
+`session_meta.payload.id` remains the parent thread ID. Child metadata retains
+that thread ID in `forked_from_id` and `parent_thread_id`. Parent resolution
+checks this native identity and unions turn IDs across retained live and
+archived rollouts; selecting one branch can miss replayed turns. File
+identity, size and modification time invalidate the per-file turn cache.
+`TestCodexForkResolvesRetainedParentRollouts` covers replay removal, genuine
+child messages, repeated parses, changed parents and mismatched identities.
+Missing parents remain unresolved instead of inventing usage.
+
 Local compatibility repair (verified 2026-10-09): Codex `thread/revert` writes
 another rollout with the same thread ID and a `history_base` reference. Keep
 all physical rollouts as linked sessions, following upstream

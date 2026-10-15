@@ -483,6 +483,16 @@ func writeOneSessionBatchTx(
 		write.IdentityObservation = normalized
 	}
 
+	// A formerly unresolved child may discard verified parent replay on this
+	// parse. Authorize one canonical recovery only on that stale-to-current
+	// transition; ordinary later rewrites retain their ambiguity protection.
+	parentReconciled := false
+	if write.Session.CanonicalDialogueSource && write.Session.Agent == "codex" &&
+		write.Session.ParentReplayResolved && write.DataVersion == CurrentDataVersion() {
+		if err := queries.QueryRow(`SELECT EXISTS(SELECT 1 FROM sessions WHERE id=? AND data_version>0 AND data_version<?)`, write.Session.ID, CurrentDataVersion()).Scan(&parentReconciled); err != nil {
+			return 0, err
+		}
+	}
 	upsertResult, err := upsertSessionExec(
 		ctx,
 		tx.ExecContext,
@@ -585,6 +595,11 @@ func writeOneSessionBatchTx(
 		}
 	}
 	if write.Session.CanonicalDialogueSource && !usageOnly {
+		if parentReconciled {
+			if err := resolveCanonicalConversationWithKeyTx(queries, write.Session.ID, "conversation_parent_reconciled_v1:"+write.Session.ID); err != nil {
+				return 0, err
+			}
+		}
 		if err := resolveCanonicalConversationTx(queries, write.Session.ID); err != nil {
 			return 0, err
 		}

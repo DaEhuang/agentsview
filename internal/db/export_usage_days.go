@@ -10,7 +10,10 @@ import (
 )
 
 // UsageDaysOptions selects a bounded calendar window for an archive export.
-type UsageDaysOptions struct{ From, To, Timezone, Source string }
+type UsageDaysOptions struct {
+	From, To, Timezone, Source string
+	ExplainBlocked             bool
+}
 
 type UsageDay struct {
 	Date                string   `json:"date"`

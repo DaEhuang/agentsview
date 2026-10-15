@@ -9,15 +9,22 @@ import (
 // awaiting reconciliation. A monotonic consumer must never retain a temporary
 // overcount from replayed parent history as an irreversible high-water mark.
 type UsageDayBlock struct {
-	Date    string `json:"date"`
-	Machine string `json:"machine"`
-	Source  string `json:"source"`
-	Reason  string `json:"reason"`
+	Date         string   `json:"date"`
+	Machine      string   `json:"machine"`
+	Source       string   `json:"source"`
+	Reason       string   `json:"reason"`
+	SessionIDs   []string `json:"session_ids,omitempty"`
+	SessionCount int      `json:"session_count,omitempty"`
 }
 
 func usageDayBlocks(snapshot usageQuerySnapshot, options UsageDaysOptions, loc *time.Location, from, to time.Time) []UsageDayBlock {
 	blocks := map[string]UsageDayBlock{}
-	for _, session := range snapshot.Sessions {
+	sessions := snapshot.Sessions
+	if options.ExplainBlocked {
+		sessions = append([]usageQuerySession(nil), sessions...)
+		sort.Slice(sessions, func(i, j int) bool { return sessions[i].ID < sessions[j].ID })
+	}
+	for _, session := range sessions {
 		if session.ProviderAgent != "codex" || session.ParserDataVersion >= CurrentDataVersion() {
 			continue
 		}
@@ -42,7 +49,16 @@ func usageDayBlocks(snapshot usageQuerySnapshot, options UsageDaysOptions, loc *
 		}
 		for day := first; !day.After(last); day = day.AddDate(0, 0, 1) {
 			block := UsageDayBlock{Date: day.Format("2006-01-02"), Machine: machine, Source: source, Reason: "parser-reconciliation-required"}
-			blocks[block.Date+"\x00"+machine+"\x00"+source] = block
+			key := block.Date + "\x00" + machine + "\x00" + source
+			if options.ExplainBlocked {
+				previous := blocks[key]
+				block.SessionCount = previous.SessionCount + 1
+				block.SessionIDs = previous.SessionIDs
+				if len(block.SessionIDs) < 32 {
+					block.SessionIDs = append(block.SessionIDs, session.ID)
+				}
+			}
+			blocks[key] = block
 		}
 	}
 	result := make([]UsageDayBlock, 0, len(blocks))

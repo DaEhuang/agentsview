@@ -17574,7 +17574,7 @@ func (e *Engine) writeBatchWithOutcomeContext(
 			werr = e.writeMessages(ctx, s.ID, msgs)
 		}
 		if werr == nil && s.CanonicalDialogueSource {
-			werr = e.db.ReconcileCanonicalConversation(ctx, s.ID, msgs)
+			werr = e.db.ReconcileCanonicalConversation(ctx, s.ID, msgs, stale && !pw.needsRetry && s.Agent == "codex" && s.ParentReplayResolved)
 		}
 		if werr != nil {
 			if ctx.Err() != nil {
@@ -18743,6 +18743,9 @@ func (e *Engine) writeBatchBulkWithOutcomeContext(
 			// The bulk batch would normally create the session row, so
 			// mirror the standard write path's session upsert and
 			// post-write sequence here.
+			priorVersion := e.db.GetSessionDataVersion(ctx, s.ID)
+			parentReconciled := priorVersion > 0 && priorVersion < db.CurrentDataVersion() &&
+				!pw.needsRetry && s.Agent == "codex" && s.ParentReplayResolved
 			_, err := e.upsertSessionPendingContentForWrite(ctx, pw, s)
 			if err != nil {
 				if isIntentionalSessionSkip(err) {
@@ -18762,6 +18765,9 @@ func (e *Engine) writeBatchBulkWithOutcomeContext(
 			}
 			tWrite := time.Now()
 			err = e.writeStagedFullParse(ctx, s, msgs, pw)
+			if err == nil && s.CanonicalDialogueSource {
+				err = e.db.ReconcileCanonicalConversation(ctx, s.ID, msgs, parentReconciled)
+			}
 			e.phaseStats.WriteNanos.Add(int64(time.Since(tWrite)))
 			if err != nil {
 				log.Printf(
@@ -20342,6 +20348,7 @@ func toDBSessionContext(
 	}
 	s := db.Session{
 		CanonicalDialogueSource: pw.sess.CanonicalDialogueSource,
+		ParentReplayResolved:    pw.sess.ParentReplayResolved,
 		ID:                      pw.sess.ID,
 		Project:                 pw.sess.Project,
 		Machine:                 pw.sess.Machine,

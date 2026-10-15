@@ -118,6 +118,13 @@ func TestUsageDaysWithholdsOnlyUnreconciledSourceDays(t *testing.T) {
 	for _, day := range got.Days {
 		assert.False(t, day.Date == "2026-06-01" && day.Machine == "local" && day.Source == "codex")
 	}
+	opts.ExplainBlocked = true
+	explained, err := d.ExportUsageDays(t.Context(), opts)
+	require.NoError(t, err)
+	require.Len(t, explained.Blocked, 1)
+	assert.Equal(t, []string{"codex:retry"}, explained.Blocked[0].SessionIDs)
+	assert.Equal(t, 1, explained.Blocked[0].SessionCount)
+	assert.Equal(t, got.Days, explained.Days)
 	require.NoError(t, d.SetSessionDataVersion(t.Context(), "codex:retry", CurrentDataVersion()))
 	got, err = d.ExportUsageDays(t.Context(), opts)
 	require.NoError(t, err)

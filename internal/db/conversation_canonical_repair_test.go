@@ -49,3 +49,33 @@ func TestCanonicalConversationRepairIsOnceAndKeepsOpaqueIDs(t *testing.T) {
 		}
 	}
 }
+
+func TestCanonicalParentRecoveryCannotRepeatOrClearUnrelatedGaps(t *testing.T) {
+	d := testDB(t)
+	parent := "codex:parent"
+	session := Session{ID: "child", Agent: "codex", Project: "fixture", Machine: "local", ParentSessionID: &parent, CanonicalDialogueSource: true, ParentReplayResolved: true}
+	write := func(text string, version int) {
+		result, err := d.WriteSessionBatchContext(t.Context(), []SessionBatchWrite{{Session: session, Messages: []Message{{SessionID: "child", Role: "user", Content: text}}, DataVersion: version, ReplaceMessages: true, SkipSignalUpdates: true}})
+		require.NoError(t, err)
+		require.Empty(t, result.Errors)
+	}
+	gap := func() string {
+		all, err := d.ExportConversationChanges(t.Context(), ConversationExportOptions{})
+		require.NoError(t, err)
+		for _, c := range all.Changes {
+			if !c.Deleted {
+				return c.Gap
+			}
+		}
+		t.Fatal("missing active message")
+		return ""
+	}
+	write("unresolved parent replay", CurrentDataVersion()-1)
+	write("verified child", CurrentDataVersion())
+	require.Equal(t, "identity_unavailable", gap())
+	write("arbitrary rewrite", CurrentDataVersion())
+	require.Equal(t, "identity_ambiguous", gap())
+	require.NoError(t, d.SetSessionDataVersion(t.Context(), "child", CurrentDataVersion()-1))
+	write("another rewrite", CurrentDataVersion())
+	require.Equal(t, "identity_ambiguous", gap(), "parent recovery is one time")
+}

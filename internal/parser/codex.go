@@ -1605,56 +1605,6 @@ func (p *codexProvider) parseSessionWithCursor(
 	)
 }
 
-func (p *codexProvider) parentTurnResolver(
-	ctx context.Context, childPath string,
-) codexParentTurnResolver {
-	return func(parentID string) (map[string]struct{}, bool) {
-		if ctx.Err() != nil {
-			return nil, false
-		}
-		parentKey := strings.Join(p.sources.roots, "\x00") + "\x00" + parentID
-		if turnIDs, ok := p.parentTurnCache.GetParent(parentKey); ok {
-			return turnIDs, true
-		}
-		parentPath := ""
-		for _, root := range p.sources.roots {
-			if ctx.Err() != nil {
-				return nil, false
-			}
-			candidate := p.sources.findSourceFile(root, parentID)
-			if candidate == "" || filepath.Clean(candidate) == filepath.Clean(childPath) {
-				continue
-			}
-			parentPath = candidate
-			break
-		}
-		if parentPath == "" {
-			return nil, false
-		}
-		info, err := os.Stat(parentPath)
-		if err != nil || info.IsDir() {
-			return nil, false
-		}
-		cacheKey := codexParentTurnCacheKeyFor(parentPath, info)
-		if turnIDs, ok := p.parentTurnCache.Get(cacheKey); ok {
-			return turnIDs, true
-		}
-
-		turnIDs := make(map[string]struct{})
-		_, err = readCodexJSONLFromContext(ctx, parentPath, 0, func(line string) {
-			if gjson.Get(line, "type").Str != codexTypeTurnContext {
-				return
-			}
-			turnIDs[gjson.Get(line, "payload.turn_id").Str] = struct{}{}
-		})
-		if err != nil && !errors.Is(err, errCodexIncrementalNeedsFullParse) {
-			return nil, false
-		}
-		p.parentTurnCache.PutParent(parentKey, cacheKey, turnIDs)
-		return turnIDs, true
-	}
-}
-
 // CodexReplayParentID returns the explicit parent only when the rollout has a
 // positive replay-prefix signal: forked_from_id, or a copied parent
 // session_meta after subagent lineage metadata. Child-only subagents return no
@@ -1874,6 +1824,7 @@ func (p *codexProvider) parseCodexSessionSnapshotStreaming(
 
 	sess := &ParsedSession{
 		CanonicalDialogueSource: p.sources.isBoundRollout(path, b.sessionID),
+		ParentReplayResolved:    b.forkGate.lineagePositive && b.forkGate.resolvedOnce,
 		SourceSessionID:         b.sessionID,
 		ID:                      sessionID,
 		Project:                 b.project,
