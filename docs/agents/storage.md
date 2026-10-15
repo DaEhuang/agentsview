@@ -53,6 +53,12 @@ revisions. Manifest and bounded body reads resolve project evidence in their own
 SQLite snapshot; body reads also pin the database generation and message
 revision. This local contract does not widen raw artifacts or mirror schemas.
 
+Codex discovers plain and `.jsonl.zst` rollouts under the same native source
+identity. Compressed sources use private, bounded, disposable snapshots and the
+same parser; hashes and freshness describe the compressed original. They never
+receive byte-append checkpoints, and damaged frames fail before publication.
+Original files remain untouched.
+
 Codex parent lookup includes retained suffixed rollouts and verifies the first
 native session identity before accepting their turn IDs. It unions retained
 branches so replayed parent history is not counted as child activity. Unresolved

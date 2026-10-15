@@ -1625,9 +1625,22 @@ func codexReplayParentIDContext(
 	}
 	defer f.Close()
 
+	var reader io.Reader = f
+	if codexCompressed(childPath) {
+		info, err := f.Stat()
+		if err != nil {
+			return "", false
+		}
+		decoded, _, _, cleanup, err := decodeCodexSnapshot(ctx, f, info)
+		if err != nil {
+			return "", false
+		}
+		defer cleanup()
+		reader = decoded
+	}
 	parentID := ""
 	resolutionNeeded := false
-	scanner := bufio.NewScanner(checkedContextReader{ctx: ctx, reader: f})
+	scanner := bufio.NewScanner(checkedContextReader{ctx: ctx, reader: reader})
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
 	for scanner.Scan() {
 		if ctx.Err() != nil {
@@ -1706,7 +1719,7 @@ func (p *codexProvider) parseSessionSnapshotWithCursor(
 // full message slice inside the parser. The returned message slice comes
 // from the sink (for a collecting sink it is the complete transcript; for
 // a staging sink it omits result-event content).
-func (p *codexProvider) parseCodexSessionSnapshotStreaming(
+func (p *codexProvider) parseCodexPlainSnapshotStreaming(
 	ctx context.Context, path, machine string,
 	includeExec bool,
 	f *os.File,
@@ -1773,7 +1786,7 @@ func (p *codexProvider) parseCodexSessionSnapshotStreaming(
 	// remaining replayed parent records would be imported as child
 	// content. Refuse the checkpoint until a genuine child turn opens the
 	// gate; the file then reparses authoritatively and earns its cursor.
-	if !b.forkGate.active && !b.pendingCallsOverflow && !b.checkpointUnsafe {
+	if !codexCompressed(path) && !b.forkGate.active && !b.pendingCallsOverflow && !b.checkpointUnsafe {
 		if safeCheck, safeErr := codexSafeResumeOffsetFile(
 			f, info.Size(),
 		); safeErr == nil && safeCheck {
@@ -2203,6 +2216,17 @@ func readCodexJSONLFromContext(
 	info, err := f.Stat()
 	if err != nil {
 		return 0, fmt.Errorf("stat %s: %w", path, err)
+	}
+	if codexCompressed(path) {
+		if offset != 0 {
+			return 0, errCodexIncrementalNeedsFullParse
+		}
+		decoded, decodedInfo, _, cleanup, err := decodeCodexSnapshot(ctx, f, info)
+		if err != nil {
+			return 0, err
+		}
+		defer cleanup()
+		return readCodexJSONLSectionContext(ctx, decoded, 0, decodedInfo.Size(), fn)
 	}
 	return readCodexJSONLSectionContext(ctx, f, offset, info.Size(), fn)
 }

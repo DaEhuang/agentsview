@@ -781,6 +781,7 @@ func claudeFindSourceFile(
 }
 
 func isCodexSessionFilename(name string) bool {
+	name = codexPlainName(name)
 	return strings.HasPrefix(name, "rollout-") &&
 		strings.HasSuffix(name, ".jsonl")
 }
@@ -831,6 +832,7 @@ func CodexRolloutDiscoveryID(name string) string {
 }
 
 func codexRevertedRolloutMatch(name string) []string {
+	name = codexPlainName(name)
 	if !isCodexSessionFilename(name) {
 		return nil
 	}
@@ -860,7 +862,7 @@ func CodexSessionPathInfo(root, path string) (CodexLayout, string, bool) {
 	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+sep) {
 		return CodexLayoutUnknown, "", false
 	}
-	if !strings.HasSuffix(path, ".jsonl") {
+	if !strings.HasSuffix(codexPlainName(path), ".jsonl") {
 		return CodexLayoutUnknown, "", false
 	}
 	parts := strings.Split(rel, sep)
@@ -929,6 +931,7 @@ func walkCodexDayDirs(
 // like rollout-{timestamp}-{uuid}.jsonl using regex matching on the
 // standard 8-4-4-4-12 hex format.
 func extractUUIDFromRollout(filename string) string {
+	filename = codexPlainName(filename)
 	stem := strings.TrimSuffix(filename, ".jsonl")
 	match := uuidRe.FindStringSubmatch(stem)
 	if len(match) < 2 {

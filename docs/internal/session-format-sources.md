@@ -3494,3 +3494,13 @@ schemas keep their existing ordering behavior.
 [evener-source-3]: https://github.com/prime-radiant-inc/evener/blob/da7c06396c9848abfae362dcffce3861a6a0c95a/llm/types.go
 [evener-source-4]: https://github.com/prime-radiant-inc/evener/blob/da7c06396c9848abfae362dcffce3861a6a0c95a/agent/schema/snapshot.go
 [evener-source-5]: https://github.com/prime-radiant-inc/evener/blob/da7c06396c9848abfae362dcffce3861a6a0c95a/agent/fork.go
+
+### Compressed Codex rollout snapshots (2026-10-16)
+
+Observed historical sources can retain the ordinary rollout name with an added
+`.zst` suffix in both dated and archived roots. The decompressed stream preserves
+native session metadata and turn IDs. Local discovery deduplicates plain and
+compressed copies by the same rollout identity; compressed parent turn lookup
+uses the same verified metadata rule as plain sources. Tests cover physical
+fingerprints, no compressed append checkpoints, damaged frames, and an existing
+archive whose unresolved parent and child sources become compressed.

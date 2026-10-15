@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/klauspost/compress/zstd"
+
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/agentsview/internal/config"
 	"go.kenn.io/agentsview/internal/db"
@@ -46,6 +48,20 @@ func TestCodexLineageRebuildRetainsBodiesWithholdsUsageAndRecovers(t *testing.T)
 				require.NoError(t, err)
 			}
 			write(parent+"_33333333-3333-4333-8333-333333333333", testjsonl.JoinJSONL(testjsonl.CodexSessionMetaJSON(parent, "/project", "codex_cli_rs", at), testjsonl.CodexTurnContextWithIDJSON("gpt-5.4", "parent-turn", at)))
+			// Historical originals may be compressed and moved after ingestion.
+			// Both child and retained parent must be found without expanding in place.
+			encoder, err := zstd.NewWriter(nil)
+			require.NoError(t, err)
+			entries, err := os.ReadDir(root)
+			require.NoError(t, err)
+			for _, entry := range entries {
+				path := filepath.Join(root, entry.Name())
+				raw, err := os.ReadFile(path)
+				require.NoError(t, err)
+				require.NoError(t, os.WriteFile(path+".zst", encoder.EncodeAll(raw, nil), 0600))
+				require.NoError(t, os.Remove(path))
+			}
+			encoder.Close()
 			stats := engine.SyncAll(t.Context(), nil)
 			require.True(t, stats.ProcessingComplete())
 			require.Zero(t, stats.CodexLineagePending())

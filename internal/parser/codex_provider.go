@@ -622,6 +622,9 @@ func (p *codexProvider) ParseIncremental(
 		return IncrementalOutcome{}, IncrementalUnsupported,
 			errors.New("codex source path unavailable")
 	}
+	if codexCompressed(path) {
+		return IncrementalOutcome{ForceReplace: true}, IncrementalNeedsFullParse, nil
+	}
 	if req.Offset < 0 || req.Fingerprint.Size < req.Offset {
 		return IncrementalOutcome{ForceReplace: true},
 			IncrementalNeedsFullParse, nil
