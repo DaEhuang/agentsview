@@ -222,3 +222,11 @@ Only explicitly returned tombstones prove removal. A missing result never
 proves deletion. This lookup uses stable identity keys, so reviewing a few gaps
 does not require walking unrelated historical changes. Neither command returns
 message bodies; the revision-pinned `message` command remains their authority.
+
+Add `--diagnostics` to inspect source availability, stored parser version,
+repair markers and native-identity occurrence counts for the requested records.
+Each record includes at most eight matching removed-message candidates and the
+full match count. Matching content alone never authorizes an identity repair.
+These optional reads never parse sources or change the archive. Source status
+is a filesystem observation, not a guarantee that the source stayed unchanged
+after the database snapshot. Bodies, native IDs and file paths are excluded.

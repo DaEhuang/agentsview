@@ -14,13 +14,14 @@ type ConversationReference struct {
 }
 
 type ConversationStates struct {
-	SchemaVersion int                  `json:"schema_version"`
-	ArchiveID     string               `json:"archive_id"`
-	DatabaseID    string               `json:"database_id"`
-	Changes       []ConversationChange `json:"changes"`
+	SchemaVersion int                      `json:"schema_version"`
+	ArchiveID     string                   `json:"archive_id"`
+	DatabaseID    string                   `json:"database_id"`
+	Changes       []ConversationChange     `json:"changes"`
+	Diagnostics   []ConversationDiagnostic `json:"diagnostics,omitempty"`
 }
 
-func (db *DB) ExportConversationStates(ctx context.Context, refs []ConversationReference) (ConversationStates, error) {
+func (db *DB) ExportConversationStates(ctx context.Context, refs []ConversationReference, diagnostics ...bool) (ConversationStates, error) {
 	result := ConversationStates{SchemaVersion: 1, Changes: []ConversationChange{}}
 	if len(refs) == 0 || len(refs) > 32 {
 		return result, errors.New("expected between 1 and 32 conversation references")
@@ -62,6 +63,24 @@ func (db *DB) ExportConversationStates(ctx context.Context, refs []ConversationR
 	}
 	if err := db.attachConversationProjects(ctx, tx, result.ArchiveID, result.Changes); err != nil {
 		return result, err
+	}
+	if len(diagnostics) > 0 && diagnostics[0] {
+		sessions := map[string]ConversationSessionDiagnostic{}
+		for _, c := range result.Changes {
+			session, ok := sessions[c.SessionID]
+			if !ok {
+				session, err = conversationSessionDiagnostic(ctx, tx, c.SessionID)
+				if err != nil {
+					return result, err
+				}
+				sessions[c.SessionID] = session
+			}
+			diagnostic, err := conversationDiagnostic(ctx, tx, c, session)
+			if err != nil {
+				return result, err
+			}
+			result.Diagnostics = append(result.Diagnostics, diagnostic)
+		}
 	}
 	return result, tx.Commit()
 }

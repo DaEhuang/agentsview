@@ -11,6 +11,7 @@ import (
 
 func newConversationStatesCommand() *cobra.Command {
 	var references string
+	var diagnostics bool
 	command := &cobra.Command{
 		Use: "states", Short: "Read current metadata for a bounded list of saved conversation references",
 		Args: cobra.NoArgs, SilenceUsage: true,
@@ -27,7 +28,7 @@ func newConversationStatesCommand() *cobra.Command {
 				return err
 			}
 			defer database.Close()
-			result, err := database.ExportConversationStates(command.Context(), refs)
+			result, err := database.ExportConversationStates(command.Context(), refs, diagnostics)
 			if err != nil {
 				return writeConversationExportError(command, err)
 			}
@@ -35,5 +36,6 @@ func newConversationStatesCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&references, "references", "", "JSON array of up to 32 session_id/message_id references")
+	command.Flags().BoolVar(&diagnostics, "diagnostics", false, "Include bounded identity evidence and source availability without bodies or paths")
 	return command
 }
