@@ -24,13 +24,14 @@ func TestConversationDiagnosticsBoundedReadOnly(t *testing.T) {
 	require.NoError(t, d.Update(t.Context(), func(tx *sql.Tx) error {
 		_, err := tx.Exec(`WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<12)
    INSERT INTO conversation_messages(session_id,message_id,ordinal,role,timestamp,source_id,digest,text_bytes,gap,deleted,removed)
-   SELECT session_id,'prior-'||x,x,role,timestamp,source_id,digest,text_bytes,'identity_ambiguous',1,1 FROM conversation_messages,n WHERE message_id=?`, ref.MessageID)
+   SELECT session_id,'prior-'||x,x,role,timestamp,source_id,digest,text_bytes,CASE WHEN x=1 THEN 'identity_unavailable' ELSE 'identity_ambiguous' END,1,1 FROM conversation_messages,n WHERE message_id=?`, ref.MessageID)
 		if err != nil {
 			return err
 		}
 		_, err = tx.Exec(`INSERT INTO archive_metadata(key,value) VALUES('conversation_rollout_repaired_v3:chat','1')`)
 		return err
 	}))
+	// Older trustworthy evidence must not be hidden by newer ambiguous churn.
 	before, err := d.ExportConversationChanges(t.Context(), ConversationExportOptions{})
 	require.NoError(t, err)
 	plain, err := d.ExportConversationStates(t.Context(), []ConversationReference{ref})
@@ -44,6 +45,8 @@ func TestConversationDiagnosticsBoundedReadOnly(t *testing.T) {
 	assert.Equal(t, 13, got.NativeOccurrences)
 	assert.Equal(t, 12, got.PriorMatches)
 	assert.Len(t, got.Candidates, 8)
+	assert.Equal(t, "prior-1", got.Candidates[0].MessageID)
+	assert.Equal(t, "identity_unavailable", got.Candidates[0].Gap)
 	assert.Equal(t, 12, got.Session.RemovedVisible)
 	assert.Equal(t, 1, got.Session.ActiveVisible)
 	assert.True(t, got.Session.CanonicalRepaired)

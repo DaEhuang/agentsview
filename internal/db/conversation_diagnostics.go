@@ -99,7 +99,7 @@ func conversationDiagnostic(ctx context.Context, tx *sql.Tx, c ConversationChang
 	if err != nil {
 		return d, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT `+conversationChangeColumns+` FROM conversation_messages WHERE `+predicate+` ORDER BY revision DESC LIMIT 8`, args...)
+	rows, err := tx.QueryContext(ctx, `SELECT `+conversationChangeColumns+` FROM conversation_messages WHERE `+predicate+` ORDER BY (gap='identity_ambiguous') ASC,revision DESC LIMIT 8`, args...)
 	if err != nil {
 		return d, err
 	}

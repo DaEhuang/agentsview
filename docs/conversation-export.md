@@ -227,6 +227,8 @@ Add `--diagnostics` to inspect source availability, stored parser version,
 repair markers and native-identity occurrence counts for the requested records.
 Each record includes at most eight matching removed-message candidates and the
 full match count. Matching content alone never authorizes an identity repair.
+Bounded candidates show unambiguous historical records before ambiguous churn,
+then newest revisions within each group.
 These optional reads never parse sources or change the archive. Source status
 is a filesystem observation, not a guarantee that the source stayed unchanged
 after the database snapshot. Bodies, native IDs and file paths are excluded.
