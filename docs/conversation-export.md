@@ -236,3 +236,10 @@ An upgrade schedules affected sessions for one fresh native parse. It restores
 prior opaque identities only when the complete ordered former visible projection
 matches, or a shorter suffix has verified parent replay and a unique anchor.
 Repeated clean historical coordinates and changed content remain unresolved.
+
+Canonical recovery also preserves a filtered projection when every current row
+has a nonempty timestamp and uniquely matches its former role, timestamp,
+body digest, byte count and original ordinal in increasing order. This handles
+omitted intermediate assistant records without renumbering surviving messages.
+Repeated evidence, changed bodies and shifted coordinates do not qualify for
+this rule. The next upgrade rechecks affected sessions through normal parsing.

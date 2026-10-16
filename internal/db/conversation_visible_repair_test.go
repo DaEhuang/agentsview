@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
@@ -35,6 +36,7 @@ func TestCompressedConversationRecoveryRequiresWholeOrderedProof(t *testing.T) {
 	for _, tc := range []struct {
 		name                                                           string
 		suffix, proof, compressed, repeated, changed, churn, duplicate bool
+		filtered, reindex, missingTime, repeatedCoordinate             bool
 		want                                                           bool
 	}{
 		{name: "unchanged visible projection", compressed: true, want: true},
@@ -47,6 +49,12 @@ func TestCompressedConversationRecoveryRequiresWholeOrderedProof(t *testing.T) {
 		{name: "changed body", compressed: true, changed: true},
 		{name: "ambiguous historical churn", compressed: true, churn: true, want: true},
 		{name: "multiple clean generations", duplicate: true},
+		{name: "filtered intermediate records retain coordinates", filtered: true, want: true},
+		{name: "filtered intermediate records changed", filtered: true, changed: true},
+		{name: "filtered intermediate records renumbered", filtered: true, reindex: true},
+		{name: "filtered intermediate records untimed", filtered: true, missingTime: true},
+		{name: "filtered intermediate records duplicated", filtered: true, duplicate: true},
+		{name: "filtered intermediate records repeated evidence", filtered: true, repeatedCoordinate: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := testDB(t)
@@ -56,10 +64,25 @@ func TestCompressedConversationRecoveryRequiresWholeOrderedProof(t *testing.T) {
 			}
 			require.NoError(t, d.UpsertSession(t.Context(), Session{ID: "chat", Agent: "codex", Machine: "local", Project: "fixture", FilePath: &file}))
 			old := []Message{{SessionID: "chat", Ordinal: 0, Role: "user", Content: "parent"}, {SessionID: "chat", Ordinal: 1, Role: "user", Content: "question"}, {SessionID: "chat", Ordinal: 2, Role: "assistant", Content: "answer"}}
-			if !tc.suffix {
+			if !tc.suffix && !tc.filtered {
 				old = old[1:]
 				for i := range old {
 					old[i].Ordinal = i
+				}
+			}
+			if tc.filtered {
+				old = []Message{{SessionID: "chat", Ordinal: 0, Role: "user", Content: "question"}, {SessionID: "chat", Ordinal: 10, Role: "assistant", Content: "filtered commentary"}, {SessionID: "chat", Ordinal: 67, Role: "assistant", Content: "answer"}}
+				for i := range old {
+					timestamp := fmt.Sprintf("2026-01-01T00:00:%02dZ", i)
+					old[i].Timestamp = timestamp
+				}
+				if tc.missingTime {
+					old[0].Timestamp = ""
+				}
+				if tc.repeatedCoordinate {
+					old[1].Role = old[0].Role
+					old[1].Content = old[0].Content
+					old[1].Timestamp = old[0].Timestamp
 				}
 			}
 			if tc.repeated {
@@ -92,8 +115,15 @@ func TestCompressedConversationRecoveryRequiresWholeOrderedProof(t *testing.T) {
 				start = 1
 			}
 			var fresh []Message
+			var oldIndexes []int
 			for i, m := range old[start:] {
-				m.Ordinal = i
+				if tc.filtered && i == 1 {
+					continue
+				}
+				oldIndexes = append(oldIndexes, start+i)
+				if !tc.filtered || tc.reindex {
+					m.Ordinal = len(fresh)
+				}
 				m.ParentReplayResolved = tc.proof
 				if tc.changed && i == 0 {
 					m.Content = "different"
@@ -112,10 +142,10 @@ func TestCompressedConversationRecoveryRequiresWholeOrderedProof(t *testing.T) {
 			require.Len(t, after.Changes, len(fresh))
 			for i, c := range after.Changes {
 				if tc.want {
-					require.Equal(t, before.Changes[start+i].MessageID, c.MessageID)
+					require.Equal(t, before.Changes[oldIndexes[i]].MessageID, c.MessageID)
 					require.Equal(t, "identity_unavailable", c.Gap)
 				} else {
-					require.Equal(t, "bad-"+before.Changes[start+i].MessageID, c.MessageID)
+					require.Equal(t, "bad-"+before.Changes[oldIndexes[i]].MessageID, c.MessageID)
 					require.Equal(t, "identity_ambiguous", c.Gap)
 				}
 			}
@@ -138,7 +168,7 @@ func TestCanonicalProjectionRepairSchedulesPlainAndCompressedOnce(t *testing.T) 
 		require.NoError(t, d.InsertMessages(t.Context(), []Message{{SessionID: id, Role: "user", Content: "retained"}}))
 	}
 	require.NoError(t, d.Update(t.Context(), func(tx *sql.Tx) error {
-		_, err := tx.Exec(`DELETE FROM archive_metadata WHERE key='canonical_projection_repair_v2'`)
+		_, err := tx.Exec(`DELETE FROM archive_metadata WHERE key='canonical_projection_repair_v3'`)
 		if err != nil {
 			return err
 		}

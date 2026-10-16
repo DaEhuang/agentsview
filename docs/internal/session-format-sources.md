@@ -406,7 +406,11 @@ The previous recovery selected compressed files only, and a prior repair marker
 could precede the final retained projection. The same complete ordered-projection
 or verified-parent unique-suffix proof now covers both formats, with a new
 one-time native reparse trigger. Multiple clean generations and changed bodies
-remain rejected. This is consumer archive evidence, not a producer format change.
+remain rejected. Follow-up read-only evidence found intermediate omitted assistant
+records with every surviving message at its unique former timestamp and ordinal.
+Recovery now accepts only a complete current projection with those exact
+coordinates, roles, body digests and sizes. This is consumer archive evidence,
+not a producer format change.
 
 Parent-rollout lookup (verified 2026-10-16): retained local rollouts use
 `rollout-<timestamp>-<thread>_<rollout>.jsonl` while their first

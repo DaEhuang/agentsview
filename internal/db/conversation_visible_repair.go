@@ -31,10 +31,11 @@ func conversationVisiblePrefix(old, incoming []conversationRow) map[int]conversa
 
 // Recover a canonical source upgrade without creating new identities.
 // This is called only after a fresh canonical native parse. The complete prior
-// visible projection must still exist as unambiguous tombstones; a shorter
-// suffix additionally requires verified parent replay and a unique anchor.
+// visible projection must still exist as unambiguous tombstones. Filtered rows
+// require unchanged unique native coordinates; a renumbered shorter suffix
+// additionally requires verified parent replay and a unique anchor.
 func recoverCanonicalProjectionTx(tx transactionQueries, sessionID string, messages []Message) error {
-	key := "canonical_projection_repaired_v2:" + sessionID
+	key := "canonical_projection_repaired_v3:" + sessionID
 	var eligible bool
 	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM sessions WHERE id=? AND agent='codex') AND NOT EXISTS(SELECT 1 FROM archive_metadata WHERE key=?)`, sessionID, key).Scan(&eligible); err != nil {
 		return err
@@ -85,12 +86,62 @@ func recoverCanonicalProjectionTx(tx transactionQueries, sessionID string, messa
 			return nil
 		}
 	}
+	equal := func(a, b conversationRow) bool {
+		return a.Role == b.Role && ((a.Timestamp == nil && b.Timestamp == nil) || (a.Timestamp != nil && b.Timestamp != nil && *a.Timestamp == *b.Timestamp)) && a.sourceID == b.sourceID && a.Digest == b.Digest && a.TextBytes == b.TextBytes
+	}
+	matched := canonicalCoordinateProjection(prior, current, equal)
+	if matched == nil {
+		matched = canonicalSuffixProjection(prior, current, messages, equal)
+	}
+	if matched == nil {
+		return nil
+	}
+	for i, row := range current {
+		if _, err := tx.Exec(`UPDATE conversation_messages SET deleted=1,removed=1,body=NULL WHERE session_id=? AND message_id=?`, sessionID, row.MessageID); err != nil {
+			return err
+		}
+		row.MessageID = matched[i].MessageID
+		row.Gap = matched[i].Gap
+		if err := putConversationRowTx(tx, row); err != nil {
+			return err
+		}
+	}
+	_, err = tx.Exec(`INSERT INTO archive_metadata(key,value) VALUES(?,'1')`, key)
+	return err
+}
+
+// Content projection can omit intermediate assistant records while preserving
+// native coordinates. Require the entire current projection to match unique
+// timestamped prior rows at the same ordinal; text equality alone is not enough.
+func canonicalCoordinateProjection(prior, current []conversationRow, equal func(conversationRow, conversationRow) bool) []conversationRow {
+	matched := make([]conversationRow, 0, len(current))
+	last := -1
+	for _, row := range current {
+		if row.Timestamp == nil || *row.Timestamp == "" {
+			return nil
+		}
+		index := -1
+		for i, old := range prior {
+			if equal(old, row) {
+				if index != -1 {
+					return nil
+				}
+				index = i
+			}
+		}
+		if index <= last || prior[index].Ordinal != row.Ordinal {
+			return nil
+		}
+		matched = append(matched, prior[index])
+		last = index
+	}
+	return matched
+}
+
+func canonicalSuffixProjection(prior, current []conversationRow, messages []Message, equal func(conversationRow, conversationRow) bool) []conversationRow {
 	offset := len(prior) - len(current)
 	if offset < 0 {
 		return nil
-	}
-	equal := func(a, b conversationRow) bool {
-		return a.Role == b.Role && ((a.Timestamp == nil && b.Timestamp == nil) || (a.Timestamp != nil && b.Timestamp != nil && *a.Timestamp == *b.Timestamp)) && a.sourceID == b.sourceID && a.Digest == b.Digest && a.TextBytes == b.TextBytes
 	}
 	for i, row := range current {
 		if !equal(prior[offset+i], row) {
@@ -116,22 +167,11 @@ func recoverCanonicalProjectionTx(tx transactionQueries, sessionID string, messa
 			return nil
 		}
 	}
-	for i, row := range current {
-		if _, err := tx.Exec(`UPDATE conversation_messages SET deleted=1,removed=1,body=NULL WHERE session_id=? AND message_id=?`, sessionID, row.MessageID); err != nil {
-			return err
-		}
-		row.MessageID = prior[offset+i].MessageID
-		row.Gap = prior[offset+i].Gap
-		if err := putConversationRowTx(tx, row); err != nil {
-			return err
-		}
-	}
-	_, err = tx.Exec(`INSERT INTO archive_metadata(key,value) VALUES(?,'1')`, key)
-	return err
+	return prior[offset:]
 }
 
 func prepareCanonicalProjectionRepairTx(tx transactionQueries) error {
-	const key = "canonical_projection_repair_v2"
+	const key = "canonical_projection_repair_v3"
 	var exists bool
 	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM archive_metadata WHERE key=?)`, key).Scan(&exists); err != nil {
 		return err

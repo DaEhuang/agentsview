@@ -80,6 +80,13 @@ rechecks affected sessions once through normal native parsing, restores the orig
 IDs and tombstones the erroneous replacements, so retained
 upload references can reconcile without duplicating bodies or resetting history.
 
+Canonical recovery also preserves a filtered projection when every current row
+has a nonempty timestamp and uniquely matches its former role, timestamp,
+body digest, byte count and original ordinal in increasing order. This handles
+omitted intermediate assistant records without renumbering surviving messages.
+Repeated evidence, changed bodies and shifted coordinates do not qualify for
+this rule. The next upgrade rechecks affected sessions through normal parsing.
+
 ### Codex incremental import state
 
 Four SQLite-only tables support local Codex imports: `parser_checkpoints` holds
