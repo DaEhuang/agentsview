@@ -400,6 +400,14 @@ add an archived or maintained mirror without replacing the original identity.
 
 ## Codex (`codex`)
 
+Local archive diagnostics (verified 2026-10-16) found preserved plain JSONL
+originals with current ambiguous messages and exact earlier opaque identities.
+The previous recovery selected compressed files only, and a prior repair marker
+could precede the final retained projection. The same complete ordered-projection
+or verified-parent unique-suffix proof now covers both formats, with a new
+one-time native reparse trigger. Multiple clean generations and changed bodies
+remain rejected. This is consumer archive evidence, not a producer format change.
+
 Parent-rollout lookup (verified 2026-10-16): retained local rollouts use
 `rollout-<timestamp>-<thread>_<rollout>.jsonl` while their first
 `session_meta.payload.id` remains the parent thread ID. Child metadata retains

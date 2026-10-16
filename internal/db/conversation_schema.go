@@ -143,7 +143,7 @@ func ensureConversationSchemaLocked(ctx context.Context, w *writerHandle, usageO
 	if err := prepareCanonicalConversationRepairTx(contextTransaction{ctx: ctx, tx: tx}); err != nil {
 		return err
 	}
-	if err := prepareCompressedConversationRepairTx(contextTransaction{ctx: ctx, tx: tx}); err != nil {
+	if err := prepareCanonicalProjectionRepairTx(contextTransaction{ctx: ctx, tx: tx}); err != nil {
 		return err
 	}
 	// Non-destructive and built once on writable open. No parser-version bump

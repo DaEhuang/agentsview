@@ -585,7 +585,7 @@ func writeOneSessionBatchTx(
 		}
 	}
 	if write.Session.CanonicalDialogueSource && !usageOnly {
-		if err := recoverCompressedConversationTx(queries, write.Session.ID, msgs); err != nil {
+		if err := recoverCanonicalProjectionTx(queries, write.Session.ID, msgs); err != nil {
 			return 0, err
 		}
 		if err := resolveCanonicalConversationTx(queries, write.Session.ID); err != nil {

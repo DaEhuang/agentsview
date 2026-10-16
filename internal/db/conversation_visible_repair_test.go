@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
@@ -32,16 +33,20 @@ func TestConversationVisiblePrefixIgnoresAccountingChanges(t *testing.T) {
 
 func TestCompressedConversationRecoveryRequiresWholeOrderedProof(t *testing.T) {
 	for _, tc := range []struct {
-		name                                         string
-		suffix, proof, compressed, repeated, changed bool
-		want                                         bool
+		name                                                           string
+		suffix, proof, compressed, repeated, changed, churn, duplicate bool
+		want                                                           bool
 	}{
 		{name: "unchanged visible projection", compressed: true, want: true},
+		{name: "ordinary verified parent suffix", suffix: true, proof: true, want: true},
+		{name: "ordinary suffix without parent proof", suffix: true},
 		{name: "verified parent suffix", suffix: true, proof: true, compressed: true, want: true},
 		{name: "missing parent proof", suffix: true, compressed: true},
-		{name: "ordinary source", proof: true},
+		{name: "ordinary source", proof: true, want: true},
 		{name: "repeated suffix anchor", suffix: true, proof: true, compressed: true, repeated: true},
 		{name: "changed body", compressed: true, changed: true},
+		{name: "ambiguous historical churn", compressed: true, churn: true, want: true},
+		{name: "multiple clean generations", duplicate: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := testDB(t)
@@ -73,6 +78,15 @@ func TestCompressedConversationRecoveryRequiresWholeOrderedProof(t *testing.T) {
 			require.NoError(t, err)
 			_, err = tx.Exec(`UPDATE conversation_messages SET removed=1,deleted=1,body=NULL WHERE session_id='chat'`)
 			require.NoError(t, err)
+			if tc.churn || tc.duplicate {
+				gap := "identity_ambiguous"
+				if tc.duplicate {
+					gap = "identity_unavailable"
+				}
+				_, err = tx.Exec(`INSERT INTO conversation_messages(session_id,message_id,ordinal,role,timestamp,source_id,digest,text_bytes,gap,deleted,removed)
+                  SELECT session_id,'another-'||message_id,ordinal,role,timestamp,source_id,digest,text_bytes,?,1,1 FROM conversation_messages WHERE session_id='chat'`, gap)
+				require.NoError(t, err)
+			}
 			start := 0
 			if tc.suffix {
 				start = 1
@@ -110,5 +124,46 @@ func TestCompressedConversationRecoveryRequiresWholeOrderedProof(t *testing.T) {
 			require.NoError(t, err)
 			require.Empty(t, again.Changes)
 		})
+	}
+}
+
+func TestCanonicalProjectionRepairSchedulesPlainAndCompressedOnce(t *testing.T) {
+	d := testDB(t)
+	for _, id := range []string{"plain", "compressed"} {
+		file := id + ".jsonl"
+		if id == "compressed" {
+			file += ".zst"
+		}
+		require.NoError(t, d.UpsertSession(t.Context(), Session{ID: id, Agent: "codex", FilePath: &file, DataVersion: CurrentDataVersion()}))
+		require.NoError(t, d.InsertMessages(t.Context(), []Message{{SessionID: id, Role: "user", Content: "retained"}}))
+	}
+	require.NoError(t, d.Update(t.Context(), func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DELETE FROM archive_metadata WHERE key='canonical_projection_repair_v2'`)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(`UPDATE conversation_messages SET gap='identity_ambiguous'`)
+		if err != nil {
+			return err
+		}
+		return prepareCanonicalProjectionRepairTx(contextTransaction{ctx: t.Context(), tx: tx})
+	}))
+	var pending int
+	require.NoError(t, d.getReader().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sessions WHERE data_version=0`).Scan(&pending))
+	require.Equal(t, 2, pending)
+	require.NoError(t, d.Update(t.Context(), func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE sessions SET data_version=?`, CurrentDataVersion())
+		if err != nil {
+			return err
+		}
+		return prepareCanonicalProjectionRepairTx(contextTransaction{ctx: t.Context(), tx: tx})
+	}))
+	require.NoError(t, d.getReader().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sessions WHERE data_version=0`).Scan(&pending))
+	require.Zero(t, pending)
+	page, err := d.ExportConversationChanges(t.Context(), ConversationExportOptions{Retained: true})
+	require.NoError(t, err)
+	require.Len(t, page.Changes, 2)
+	for _, c := range page.Changes {
+		require.Equal(t, "identity_ambiguous", c.Gap)
 	}
 }

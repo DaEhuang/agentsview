@@ -71,12 +71,13 @@ keep their existing identity checks.
 
 Empty accounting records do not participate in visible-message identity checks.
 An unchanged complete visible prefix keeps its IDs even when those records
-change. The first compressed-source upgrade also repairs a previously replaced
+change. The canonical-source upgrade repair also covers plain JSONL originals and previously replaced
 visible projection only after a fresh canonical parse matches the complete
 ordered former projection. A shorter suffix additionally requires verified
 parent replay and a unique anchor. Former coordinates must be unambiguous;
 multiple generations or changed content remain gaps. This one-time recovery
-restores the original IDs and tombstones the erroneous replacements, so retained
+rechecks affected sessions once through normal native parsing, restores the original
+IDs and tombstones the erroneous replacements, so retained
 upload references can reconcile without duplicating bodies or resetting history.
 
 ### Codex incremental import state

@@ -29,14 +29,14 @@ func conversationVisiblePrefix(old, incoming []conversationRow) map[int]conversa
 	return result
 }
 
-// Repair the first compressed-source upgrade without creating new identities.
+// Recover a canonical source upgrade without creating new identities.
 // This is called only after a fresh canonical native parse. The complete prior
 // visible projection must still exist as unambiguous tombstones; a shorter
 // suffix additionally requires verified parent replay and a unique anchor.
-func recoverCompressedConversationTx(tx transactionQueries, sessionID string, messages []Message) error {
-	key := "compressed_projection_repaired_v1:" + sessionID
+func recoverCanonicalProjectionTx(tx transactionQueries, sessionID string, messages []Message) error {
+	key := "canonical_projection_repaired_v2:" + sessionID
 	var eligible bool
-	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM sessions WHERE id=? AND agent='codex' AND file_path LIKE '%.jsonl.zst') AND NOT EXISTS(SELECT 1 FROM archive_metadata WHERE key=?)`, sessionID, key).Scan(&eligible); err != nil {
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM sessions WHERE id=? AND agent='codex') AND NOT EXISTS(SELECT 1 FROM archive_metadata WHERE key=?)`, sessionID, key).Scan(&eligible); err != nil {
 		return err
 	}
 	if !eligible {
@@ -130,8 +130,8 @@ func recoverCompressedConversationTx(tx transactionQueries, sessionID string, me
 	return err
 }
 
-func prepareCompressedConversationRepairTx(tx transactionQueries) error {
-	const key = "compressed_projection_repair_v1"
+func prepareCanonicalProjectionRepairTx(tx transactionQueries) error {
+	const key = "canonical_projection_repair_v2"
 	var exists bool
 	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM archive_metadata WHERE key=?)`, key).Scan(&exists); err != nil {
 		return err
@@ -139,7 +139,7 @@ func prepareCompressedConversationRepairTx(tx transactionQueries) error {
 	if exists {
 		return nil
 	}
-	if _, err := tx.Exec(`UPDATE sessions SET data_version=0 WHERE agent='codex' AND file_path LIKE '%.jsonl.zst' AND id IN(SELECT session_id FROM conversation_messages WHERE removed=0 AND gap='identity_ambiguous')`); err != nil {
+	if _, err := tx.Exec(`UPDATE sessions SET data_version=0 WHERE agent='codex' AND id IN(SELECT session_id FROM conversation_messages WHERE removed=0 AND gap='identity_ambiguous')`); err != nil {
 		return err
 	}
 	_, err := tx.Exec(`INSERT INTO archive_metadata(key,value) VALUES(?,'1')`, key)

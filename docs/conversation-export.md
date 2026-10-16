@@ -230,3 +230,9 @@ full match count. Matching content alone never authorizes an identity repair.
 These optional reads never parse sources or change the archive. Source status
 is a filesystem observation, not a guarantee that the source stayed unchanged
 after the database snapshot. Bodies, native IDs and file paths are excluded.
+
+Canonical projection recovery covers both plain and compressed Codex originals.
+An upgrade schedules affected sessions for one fresh native parse. It restores
+prior opaque identities only when the complete ordered former visible projection
+matches, or a shorter suffix has verified parent replay and a unique anchor.
+Repeated clean historical coordinates and changed content remain unresolved.
