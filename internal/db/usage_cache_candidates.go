@@ -73,6 +73,7 @@ type usageQuerySnapshot struct {
 	Intervals       []usageQueryInterval
 	CursorHighWater int64
 	CreditRows      []archivedCreditRow
+	QoderCredits    []CreditDay
 	PricingRows     []export.EffectivePricingRow
 	location        *time.Location
 }
@@ -156,6 +157,12 @@ func (db *DB) captureUsageQuery(
 	snapshot.CreditRows, err = loadArchivedCreditRows(ctx, tx, snapshot.Sessions, filter)
 	if err != nil {
 		return usageQuerySnapshot{}, err
+	}
+	if kind == usageQueryKindToken {
+		snapshot.QoderCredits, err = loadQoderCreditDays(ctx, tx, snapshot.Sessions, filter)
+		if err != nil {
+			return usageQuerySnapshot{}, err
+		}
 	}
 	snapshot.Intervals = usageQueryIntervals(filter)
 	var hasCursorTable bool
@@ -243,6 +250,14 @@ func usageCandidateDiscoverySQL(
 		  AND s.deleted_at IS NULL
 		  AND (ue.occurred_at IS NULL OR ue.occurred_at = '')`, "s.started_at")
 
+	if kind == usageQueryKindToken {
+		// Native request Credits do not depend on the presence of a model name.
+		appendBranch(`SELECT m.session_id FROM messages m
+			JOIN sessions s ON s.id=m.session_id
+			WHERE s.agent='qoder' AND s.agent_label='qoder-cn'
+			  AND s.deleted_at IS NULL AND m.token_usage!=''
+			  AND m.timestamp IS NOT NULL AND m.timestamp!=''`, "m.timestamp")
+	}
 	if kind == usageQueryKindActivity {
 		appendBranch(`SELECT m.session_id
 			FROM messages AS m INDEXED BY idx_messages_activity_timestamp

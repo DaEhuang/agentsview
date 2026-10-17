@@ -3121,6 +3121,20 @@ schemas keep their existing ordering behavior.
   100-input/80-cached/20-output record: its total is 120, not 200. Covered by
   `TestQoderCNCachedInputIsNotCountedTwice`; CN retains the `qoder-cn` label. Local archive daily filters and
   `export usage-days` report this source separately from international Qoder.
+- **Native CN Credits (reverified 2026-10-17):** Qoder CN 0.4.8, using its
+  bundled CLI 1.1.69, also persisted `credits`, `original_credits`, `billable`,
+  and `request_id` inside `message.usage`. This is a local observation, not a
+  published session schema. The first-party
+  [SDK cost and usage contract](https://docs.qoder.cn/cli/sdk/cost-usage)
+  defines `credits` as the completed request's discounted amount and
+  `billable` as whether that amount is charged. Daily exports sum charged
+  amounts once per machine and request ID; explicitly non-billable requests
+  establish zero charged Credits. Missing billing evidence is not treated as
+  a zero charge. Conflicting copies fail validation. Session cumulative
+  `total_credits` and pre-discount amounts are not added again. Credits are
+  independent of Tokens: all-zero token fields alongside native Credits
+  produce `token_usage_known: false`, never a conversion or token estimate.
+  Synthetic coverage is in `internal/db/usage_qoder_credits_test.go`.
 - **Agentsview:** `internal/parser/qoder.go` and
   `internal/parser/qoder_provider.go`.
 

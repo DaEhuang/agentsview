@@ -28,6 +28,7 @@ type UsageDay struct {
 	Credits             *float64 `json:"credits,omitempty"`
 	CreditAuthority     string   `json:"credit_authority,omitempty"`
 	EstimatePolicy      string   `json:"estimate_policy,omitempty"`
+	TokenUsageKnown     *bool    `json:"token_usage_known,omitempty"`
 	LegacyArchiveHigher bool     `json:"legacy_archive_higher,omitempty"`
 }
 
@@ -93,7 +94,9 @@ func (d *DB) ExportUsageDays(ctx context.Context, options UsageDaysOptions) (Usa
 		}
 		day := get(creditDayKey{credit.Date, credit.Machine, credit.Source})
 		day.Credits = new(credit.Credits)
-		day.Quality, day.EstimatePolicy = "estimated", parser.KiroCreditEstimateModel
+		if credit.Source != "qoder-cn" {
+			day.Quality, day.EstimatePolicy = "estimated", parser.KiroCreditEstimateModel
+		}
 		day.CreditAuthority, day.LegacyArchiveHigher = credit.Authority, credit.LegacyArchiveHigher
 	}
 	result := UsageDaysExport{Schema: "agentsview.usage-days/v1", DatabaseID: snapshot.DatabaseID,
@@ -107,6 +110,9 @@ func (d *DB) ExportUsageDays(ctx context.Context, options UsageDaysOptions) (Usa
 			continue
 		}
 		day.TotalTokens = day.InputTokens + day.OutputTokens + day.CacheReadTokens + day.CacheWriteTokens
+		if day.Source == "qoder-cn" && day.Credits != nil && day.TotalTokens == 0 {
+			day.TokenUsageKnown = new(false)
+		}
 		result.Days = append(result.Days, *day)
 	}
 	sort.Slice(result.Days, func(i, j int) bool {
