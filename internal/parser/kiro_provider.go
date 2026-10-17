@@ -304,6 +304,17 @@ func (p *kiroProvider) parseLegacyJSONL(
 	machine string,
 	fingerprint SourceFingerprint,
 ) (ParseOutcome, error) {
+	meta, err := loadKiroMetaStrict(src.Path)
+	if err != nil {
+		return ParseOutcome{}, err
+	}
+	if kiroCreditHarness(meta) == "kiro-crew" {
+		// Recognize the ownership before reading the potentially huge replay log.
+		// Do not erase an existing experimental archive: it may contain older
+		// days no longer present in Crew's native ledger. Daily accounting
+		// reconciles these overlapping observations without adding them.
+		return ParseOutcome{SkipReason: SkipShadowedBySidecar, ResultSetComplete: true}, nil
+	}
 	sess, msgs, err := p.parseLegacySessionContext(ctx, src.Path, machine)
 	if err != nil {
 		return ParseOutcome{}, err
@@ -317,11 +328,19 @@ func (p *kiroProvider) parseLegacyJSONL(
 	if fingerprint.Hash != "" {
 		sess.File.Hash = fingerprint.Hash
 	}
+	ledger, events, err := kiroCreditAccounting(sess.ID, len(msgs), meta)
+	if err != nil {
+		return ParseOutcome{}, err
+	}
+	msgs = append(msgs, ledger...)
+	sess.MessageCount = len(msgs)
+	sess.AgentLabel = kiroCreditHarness(meta)
 	return ParseOutcome{
 		Results: []ParseResultOutcome{{
 			Result: ParseResult{
-				Session:  *sess,
-				Messages: msgs,
+				Session:     *sess,
+				Messages:    msgs,
+				UsageEvents: events,
 			},
 			DataVersion: DataVersionCurrent,
 		}},
@@ -990,6 +1009,24 @@ func (s kiroSourceSet) Fingerprint(
 			MTimeNS: row.updatedAt * 1_000_000,
 		}, nil
 	}
+	if src.Kind == kiroSourceLegacyJSONL {
+		meta, err := loadKiroMetaStrict(src.Path)
+		if err != nil {
+			return SourceFingerprint{}, err
+		}
+		if kiroCreditHarness(meta) == "kiro-crew" {
+			sidecar := strings.TrimSuffix(src.Path, ".jsonl") + ".json"
+			body, err := os.ReadFile(sidecar)
+			if err != nil {
+				return SourceFingerprint{}, err
+			}
+			info, err := os.Stat(sidecar)
+			if err != nil {
+				return SourceFingerprint{}, err
+			}
+			return SourceFingerprint{Key: key, Size: int64(len(body)), MTimeNS: info.ModTime().UnixNano(), Hash: crewDigest(string(body))}, nil
+		}
+	}
 	info, err := os.Stat(src.Path)
 	if err != nil {
 		if os.IsNotExist(err) && src.Kind == kiroSourceSQLiteDB {
@@ -1079,7 +1116,9 @@ func hashKiroJSONLSource(transcript, sidecar string) (string, error) {
 			return "", fmt.Errorf("stat %s: %w", sidecar, err)
 		}
 	}
-	digest := sha256.Sum256([]byte("kiro-current\x00" + transcriptHash + "\x00" + sidecarHash))
+	// Reparse existing JSONL once for seconds timestamps and ID-bound reply
+	// times. This leaves archive identity, orphaned sessions and SQLite intact.
+	digest := sha256.Sum256([]byte("kiro-times-v2\x00" + transcriptHash + "\x00" + sidecarHash))
 	return hex.EncodeToString(digest[:]), nil
 }
 

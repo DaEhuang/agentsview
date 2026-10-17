@@ -24,6 +24,15 @@ var uuidRe = regexp.MustCompile(
 		`[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$`,
 )
 
+// revertedRolloutRe matches the stem Codex writes when it reverts a thread:
+// the stable thread UUID, an underscore, then the new rollout's own UUID.
+var revertedRolloutRe = regexp.MustCompile(
+	`^rollout-.*-(([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-` +
+		`[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})_` +
+		`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-` +
+		`[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$`,
+)
+
 const (
 	copilotStateDir = "session-state"
 	geminiChatsDir  = "chats"
@@ -772,6 +781,7 @@ func claudeFindSourceFile(
 }
 
 func isCodexSessionFilename(name string) bool {
+	name = codexPlainName(name)
 	return strings.HasPrefix(name, "rollout-") &&
 		strings.HasSuffix(name, ".jsonl")
 }
@@ -784,6 +794,49 @@ func CodexSessionUUIDFromFilename(name string) string {
 		return ""
 	}
 	return extractUUIDFromRollout(name)
+}
+
+// CodexThreadIDFromFilename returns the thread UUID a Codex rollout filename
+// names, including a reverted thread's rollout
+// (rollout-<timestamp>-<thread>_<rollout>.jsonl). A reverted rollout is a
+// separate source from the thread's other rollouts; use this only to find the
+// thread's metadata, such as its name.
+func CodexThreadIDFromFilename(name string) string {
+	if id := CodexSessionUUIDFromFilename(name); id != "" {
+		return id
+	}
+	if match := codexRevertedRolloutMatch(name); match != nil {
+		return match[2]
+	}
+	return ""
+}
+
+// CodexRevertedRolloutID returns "<thread>_<rollout>" for a reverted thread's
+// rollout filename and "" for any other name. Every copy of that rollout, in
+// the live or the archived root, shares this discovery identity.
+func CodexRevertedRolloutID(name string) string {
+	if match := codexRevertedRolloutMatch(name); match != nil {
+		return match[1]
+	}
+	return ""
+}
+
+// CodexRolloutDiscoveryID is the identity every copy of a Codex rollout
+// shares across the live and archived roots: the thread UUID for the
+// thread's ordinary rollout, or "<thread>_<rollout>" for a reverted one.
+func CodexRolloutDiscoveryID(name string) string {
+	if id := CodexSessionUUIDFromFilename(name); id != "" {
+		return id
+	}
+	return CodexRevertedRolloutID(name)
+}
+
+func codexRevertedRolloutMatch(name string) []string {
+	name = codexPlainName(name)
+	if !isCodexSessionFilename(name) {
+		return nil
+	}
+	return revertedRolloutRe.FindStringSubmatch(strings.TrimSuffix(name, ".jsonl"))
 }
 
 // CodexLayout reports which on-disk layout a Codex session path uses.
@@ -809,7 +862,7 @@ func CodexSessionPathInfo(root, path string) (CodexLayout, string, bool) {
 	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+sep) {
 		return CodexLayoutUnknown, "", false
 	}
-	if !strings.HasSuffix(path, ".jsonl") {
+	if !strings.HasSuffix(codexPlainName(path), ".jsonl") {
 		return CodexLayoutUnknown, "", false
 	}
 	parts := strings.Split(rel, sep)
@@ -878,6 +931,7 @@ func walkCodexDayDirs(
 // like rollout-{timestamp}-{uuid}.jsonl using regex matching on the
 // standard 8-4-4-4-12 hex format.
 func extractUUIDFromRollout(filename string) string {
+	filename = codexPlainName(filename)
 	stem := strings.TrimSuffix(filename, ".jsonl")
 	match := uuidRe.FindStringSubmatch(stem)
 	if len(match) < 2 {

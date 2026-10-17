@@ -1795,7 +1795,7 @@ func TestSessionExportClaudeSnapshotPeersUsesSnapshotIndex(t *testing.T) {
 
 	for i, captured := range capture.queries {
 		assert.Contains(t, captured.query, "m.claude_message_id != ''")
-		assert.Contains(t, captured.query, "m.claude_request_id != ''")
+		assert.NotContains(t, captured.query, "m.claude_request_id != ''")
 		assert.Contains(t, captured.query,
 			"(m.claude_message_id, m.claude_request_id) IN (VALUES")
 

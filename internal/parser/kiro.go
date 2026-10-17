@@ -22,11 +22,12 @@ const (
 
 // kiroMeta holds fields from the companion .json metadata file.
 type kiroMeta struct {
-	SessionID string `json:"session_id"`
-	Cwd       string `json:"cwd"`
-	Title     string `json:"title"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	SessionID    string          `json:"session_id"`
+	Cwd          string          `json:"cwd"`
+	Title        string          `json:"title"`
+	CreatedAt    string          `json:"created_at"`
+	UpdatedAt    string          `json:"updated_at"`
+	SessionState kiroCreditState `json:"session_state"`
 }
 
 // discoverLegacyJSONL finds all .jsonl session files under a Kiro
@@ -152,10 +153,11 @@ func (p *kiroProvider) parseLegacySessionContext(
 
 		kind := gjson.Get(line, "kind").Str
 		data := gjson.Get(line, "data")
+		timestamp := kiroCurrentMessageTimestamp(data.Get("meta.timestamp"))
 
 		switch kind {
 		case kiroKindPrompt:
-			content := kiroExtractText(data)
+			content := preprocessKiroPrompt(kiroExtractText(data))
 			if content == "" {
 				continue
 			}
@@ -166,6 +168,8 @@ func (p *kiroProvider) parseLegacySessionContext(
 			}
 			messages = append(messages, ParsedMessage{
 				Ordinal:       ordinal,
+				Timestamp:     timestamp,
+				SourceUUID:    data.Get("message_id").Str,
 				Role:          RoleUser,
 				Content:       content,
 				ContentLength: len(content),
@@ -186,6 +190,8 @@ func (p *kiroProvider) parseLegacySessionContext(
 
 			messages = append(messages, ParsedMessage{
 				Ordinal:       ordinal,
+				Timestamp:     timestamp,
+				SourceUUID:    data.Get("message_id").Str,
 				Role:          RoleAssistant,
 				Content:       displayContent,
 				ContentLength: len(displayContent),
@@ -200,9 +206,11 @@ func (p *kiroProvider) parseLegacySessionContext(
 				continue
 			}
 			messages = append(messages, ParsedMessage{
-				Ordinal:     ordinal,
-				Role:        RoleUser,
-				ToolResults: results,
+				Ordinal:       ordinal,
+				Timestamp:     timestamp,
+				SourceSubtype: SourceSubtypeToolResult,
+				Role:          RoleUser,
+				ToolResults:   results,
 			})
 			ordinal++
 		}
@@ -221,14 +229,14 @@ func (p *kiroProvider) parseLegacySessionContext(
 			break
 		}
 	}
-	if !hasContent {
-		return nil, nil, nil
-	}
-
 	// Extract metadata from companion .json file.
 	meta, err := loadKiroMetaStrict(path)
 	if err != nil {
 		return nil, nil, err
+	}
+	restoreKiroReplyTimes(messages, meta)
+	if !hasContent && (meta == nil || len(meta.SessionState.ConversationMetadata.Turns) == 0) {
+		return nil, nil, nil
 	}
 
 	sessionID := strings.TrimSuffix(
@@ -259,9 +267,18 @@ func (p *kiroProvider) parseLegacySessionContext(
 
 	sessionID = "kiro:" + sessionID
 
+	// Crew-owned CLI replay is not an original conversation. Native Crew
+	// transcripts and billing are collected by the separate Crew provider.
+	background := kiroCreditHarness(meta) == "kiro-crew"
+	if background {
+		firstMessage = ""
+		for i := range messages {
+			messages[i].IsSystem = true
+		}
+	}
 	userCount := 0
 	for _, m := range messages {
-		if m.Role == RoleUser && m.Content != "" {
+		if m.Role == RoleUser && m.Content != "" && !m.IsSystem {
 			userCount++
 		}
 	}
@@ -423,12 +440,45 @@ func kiroCurrentMessageTimestamp(value gjson.Result) time.Time {
 		return ts
 	}
 	if value.Type == gjson.Number {
-		millis := value.Int()
-		if millis != 0 {
-			return time.UnixMilli(millis).UTC()
+		stamp := value.Int()
+		if stamp != 0 {
+			if stamp > -100_000_000_000 && stamp < 100_000_000_000 {
+				return time.Unix(stamp, 0).UTC()
+			}
+			return time.UnixMilli(stamp).UTC()
 		}
 	}
 	return time.Time{}
+}
+
+// Legacy transcripts omit the final assistant timestamp. The companion turn
+// names its last message explicitly; only that ID inherits the recorded end.
+func restoreKiroReplyTimes(messages []ParsedMessage, meta *kiroMeta) {
+	if meta == nil {
+		return
+	}
+	times := map[string]time.Time{}
+	ambiguous := map[string]bool{}
+	for _, turn := range meta.SessionState.ConversationMetadata.Turns {
+		if len(turn.MessageIDs) == 0 {
+			continue
+		}
+		id := turn.MessageIDs[len(turn.MessageIDs)-1]
+		stamp := parseTimestamp(turn.EndTimestamp)
+		if id == "" || stamp.IsZero() {
+			continue
+		}
+		if previous, exists := times[id]; exists && !previous.Equal(stamp) {
+			ambiguous[id] = true
+		}
+		times[id] = stamp
+	}
+	for i := range messages {
+		m := &messages[i]
+		if m.Role == RoleAssistant && m.Timestamp.IsZero() && !ambiguous[m.SourceUUID] {
+			m.Timestamp = times[m.SourceUUID]
+		}
+	}
 }
 
 // kiroExtractText extracts concatenated text from a Kiro message's

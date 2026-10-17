@@ -200,6 +200,9 @@ func ParseQoderSessionWithExclusions(
 	fileStem := strings.TrimSuffix(filepath.Base(path), ".jsonl")
 	for i := range results {
 		retagQoderResult(&results[i], fileStem, parentID, subagentID, isSubagent)
+		if qoderCNPath(path) {
+			normalizeQoderCNCachedInput(&results[i])
+		}
 		if !isSubagent {
 			applyQoderMeta(&results[i].Session, meta)
 		}

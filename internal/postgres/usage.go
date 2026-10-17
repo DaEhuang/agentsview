@@ -982,7 +982,7 @@ func pgSnapshotRankedDailyUsageRowsSQL(
 					PARTITION BY claude_message_id, claude_request_id
 				) AS snapshot_web_search_requests
 			FROM usage_snapshot_window
-			WHERE claude_message_id != '' AND claude_request_id != ''
+			WHERE claude_message_id != ''
 		),
 		usage_snapshot_survivors AS (
 			SELECT *
@@ -1325,7 +1325,7 @@ type pgUsageDedupToken struct {
 func pgUsageDedupTokenForRow(
 	usageSource, agent, claudeMessageID, claudeRequestID, sourceUUID, usageDedupKey string,
 ) (pgUsageDedupToken, bool) {
-	if claudeMessageID != "" && claudeRequestID != "" {
+	if claudeMessageID != "" {
 		return pgUsageDedupToken{
 			kind:  "claude",
 			value: claudeMessageID + ":" + claudeRequestID,

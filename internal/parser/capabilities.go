@@ -95,6 +95,9 @@ type SourceCapabilities struct {
 	// they opt in; the sync engine uses the flag instead of a hardcoded
 	// Claude/Codex whitelist.
 	S3Discovery CapabilitySupport
+	// SharedSessionIDs enables upstream source ownership for separate files
+	// that carry the same native thread ID.
+	SharedSessionIDs CapabilitySupport
 }
 
 // ContentCapabilities declares optional normalized content fields a provider

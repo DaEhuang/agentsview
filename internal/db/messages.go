@@ -492,11 +492,13 @@ func SummarizeToolResultEvents(events []ToolResultEvent) string {
 
 // Message represents a row in the messages table.
 type Message struct {
-	ID        int64  `json:"id"`
-	SessionID string `json:"session_id"`
-	Ordinal   int    `json:"ordinal"`
-	Role      string `json:"role"`
-	Content   string `json:"content"`
+	// ParentReplayResolved is transient proof from a verified native parent parse.
+	ParentReplayResolved bool   `json:"-"`
+	ID                   int64  `json:"id"`
+	SessionID            string `json:"session_id"`
+	Ordinal              int    `json:"ordinal"`
+	Role                 string `json:"role"`
+	Content              string `json:"content"`
 	// ThinkingText holds the concatenated text of all thinking
 	// blocks for this message; "" if none.
 	ThinkingText      string         `json:"thinking_text"`

@@ -1207,7 +1207,7 @@ func TestGetActivityReport_UsageDedupSubSecondOrder(t *testing.T) {
 		SessionID: "earlier", Ordinal: 0, Role: "assistant", Content: "x",
 		Timestamp:       "2026-06-16T10:30:00Z",
 		Model:           "claude-sonnet-4-20250514",
-		ClaudeMessageID: "m-dup", SourceUUID: "src-dup",
+		ClaudeMessageID: "", SourceUUID: "src-dup",
 		TokenUsage: jsontext.Value(`{"input_tokens":1000,"output_tokens":500}`),
 	})
 	insertSession(t, d, "later", "proj2", func(s *Session) {
@@ -1219,7 +1219,7 @@ func TestGetActivityReport_UsageDedupSubSecondOrder(t *testing.T) {
 		SessionID: "later", Ordinal: 0, Role: "assistant", Content: "x",
 		Timestamp:       "2026-06-16T10:30:00.123Z",
 		Model:           "claude-sonnet-4-20250514",
-		ClaudeMessageID: "m-dup", SourceUUID: "src-dup",
+		ClaudeMessageID: "", SourceUUID: "src-dup",
 		TokenUsage: jsontext.Value(`{"input_tokens":1000,"output_tokens":9000}`),
 	})
 
@@ -1248,7 +1248,7 @@ func TestGetActivityReport_UsageDedupEqualInstantUsesSessionOrder(t *testing.T) 
 		SessionID: "a-session", Ordinal: 0, Role: "assistant", Content: "x",
 		Timestamp:       "2026-06-16T10:30:00Z",
 		Model:           "claude-sonnet-4-20250514",
-		ClaudeMessageID: "m-equal", SourceUUID: "src-equal",
+		ClaudeMessageID: "", SourceUUID: "src-equal",
 		TokenUsage: jsontext.Value(`{"input_tokens":1000,"output_tokens":500}`),
 	})
 	insertSession(t, d, "z-session", "project z", func(s *Session) {
@@ -1260,7 +1260,7 @@ func TestGetActivityReport_UsageDedupEqualInstantUsesSessionOrder(t *testing.T) 
 		SessionID: "z-session", Ordinal: 0, Role: "assistant", Content: "x",
 		Timestamp:       "2026-06-16T05:30:00-05:00",
 		Model:           "claude-sonnet-4-20250514",
-		ClaudeMessageID: "m-equal", SourceUUID: "src-equal",
+		ClaudeMessageID: "", SourceUUID: "src-equal",
 		TokenUsage: jsontext.Value(`{"input_tokens":1000,"output_tokens":9000}`),
 	})
 
@@ -1292,7 +1292,7 @@ func TestGetActivityReport_UsageDedupFallsBackToSourceUUID(t *testing.T) {
 		Content:         "x",
 		Timestamp:       "2026-06-16T10:30:00Z",
 		Model:           "claude-sonnet-4-20250514",
-		ClaudeMessageID: "m-dup",
+		ClaudeMessageID: "",
 		ClaudeRequestID: "",
 		SourceUUID:      "src-dup",
 		TokenUsage:      jsontext.Value(`{"input_tokens":1000,"output_tokens":500}`),
@@ -1309,7 +1309,7 @@ func TestGetActivityReport_UsageDedupFallsBackToSourceUUID(t *testing.T) {
 		Content:         "x",
 		Timestamp:       "2026-06-16T10:30:01Z",
 		Model:           "claude-sonnet-4-20250514",
-		ClaudeMessageID: "m-dup",
+		ClaudeMessageID: "",
 		ClaudeRequestID: "",
 		SourceUUID:      "src-dup",
 		TokenUsage:      jsontext.Value(`{"input_tokens":1000,"output_tokens":900}`),

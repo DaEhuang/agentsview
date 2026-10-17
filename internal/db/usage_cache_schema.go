@@ -45,7 +45,8 @@ const (
 	// Version 13 rebuilds facts and rollups with session-scoped Devin
 	// message source identities: bare node_id/step_id values collide
 	// across sessions, so previously deduplicated Devin usage was dropped.
-	usageCacheFormatVersion             = 13
+	// Version 14 also ranks Claude snapshots whose native request ID is absent.
+	usageCacheFormatVersion             = 14
 	usageCacheApplicationID             = 0x41565543
 	usageCacheKind                      = "agentsview-usage-facts"
 	usageCacheRetirementProtocolVersion = 1
@@ -107,7 +108,7 @@ CREATE TABLE usage_facts (
 ) WITHOUT ROWID;
 CREATE INDEX usage_facts_claude_identity
     ON usage_facts (claude_message_id, claude_request_id)
-    WHERE claude_message_id != '' AND claude_request_id != '';
+    WHERE claude_message_id != '';
 CREATE INDEX usage_facts_source_uuid
     ON usage_facts (source_uuid) WHERE source_uuid != '';
 CREATE INDEX usage_facts_usage_dedup_key

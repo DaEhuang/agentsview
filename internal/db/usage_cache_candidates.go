@@ -35,10 +35,13 @@ func (v usageSourceVersion) Equal(other usageSourceVersion) bool {
 }
 
 type usageQuerySession struct {
+	ParserDataVersion int
 	ID                string
 	Project           string
 	Machine           string
 	Agent             string
+	ProviderAgent     string
+	AgentLabel        string
 	GitBranch         string
 	CreatedAt         string
 	StartedAt         string
@@ -69,6 +72,8 @@ type usageQuerySnapshot struct {
 	Versions        []usageSourceVersion
 	Intervals       []usageQueryInterval
 	CursorHighWater int64
+	CreditRows      []archivedCreditRow
+	QoderCredits    []CreditDay
 	PricingRows     []export.EffectivePricingRow
 	location        *time.Location
 }
@@ -148,6 +153,16 @@ func (db *DB) captureUsageQuery(
 		records[i].version.UsageEventFingerprint = fingerprints[records[i].session.ID]
 		snapshot.Sessions = append(snapshot.Sessions, records[i].session)
 		snapshot.Versions = append(snapshot.Versions, records[i].version)
+	}
+	snapshot.CreditRows, err = loadArchivedCreditRows(ctx, tx, snapshot.Sessions, filter)
+	if err != nil {
+		return usageQuerySnapshot{}, err
+	}
+	if kind == usageQueryKindToken {
+		snapshot.QoderCredits, err = loadQoderCreditDays(ctx, tx, snapshot.Sessions, filter)
+		if err != nil {
+			return usageQuerySnapshot{}, err
+		}
 	}
 	snapshot.Intervals = usageQueryIntervals(filter)
 	var hasCursorTable bool
@@ -235,6 +250,14 @@ func usageCandidateDiscoverySQL(
 		  AND s.deleted_at IS NULL
 		  AND (ue.occurred_at IS NULL OR ue.occurred_at = '')`, "s.started_at")
 
+	if kind == usageQueryKindToken {
+		// Native request Credits do not depend on the presence of a model name.
+		appendBranch(`SELECT m.session_id FROM messages m
+			JOIN sessions s ON s.id=m.session_id
+			WHERE s.agent='qoder' AND s.agent_label='qoder-cn'
+			  AND s.deleted_at IS NULL AND m.token_usage!=''
+			  AND m.timestamp IS NOT NULL AND m.timestamp!=''`, "m.timestamp")
+	}
 	if kind == usageQueryKindActivity {
 		appendBranch(`SELECT m.session_id
 			FROM messages AS m INDEXED BY idx_messages_activity_timestamp
@@ -279,7 +302,7 @@ func loadUsageQuerySessionRecords(
 				idArgs[i] = id
 			}
 			query := `SELECT
-			s.id, s.project, s.machine, s.agent, COALESCE(s.git_branch, ''),
+			s.id, s.project, s.machine, ` + usageAgentSQL + `, s.agent, COALESCE(s.agent_label, ''), COALESCE(s.git_branch, ''),
 			COALESCE(s.created_at, ''), COALESCE(s.started_at, ''),
 			COALESCE(s.ended_at, ''),
 			COALESCE(NULLIF(COALESCE(s.display_name, s.session_name), ''),
@@ -290,7 +313,7 @@ func loadUsageQuerySessionRecords(
 			COALESCE(s.is_automated, 0),
 			COALESCE(s.termination_status, ''),
 			CASE WHEN (` + filterWhere + `) THEN 1 ELSE 0 END,
-			COALESCE(s.sync_marker, ''), COALESCE(s.transcript_revision, '0')
+			COALESCE(s.sync_marker, ''), COALESCE(s.transcript_revision, '0'), s.data_version
 		FROM sessions s
 		WHERE s.deleted_at IS NULL AND s.id IN (` +
 				strings.Join(placeholders, ",") + `)
@@ -306,7 +329,7 @@ func loadUsageQuerySessionRecords(
 				var passes, automated, hasTotalOutput, hasPeakContext int
 				if err := rows.Scan(
 					&record.session.ID, &record.session.Project,
-					&record.session.Machine, &record.session.Agent,
+					&record.session.Machine, &record.session.Agent, &record.session.ProviderAgent, &record.session.AgentLabel,
 					&record.session.GitBranch, &record.session.CreatedAt,
 					&record.session.StartedAt, &record.session.EndedAt,
 					&record.session.DisplayName, &record.session.UserMessageCount,
@@ -314,7 +337,7 @@ func loadUsageQuerySessionRecords(
 					&record.session.PeakContextTokens,
 					&hasTotalOutput, &hasPeakContext,
 					&automated, &record.session.TerminationStatus, &passes,
-					&record.version.SyncMarker, &record.version.TranscriptRevision,
+					&record.version.SyncMarker, &record.version.TranscriptRevision, &record.session.ParserDataVersion,
 				); err != nil {
 					_ = rows.Close()
 					return fmt.Errorf("scanning usage candidate metadata: %w", err)

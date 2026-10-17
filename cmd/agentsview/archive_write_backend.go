@@ -1005,6 +1005,7 @@ func (b *localArchiveWriteBackend) DuckDBPushWatch(
 		IncludeCwdPrefixes:      b.appCfg.SyncIncludeCwdPrefixes,
 		ScanProtectedPaths:      b.appCfg.ScanProtectedPaths,
 		Machine:                 b.appCfg.InstallationID,
+		LocalProjectMachines:    b.appCfg.LocalProjectMachines,
 		BlockedResultCategories: b.appCfg.ResultContentBlockedCategories,
 		ArchiveContent:          b.appCfg.ArchiveContent,
 	})
@@ -1139,6 +1140,7 @@ func (b *localArchiveWriteBackend) ReplicaPushWatch(
 		IncludeCwdPrefixes:      b.appCfg.SyncIncludeCwdPrefixes,
 		ScanProtectedPaths:      b.appCfg.ScanProtectedPaths,
 		Machine:                 b.appCfg.InstallationID,
+		LocalProjectMachines:    b.appCfg.LocalProjectMachines,
 		BlockedResultCategories: b.appCfg.ResultContentBlockedCategories,
 		ArchiveContent:          b.appCfg.ArchiveContent,
 	})

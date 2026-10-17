@@ -386,14 +386,15 @@ func ensureFreshData(
 
 	if database.NeedsResync() {
 		engine := sync.NewEngine(ctx, database, sync.EngineConfig{
-			AgentDirs:          appCfg.AgentDirs,
-			SourceMachines:     appCfg.SourceMachines,
-			ProviderMetadata:   appCfg.ProviderMetadata,
-			DisabledAgents:     appCfg.DisabledAgents,
-			IncludeCwdPrefixes: appCfg.SyncIncludeCwdPrefixes,
-			ScanProtectedPaths: appCfg.ScanProtectedPaths,
-			Machine:            appCfg.InstallationID,
-			ArchiveContent:     appCfg.ArchiveContent,
+			AgentDirs:            appCfg.AgentDirs,
+			SourceMachines:       appCfg.SourceMachines,
+			ProviderMetadata:     appCfg.ProviderMetadata,
+			DisabledAgents:       appCfg.DisabledAgents,
+			IncludeCwdPrefixes:   appCfg.SyncIncludeCwdPrefixes,
+			ScanProtectedPaths:   appCfg.ScanProtectedPaths,
+			Machine:              appCfg.InstallationID,
+			LocalProjectMachines: appCfg.LocalProjectMachines,
+			ArchiveContent:       appCfg.ArchiveContent,
 		})
 		defer engine.Close()
 		fmt.Fprintln(os.Stderr,
@@ -415,14 +416,15 @@ func ensureFreshData(
 	}
 
 	engine := sync.NewEngine(ctx, database, sync.EngineConfig{
-		AgentDirs:          appCfg.AgentDirs,
-		SourceMachines:     appCfg.SourceMachines,
-		ProviderMetadata:   appCfg.ProviderMetadata,
-		DisabledAgents:     appCfg.DisabledAgents,
-		IncludeCwdPrefixes: appCfg.SyncIncludeCwdPrefixes,
-		ScanProtectedPaths: appCfg.ScanProtectedPaths,
-		Machine:            appCfg.InstallationID,
-		ArchiveContent:     appCfg.ArchiveContent,
+		AgentDirs:            appCfg.AgentDirs,
+		SourceMachines:       appCfg.SourceMachines,
+		ProviderMetadata:     appCfg.ProviderMetadata,
+		DisabledAgents:       appCfg.DisabledAgents,
+		IncludeCwdPrefixes:   appCfg.SyncIncludeCwdPrefixes,
+		ScanProtectedPaths:   appCfg.ScanProtectedPaths,
+		Machine:              appCfg.InstallationID,
+		LocalProjectMachines: appCfg.LocalProjectMachines,
+		ArchiveContent:       appCfg.ArchiveContent,
 	})
 	defer engine.Close()
 
