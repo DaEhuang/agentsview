@@ -83,12 +83,13 @@ type creditDayKey struct{ Day, Machine, Source string }
 // larger complete daily observation for this machine instead of adding them.
 // Older days with only a legacy archive remain available.
 type CreditDay struct {
-	Date                string  `json:"date"`
-	Machine             string  `json:"machine"`
-	Source              string  `json:"source"`
-	Credits             float64 `json:"credits"`
-	Authority           string  `json:"authority"`
-	LegacyArchiveHigher bool    `json:"legacy_archive_higher,omitempty"`
+	UnmeasuredCredits   *float64 `json:"unmeasured_credits,omitempty"`
+	Date                string   `json:"date"`
+	Machine             string   `json:"machine"`
+	Source              string   `json:"source"`
+	Credits             float64  `json:"credits"`
+	Authority           string   `json:"authority"`
+	LegacyArchiveHigher bool     `json:"legacy_archive_higher,omitempty"`
 }
 
 func reconcileArchivedCredits(snapshot usageQuerySnapshot, filter UsageFilter, facts *usageFactsResult) error {

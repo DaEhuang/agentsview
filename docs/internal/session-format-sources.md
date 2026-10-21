@@ -3530,3 +3530,5 @@ compressed copies by the same rollout identity; compressed parent turn lookup
 uses the same verified metadata rule as plain sources. Tests cover physical
 fingerprints, no compressed append checkpoints, damaged frames, and an existing
 archive whose unresolved parent and child sources become compressed.
+
+Qoder Credits export (2026-10-21): request-level `unmeasured_credits` sums original_credits (fallback credits) only when all retained Token buckets are absent/zero, including nonbillable requests. Charged Credits remain separate. Source and machine scope request dedup; any positive Token evidence suppresses that request's estimate basis. No conversion coefficients are stored in the engine. Xplan owns its versioned statistical conversion policy.

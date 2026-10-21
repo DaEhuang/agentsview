@@ -25,6 +25,7 @@ type UsageDay struct {
 	CacheReadTokens     int64    `json:"cache_read_tokens"`
 	CacheWriteTokens    int64    `json:"cache_write_tokens"`
 	TotalTokens         int64    `json:"total_tokens"`
+	UnmeasuredCredits   *float64 `json:"unmeasured_credits,omitempty"`
 	Credits             *float64 `json:"credits,omitempty"`
 	CreditAuthority     string   `json:"credit_authority,omitempty"`
 	EstimatePolicy      string   `json:"estimate_policy,omitempty"`
@@ -94,7 +95,8 @@ func (d *DB) ExportUsageDays(ctx context.Context, options UsageDaysOptions) (Usa
 		}
 		day := get(creditDayKey{credit.Date, credit.Machine, credit.Source})
 		day.Credits = new(credit.Credits)
-		if credit.Source != "qoder-cn" {
+		day.UnmeasuredCredits = credit.UnmeasuredCredits
+		if credit.Source != "qoder-cn" && credit.Source != "qoder" {
 			day.Quality, day.EstimatePolicy = "estimated", parser.KiroCreditEstimateModel
 		}
 		day.CreditAuthority, day.LegacyArchiveHigher = credit.Authority, credit.LegacyArchiveHigher
@@ -110,7 +112,7 @@ func (d *DB) ExportUsageDays(ctx context.Context, options UsageDaysOptions) (Usa
 			continue
 		}
 		day.TotalTokens = day.InputTokens + day.OutputTokens + day.CacheReadTokens + day.CacheWriteTokens
-		if day.Source == "qoder-cn" && day.Credits != nil && day.TotalTokens == 0 {
+		if (day.Source == "qoder-cn" || day.Source == "qoder") && day.Credits != nil && day.TotalTokens == 0 {
 			day.TokenUsageKnown = new(false)
 		}
 		result.Days = append(result.Days, *day)

@@ -254,7 +254,7 @@ func usageCandidateDiscoverySQL(
 		// Native request Credits do not depend on the presence of a model name.
 		appendBranch(`SELECT m.session_id FROM messages m
 			JOIN sessions s ON s.id=m.session_id
-			WHERE s.agent='qoder' AND s.agent_label='qoder-cn'
+			WHERE s.agent='qoder'
 			  AND s.deleted_at IS NULL AND m.token_usage!=''
 			  AND m.timestamp IS NOT NULL AND m.timestamp!=''`, "m.timestamp")
 	}

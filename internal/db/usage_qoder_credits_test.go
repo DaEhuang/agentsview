@@ -1,6 +1,7 @@
 package db
 
 import (
+	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"testing"
@@ -67,4 +68,37 @@ func TestUsageDaysQoderNonBillableOnlyEstablishesZeroChargedCredits(t *testing.T
 	assert.Zero(t, *result.Days[0].Credits)
 	require.NotNil(t, result.Days[0].TokenUsageKnown)
 	assert.False(t, *result.Days[0].TokenUsageKnown)
+}
+
+func TestUsageDaysQoderUnmeasuredBasisSeparatesDiscountsFreeAndRealTokens(t *testing.T) {
+	for _, source := range []string{"qoder-cn", "qoder"} {
+		t.Run(source, func(t *testing.T) {
+			d := testDB(t)
+			stamp := "2026-10-12T12:00:00Z"
+			for i, payload := range []string{
+				`{"request_id":"discount","credits":1,"original_credits":4,"billable":true}`,
+				`{"request_id":"free","credits":2,"original_credits":3,"billable":false}`,
+				`{"request_id":"real","credits":5,"original_credits":10,"billable":true,"input_tokens":100,"output_tokens":20}`,
+				`{"request_id":"discount","credits":1,"original_credits":4,"billable":true}`,
+				`{"request_id":"fallback","credits":2,"billable":true}`,
+			} {
+				id := fmt.Sprintf("qoder:%d", i)
+				require.NoError(t, d.UpsertSession(t.Context(), Session{ID: id, Machine: "local", Agent: "qoder", AgentLabel: source, Project: "p", StartedAt: new(stamp)}))
+				require.NoError(t, d.ReplaceSessionMessages(t.Context(), id, []Message{{SessionID: id, Role: "assistant", Model: "example", Timestamp: stamp, TokenUsage: []byte(payload)}}))
+			}
+			result, err := d.ExportUsageDays(t.Context(), UsageDaysOptions{From: "2026-10-12", To: "2026-10-12", Timezone: "UTC", Source: source})
+			require.NoError(t, err)
+			require.Len(t, result.Days, 1)
+			day := result.Days[0]
+			assert.Equal(t, float64(8), *day.Credits)
+			assert.Equal(t, float64(9), *day.UnmeasuredCredits)
+			assert.Equal(t, int64(120), day.TotalTokens)
+			assert.Equal(t, "measured", day.Quality)
+			// A real observation replaces the missing-token basis, even on a replay copy.
+			require.NoError(t, d.ReplaceSessionMessages(t.Context(), "qoder:3", []Message{{SessionID: "qoder:3", Role: "assistant", Model: "example", Timestamp: stamp, TokenUsage: []byte(`{"request_id":"discount","credits":1,"original_credits":4,"billable":true,"input_tokens":30}`)}}))
+			result, err = d.ExportUsageDays(t.Context(), UsageDaysOptions{From: "2026-10-12", To: "2026-10-12", Timezone: "UTC", Source: source})
+			require.NoError(t, err)
+			assert.Equal(t, float64(5), *result.Days[0].UnmeasuredCredits)
+		})
+	}
 }
