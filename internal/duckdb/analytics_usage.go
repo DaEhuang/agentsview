@@ -3648,7 +3648,7 @@ func duckUsageCTEFromRaw(
 		usage_snapshot_ranked AS (
 			SELECT *,
 				CASE
-					WHEN claude_message_id != '' AND claude_request_id != ''
+					WHEN claude_message_id != ''
 						THEN FIRST_VALUE(session_id) OVER (
 							PARTITION BY claude_message_id, claude_request_id
 							ORDER BY ts ASC, session_id ASC,
@@ -3657,7 +3657,7 @@ func duckUsageCTEFromRaw(
 					ELSE session_id
 				END AS snapshot_attribution_session_id,
 				CASE
-					WHEN claude_message_id != '' AND claude_request_id != ''
+					WHEN claude_message_id != ''
 						THEN ROW_NUMBER() OVER (
 							PARTITION BY claude_message_id, claude_request_id
 							ORDER BY output_tokens_norm DESC, ts DESC,
@@ -3667,7 +3667,7 @@ func duckUsageCTEFromRaw(
 					ELSE 1
 				END AS snapshot_rank,
 				CASE
-					WHEN claude_message_id != '' AND claude_request_id != ''
+					WHEN claude_message_id != ''
 						THEN SUM(output_tokens_norm) OVER (
 							PARTITION BY claude_message_id, claude_request_id
 						) - MAX(output_tokens_norm) OVER (
@@ -3676,7 +3676,7 @@ func duckUsageCTEFromRaw(
 					ELSE 0
 				END AS snapshot_deduplicated_output_tokens,
 				CASE
-					WHEN claude_message_id != '' AND claude_request_id != ''
+					WHEN claude_message_id != ''
 						THEN MAX(web_search_requests_norm) OVER (
 							PARTITION BY claude_message_id, claude_request_id
 						)
@@ -3771,7 +3771,7 @@ func duckUsageCTEFromRaw(
 						ELSE 0
 					END AS web_search_requests_norm,
 				CASE
-					WHEN claude_message_id != '' AND claude_request_id != ''
+					WHEN claude_message_id != ''
 						THEN 'claude:' || claude_message_id || ':' || claude_request_id
 					WHEN source = 'message' AND agent != '' AND source_uuid != ''
 						THEN 'source:' || agent || ':' || source_uuid

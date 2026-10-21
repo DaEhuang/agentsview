@@ -512,7 +512,12 @@ CREATE INDEX IF NOT EXISTS idx_provider_freshness_updated_at
 // messages and classifying user prompts. Re-parse unchanged sources to
 // remove retained context, restore omitted prompts, and correct first-message
 // previews and user-message counts.)
-const dataVersion = 113
+// Version 114 retains reply phases and Kiro credit meters, strips Crew prompt
+// envelopes, and corrects Codex/QoderCN accounting. Source-backed sessions
+// reparse; missing-source sessions keep their archived facts.
+// Version 115 gives native Crew transcripts and ledgers sole ownership of Crew data.
+// Version 117 retains every Codex revert rollout and metered empty replies.
+const dataVersion = 117
 
 const tokenCoverageRepairStatsKey = "token_coverage_repair_v1"
 
@@ -1237,7 +1242,7 @@ func OpenFreshIsolatedContext(ctx context.Context, path string) (*DB, error) {
 		return nil, errors.Join(err, d.CloseContext(ctx))
 	}
 	d.mu.Lock()
-	err = ensureConversationSchemaLocked(ctx, d.getWriter(), d.usageOnlyStorage())
+	err = ensureConversationSchemaLocked(ctx, d.getWriter(), d.usageOnlyStorage(), d.ArchiveContent() == config.ArchiveContentDialogue)
 	d.mu.Unlock()
 	if err != nil {
 		return closeOnError(fmt.Errorf("initializing conversation export state: %w", err))
@@ -2120,6 +2125,7 @@ type schemaColumnMigration struct {
 // that must exist before db.init executes schema.sql.
 func legacySchemaColumnMigrations() []schemaColumnMigration {
 	return []schemaColumnMigration{
+		{"excluded_sessions", "file_path", "ALTER TABLE excluded_sessions ADD COLUMN file_path TEXT"},
 		{
 			"tool_result_events", "raw_content_digest",
 			"ALTER TABLE tool_result_events ADD COLUMN raw_content_digest BLOB",
@@ -2970,7 +2976,7 @@ func (db *DB) migrateColumns(ctx context.Context, progress OpenProgressFunc) err
 	if err := scopeLegacyDevinSourceUUIDsLocked(ctx, w); err != nil {
 		return err
 	}
-	if err := ensureConversationSchemaLocked(ctx, w, db.usageOnlyStorage()); err != nil {
+	if err := ensureConversationSchemaLocked(ctx, w, db.usageOnlyStorage(), db.ArchiveContent() == config.ArchiveContentDialogue); err != nil {
 		return err
 	}
 
@@ -3609,14 +3615,7 @@ func (db *DB) createPartialIndexesLocked(ctx context.Context, w *writerHandle) e
 		 ON messages(session_id) WHERE is_sidechain = 1`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_source_uuid
 		 ON messages(source_uuid) WHERE source_uuid != ''`,
-		`CREATE INDEX IF NOT EXISTS idx_messages_claude_snapshot
-		 ON messages(claude_message_id, claude_request_id,
-		             timestamp, session_id, ordinal)
-		 WHERE token_usage != ''
-		   AND model != ''
-		   AND model != '<synthetic>'
-		   AND claude_message_id != ''
-		   AND claude_request_id != ''`,
+
 		`CREATE INDEX IF NOT EXISTS idx_sessions_has_secret
 		 ON sessions(secret_leak_count) WHERE secret_leak_count > 0`,
 	}
@@ -3624,6 +3623,9 @@ func (db *DB) createPartialIndexesLocked(ctx context.Context, w *writerHandle) e
 		if _, err := w.Exec(ctx, ddl); err != nil {
 			return fmt.Errorf("creating index: %w", err)
 		}
+	}
+	if err := ensureClaudeSnapshotIndexLocked(ctx, w); err != nil {
+		return err
 	}
 	if err := ensureUsageIndexesLocked(ctx, w); err != nil {
 		return err

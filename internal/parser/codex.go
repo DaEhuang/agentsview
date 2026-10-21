@@ -473,7 +473,9 @@ func (b *codexSessionBuilder) handleResponseItem(ctx context.Context,
 		}
 		content = preprocessCodexUserTextBlocks(extractCodexTextBlocks(payload), !b.firstUserSeen)
 	}
-	if strings.TrimSpace(content) == "" {
+	// An empty final response can still have billed token_count metadata.
+	// Keep its native row so the following usage event has its own target.
+	if strings.TrimSpace(content) == "" && !(role == "assistant" && payload.Get("phase").Str == "final_answer") {
 		return
 	}
 
@@ -505,6 +507,7 @@ func (b *codexSessionBuilder) handleResponseItem(ctx context.Context,
 	}
 	if role == string(RoleAssistant) {
 		msg.ReasoningEffort = b.reasoningEffort
+		msg.SourceSubtype = payload.Get("phase").Str
 	}
 	b.sink.AppendMessage(msg)
 }
@@ -558,7 +561,14 @@ func (b *codexSessionBuilder) handleTokenCountEvent(
 	payload gjson.Result,
 ) {
 	raw := payload.Get("info.last_token_usage").Raw
-	if raw == "" || b.observeTokenUsage(raw) {
+	// Equal per-request counts do not identify a repeated event. Prefer the
+	// cumulative watermark when available; identical requests advance it.
+	total := payload.Get("info.total_token_usage")
+	identity := total.Raw
+	if total.Get("total_tokens").Int() <= 0 && total.Get("input_tokens").Int() <= 0 && total.Get("output_tokens").Int() <= 0 {
+		identity = raw
+	}
+	if raw == "" || b.observeTokenUsage(identity) {
 		return
 	}
 
@@ -1595,56 +1605,6 @@ func (p *codexProvider) parseSessionWithCursor(
 	)
 }
 
-func (p *codexProvider) parentTurnResolver(
-	ctx context.Context, childPath string,
-) codexParentTurnResolver {
-	return func(parentID string) (map[string]struct{}, bool) {
-		if ctx.Err() != nil {
-			return nil, false
-		}
-		parentKey := strings.Join(p.sources.roots, "\x00") + "\x00" + parentID
-		if turnIDs, ok := p.parentTurnCache.GetParent(parentKey); ok {
-			return turnIDs, true
-		}
-		parentPath := ""
-		for _, root := range p.sources.roots {
-			if ctx.Err() != nil {
-				return nil, false
-			}
-			candidate := p.sources.findSourceFile(root, parentID)
-			if candidate == "" || filepath.Clean(candidate) == filepath.Clean(childPath) {
-				continue
-			}
-			parentPath = candidate
-			break
-		}
-		if parentPath == "" {
-			return nil, false
-		}
-		info, err := os.Stat(parentPath)
-		if err != nil || info.IsDir() {
-			return nil, false
-		}
-		cacheKey := codexParentTurnCacheKeyFor(parentPath, info)
-		if turnIDs, ok := p.parentTurnCache.Get(cacheKey); ok {
-			return turnIDs, true
-		}
-
-		turnIDs := make(map[string]struct{})
-		_, err = readCodexJSONLFromContext(ctx, parentPath, 0, func(line string) {
-			if gjson.Get(line, "type").Str != codexTypeTurnContext {
-				return
-			}
-			turnIDs[gjson.Get(line, "payload.turn_id").Str] = struct{}{}
-		})
-		if err != nil && !errors.Is(err, errCodexIncrementalNeedsFullParse) {
-			return nil, false
-		}
-		p.parentTurnCache.PutParent(parentKey, cacheKey, turnIDs)
-		return turnIDs, true
-	}
-}
-
 // CodexReplayParentID returns the explicit parent only when the rollout has a
 // positive replay-prefix signal: forked_from_id, or a copied parent
 // session_meta after subagent lineage metadata. Child-only subagents return no
@@ -1665,9 +1625,22 @@ func codexReplayParentIDContext(
 	}
 	defer f.Close()
 
+	var reader io.Reader = f
+	if codexCompressed(childPath) {
+		info, err := f.Stat()
+		if err != nil {
+			return "", false
+		}
+		decoded, _, _, cleanup, err := decodeCodexSnapshot(ctx, f, info)
+		if err != nil {
+			return "", false
+		}
+		defer cleanup()
+		reader = decoded
+	}
 	parentID := ""
 	resolutionNeeded := false
-	scanner := bufio.NewScanner(checkedContextReader{ctx: ctx, reader: f})
+	scanner := bufio.NewScanner(checkedContextReader{ctx: ctx, reader: reader})
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
 	for scanner.Scan() {
 		if ctx.Err() != nil {
@@ -1746,7 +1719,7 @@ func (p *codexProvider) parseSessionSnapshotWithCursor(
 // full message slice inside the parser. The returned message slice comes
 // from the sink (for a collecting sink it is the complete transcript; for
 // a staging sink it omits result-event content).
-func (p *codexProvider) parseCodexSessionSnapshotStreaming(
+func (p *codexProvider) parseCodexPlainSnapshotStreaming(
 	ctx context.Context, path, machine string,
 	includeExec bool,
 	f *os.File,
@@ -1813,7 +1786,7 @@ func (p *codexProvider) parseCodexSessionSnapshotStreaming(
 	// remaining replayed parent records would be imported as child
 	// content. Refuse the checkpoint until a genuine child turn opens the
 	// gate; the file then reparses authoritatively and earns its cursor.
-	if !b.forkGate.active && !b.pendingCallsOverflow && !b.checkpointUnsafe {
+	if !codexCompressed(path) && !b.forkGate.active && !b.pendingCallsOverflow && !b.checkpointUnsafe {
 		if safeCheck, safeErr := codexSafeResumeOffsetFile(
 			f, info.Size(),
 		); safeErr == nil && safeCheck {
@@ -1863,23 +1836,26 @@ func (p *codexProvider) parseCodexSessionSnapshotStreaming(
 	}
 
 	sess := &ParsedSession{
-		ID:                 sessionID,
-		Project:            b.project,
-		Machine:            machine,
-		Agent:              AgentCodex,
-		ParentSessionID:    b.parentSessionID,
-		RelationshipType:   b.relationshipType,
-		SessionKind:        b.sessionKind,
-		Cwd:                b.cwd,
-		FirstMessage:       b.firstMessage,
-		SessionName:        sessionName,
-		SessionNamePresent: sessionNamePresent,
-		MalformedLines:     malformedLines,
-		StartedAt:          b.startedAt,
-		EndedAt:            b.endedAt,
-		MessageCount:       len(msgs),
-		UserMessageCount:   userCount,
-		TerminationStatus:  classifyCodexTermination(b.lastTaskEvent),
+		CanonicalDialogueSource: p.sources.isBoundRollout(path, b.sessionID),
+		ParentReplayResolved:    b.forkGate.lineagePositive && b.forkGate.resolvedOnce,
+		SourceSessionID:         b.sessionID,
+		ID:                      sessionID,
+		Project:                 b.project,
+		Machine:                 machine,
+		Agent:                   AgentCodex,
+		ParentSessionID:         b.parentSessionID,
+		RelationshipType:        b.relationshipType,
+		SessionKind:             b.sessionKind,
+		Cwd:                     b.cwd,
+		FirstMessage:            b.firstMessage,
+		SessionName:             sessionName,
+		SessionNamePresent:      sessionNamePresent,
+		MalformedLines:          malformedLines,
+		StartedAt:               b.startedAt,
+		EndedAt:                 b.endedAt,
+		MessageCount:            len(msgs),
+		UserMessageCount:        userCount,
+		TerminationStatus:       classifyCodexTermination(b.lastTaskEvent),
 		File: FileInfo{
 			Path:       path,
 			Size:       info.Size(),
@@ -2240,6 +2216,17 @@ func readCodexJSONLFromContext(
 	info, err := f.Stat()
 	if err != nil {
 		return 0, fmt.Errorf("stat %s: %w", path, err)
+	}
+	if codexCompressed(path) {
+		if offset != 0 {
+			return 0, errCodexIncrementalNeedsFullParse
+		}
+		decoded, decodedInfo, _, cleanup, err := decodeCodexSnapshot(ctx, f, info)
+		if err != nil {
+			return 0, err
+		}
+		defer cleanup()
+		return readCodexJSONLSectionContext(ctx, decoded, 0, decodedInfo.Size(), fn)
 	}
 	return readCodexJSONLSectionContext(ctx, f, offset, info.Size(), fn)
 }

@@ -53,7 +53,7 @@ synced into AgentsView's archive and is not pushed to PostgreSQL.
 stores:
 
 ```toml
-# "full" (default), "transcripts", or "usage"
+# "full" (default), "transcripts", "dialogue", or "usage"
 archive_content = "transcripts"
 ```
 
@@ -61,6 +61,7 @@ archive_content = "transcripts"
 | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `"full"`        | Parsed messages, reasoning, titles, tools, and results. Tool-result category and image settings still apply.                                                                                                                                                                                                                                       |
 | `"transcripts"` | Message text, thinking text, titles, and tool call metadata: names, categories, skill names, the file path a call targeted, result lengths, statuses, and subagent links. Tool inputs and tool results, usually most of a large archive, are dropped, and the one-line tool summaries inside message text keep only the tool name and target path. |
+| `"dialogue"` | User prompts and final reply text, numeric usage, credit meters, and opaque subagent links. Explicit reply phases take precedence; older formats keep the last non-tool assistant reply per turn. Thinking, progress replies, and tool payloads are excluded. |
 | `"usage"`       | Session metadata, usage values, activity timestamps, and the identifiers needed to connect subagents. Transcript text, thinking text, original tool inputs and results, and session titles are dropped.                                                                                                                                            |
 
 The daemon reads the policy when it starts, so a change takes effect after
@@ -155,6 +156,16 @@ Creating the identity does not rewrite `config.toml` or its comments. A missing
 cursor secret is still generated and saved. Machine filters use keys;
 `/api/v1/machines` returns display labels and known aliases separately.
 
+If local session roots use a custom `session_sources.machine` key, list that
+key in `local_project_machines = ["bound-device"]` to allow repository discovery
+from those sessions' local working directories. Unlisted foreign machines keep
+filesystem probing disabled. This setting does not adopt or rewrite machine,
+archive, session, or message identities. After correcting an existing setup,
+`agentsview sync --full` reparses available sources through the normal archive
+rebuild while retaining orphaned history. Missing repositories remain unknown. Rebuilt sessions can fill an unknown project only
+when the stored project label, machine, and root still match; previously
+resolved or ambiguous identities remain preserved.
+
 ### Upgrading Historical Machine Keys
 
 At writable startup, AgentsView moves sessions from the archive's recorded local
@@ -214,7 +225,7 @@ zoom_level = 120
 | `github_token`                      | Optional saved GitHub token for Gist publishing                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `result_content_blocked_categories` | Tool categories whose result content is not stored (default: `["Read", "Glob"]`). Changes apply to new ingestion and full rebuilds; see [storage maintenance](/docs/data/#storage-maintenance) for existing source-backed sessions.                                                                                                                                                                                                                                              |
 | `tool_result_images`                | Retain supported inline tool-result image blocks with `"keep"` (default), or store readable `agentsview_image` placeholders with `"drop"`, or move supported images to the local asset store with `"offload"`. The setting affects future ingestion and full resyncs; use `db migrate --images` to move existing images or `db strip --images` to remove them from stored results; also configurable under **Settings > Archive content**, and changes require a daemon restart. |
-| `archive_content`                   | How much of each session the archive stores: `"full"` (default), `"transcripts"`, or `"usage"`; changes require a daemon restart — see [Archive content](#archive-content)                                                                                                                                                                                                                                                                                                       |
+| `archive_content`                   | How much of each session the archive stores: `"full"` (default), `"transcripts"`, `"dialogue"`, or `"usage"`; changes require a daemon restart — see [Archive content](#archive-content)                                                                                                                                                                                                                                                                                                       |
 | `host`                              | Interface the server binds to (default `127.0.0.1`); non-loopback values require `require_auth = true`                                                                                                                                                                                                                                                                                                                                                                           |
 | `require_auth`                      | Require bearer-token authentication for API access                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `auth_token`                        | Auto-generated 256-bit bearer token for remote access; can be overridden with `AGENTSVIEW_AUTH_TOKEN`                                                                                                                                                                                                                                                                                                                                                                            |

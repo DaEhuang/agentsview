@@ -42,7 +42,7 @@ func TestCaptureUsageQueryBoundedCandidatesAndMetadata(t *testing.T) {
 	}
 	assert.Equal(t, usageQuerySession{
 		ID: "inside-message", Project: "keep", Machine: "machine-a",
-		Agent: "claude", GitBranch: "main",
+		Agent: "claude", ProviderAgent: "claude", GitBranch: "main",
 		CreatedAt:   "2026-08-01T00:00:00.000Z",
 		StartedAt:   "2026-08-01T00:00:00Z",
 		DisplayName: "Inside", StartedAtMillis: new(int64(1785542400000)),

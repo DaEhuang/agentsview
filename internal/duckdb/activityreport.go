@@ -379,7 +379,7 @@ func duckUsageOrdinalOrNeg(v any) int64 {
 }
 
 func duckSessionUsageDedupKey(r duckActivityReportUsageRow) (string, bool) {
-	if r.claudeMessageID != "" && r.claudeRequestID != "" {
+	if r.claudeMessageID != "" {
 		return "claude:" + r.claudeMessageID + ":" + r.claudeRequestID, true
 	}
 	if r.source == "message" && r.agent != "" && r.sourceUUID != "" {
@@ -1022,7 +1022,7 @@ func duckActivityReportUsageQuery(candidateWhere string) string {
 		peer_keys AS (
 			SELECT DISTINCT claude_message_id, claude_request_id
 			FROM candidate_messages
-			WHERE claude_message_id != '' AND claude_request_id != ''
+			WHERE claude_message_id != ''
 		),
 		peer_messages AS (
 			SELECT m.session_id AS session_id, m.ordinal AS message_ordinal,

@@ -17,7 +17,7 @@ func newExportConversationsCommand() *cobra.Command {
 		Use: "conversations", Short: "Export stored conversation text and changes",
 		Args: cobra.NoArgs, SilenceUsage: true,
 	}
-	command.AddCommand(newConversationChangesCommand(), newConversationMessageCommand())
+	command.AddCommand(newConversationChangesCommand(), newConversationMessageCommand(), newConversationStatesCommand())
 	return command
 }
 
@@ -48,6 +48,7 @@ func newConversationChangesCommand() *cobra.Command {
 	command.Flags().StringVar(&options.Checkpoint, "checkpoint", "", "Resume after a completed changes walk")
 	command.Flags().StringVar(&options.Cursor, "cursor", "", "Continue an unfinished changes walk")
 	command.Flags().IntVar(&options.Limit, "limit", db.MaxSessionLimit, "Maximum changes in this page")
+	command.Flags().BoolVar(&options.Retained, "retained", false, "Use the indexed retained-message view; excludes tombstones and textless accounting rows")
 	return command
 }
 

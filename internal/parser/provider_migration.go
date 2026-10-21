@@ -53,6 +53,7 @@ var providerMigrationModes = map[AgentType]ProviderMigrationMode{
 	AgentClaudeAI:       ProviderMigrationImportOnly,
 	AgentChatGPT:        ProviderMigrationImportOnly,
 	AgentKiro:           ProviderMigrationProviderAuthoritative,
+	AgentKiroCrew:       ProviderMigrationProviderAuthoritative,
 	AgentKiroIDE:        ProviderMigrationProviderAuthoritative,
 	AgentCortex:         ProviderMigrationProviderAuthoritative,
 	AgentHermes:         ProviderMigrationProviderAuthoritative,

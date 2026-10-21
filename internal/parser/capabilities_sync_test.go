@@ -82,6 +82,9 @@ func TestProviderSyncSemanticsDeclarations(t *testing.T) {
 			FingerprintHashRequiredForFreshness: true,
 			UnchangedResults:                    UnchangedResultMTimeAndHash,
 		},
+		AgentKiroCrew: {
+			FingerprintHashRequiredForFreshness: true,
+		},
 		AgentKiro: {
 			UnchangedResults:                    UnchangedResultMTimeAndHash,
 			FingerprintHashRequiredForFreshness: true,

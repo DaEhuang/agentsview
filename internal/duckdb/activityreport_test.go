@@ -1093,7 +1093,7 @@ func TestDuckGetActivityReportUsageDedupSubSecondOrder(t *testing.T) {
 	earlier := syncSession("earlier", "proj1", "first", "2026-06-14T10:30:00Z", 1)
 	earlierMsg := syncMessage("earlier", 0, "assistant", "x", "2026-06-14T10:30:00Z")
 	earlierMsg.Model = "claude-sonnet-4-20250514"
-	earlierMsg.ClaudeMessageID = "dup-m"
+	earlierMsg.ClaudeMessageID = ""
 	earlierMsg.SourceUUID = "dup-source"
 	earlierMsg.TokenUsage = jsontext.Value(`{"input_tokens":1000,"output_tokens":500}`)
 	earlierMsg.OutputTokens = 500
@@ -1101,7 +1101,7 @@ func TestDuckGetActivityReportUsageDedupSubSecondOrder(t *testing.T) {
 	later := syncSession("later", "proj2", "first", "2026-06-14T10:30:00.123Z", 1)
 	laterMsg := syncMessage("later", 0, "assistant", "x", "2026-06-14T10:30:00.123Z")
 	laterMsg.Model = "claude-sonnet-4-20250514"
-	laterMsg.ClaudeMessageID = "dup-m"
+	laterMsg.ClaudeMessageID = ""
 	laterMsg.SourceUUID = "dup-source"
 	laterMsg.TokenUsage = jsontext.Value(`{"input_tokens":1000,"output_tokens":9000}`)
 	laterMsg.OutputTokens = 9000
@@ -1138,7 +1138,7 @@ func TestDuckGetActivityReportUsageDedupFallsBackToSourceUUID(t *testing.T) {
 	earlier.Agent = "claude"
 	earlierMsg := syncMessage("earlier", 0, "assistant", "x", "2026-06-14T10:30:00Z")
 	earlierMsg.Model = "claude-sonnet-4-20250514"
-	earlierMsg.ClaudeMessageID = "dup-m"
+	earlierMsg.ClaudeMessageID = ""
 	earlierMsg.SourceUUID = "src-dup"
 	earlierMsg.TokenUsage = jsontext.Value(`{"input_tokens":1000,"output_tokens":500}`)
 	earlierMsg.OutputTokens = 500
@@ -1147,7 +1147,7 @@ func TestDuckGetActivityReportUsageDedupFallsBackToSourceUUID(t *testing.T) {
 	later.Agent = "claude"
 	laterMsg := syncMessage("later", 0, "assistant", "x", "2026-06-14T10:30:01Z")
 	laterMsg.Model = "claude-sonnet-4-20250514"
-	laterMsg.ClaudeMessageID = "dup-m"
+	laterMsg.ClaudeMessageID = ""
 	laterMsg.SourceUUID = "src-dup"
 	laterMsg.TokenUsage = jsontext.Value(`{"input_tokens":1000,"output_tokens":900}`)
 	laterMsg.OutputTokens = 900

@@ -567,7 +567,7 @@ type claudeUsageSnapshotToken struct {
 }
 
 func usageDedupTokenForRow(u UsageRow) (usageDedupToken, bool) {
-	if u.ClaudeMessageID != "" && u.ClaudeRequestID != "" {
+	if u.ClaudeMessageID != "" {
 		return usageDedupToken{
 			kind:  "claude",
 			value: u.ClaudeMessageID + ":" + u.ClaudeRequestID,
@@ -589,7 +589,7 @@ func usageDedupTokenForRow(u UsageRow) (usageDedupToken, bool) {
 }
 
 func sessionUsageDedupTokenForRow(u UsageRow) (usageDedupToken, bool) {
-	if u.ClaudeMessageID != "" && u.ClaudeRequestID != "" {
+	if u.ClaudeMessageID != "" {
 		return usageDedupToken{
 			kind:  "claude",
 			value: u.ClaudeMessageID + ":" + u.ClaudeRequestID,
@@ -671,7 +671,7 @@ func claudeSnapshotSelectionContext(
 		if eligible != nil && !eligible[i] {
 			continue
 		}
-		if u.ClaudeMessageID == "" || u.ClaudeRequestID == "" {
+		if u.ClaudeMessageID == "" {
 			mask[i] = true
 			attribution[i] = u.SessionID
 			webSearchRequests[i] = u.WebSearchRequests
@@ -708,7 +708,7 @@ func claudeSnapshotSelectionContext(
 		if eligible != nil && !eligible[i] {
 			continue
 		}
-		if u.ClaudeMessageID == "" || u.ClaudeRequestID == "" {
+		if u.ClaudeMessageID == "" {
 			continue
 		}
 		canonical[i] = best[claudeUsageSnapshotToken{

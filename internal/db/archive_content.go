@@ -19,6 +19,7 @@ import (
 var archiveContentRanks = []config.ArchiveContent{
 	config.ArchiveContentFull,
 	config.ArchiveContentTranscripts,
+	config.ArchiveContentDialogue,
 	config.ArchiveContentUsage,
 }
 
@@ -108,6 +109,8 @@ func (db *DB) sessionAndMessagesForStorage(
 				session.UserMessageCount, messages, session.FirstMessage,
 			)
 		return db.sessionForStorage(session), usageOnlyMessages(messages)
+	case config.ArchiveContentDialogue:
+		return session, dialogueMessages(messages)
 	case config.ArchiveContentTranscripts:
 		return session, transcriptMessages(messages)
 	default:
@@ -128,6 +131,8 @@ func (db *DB) messagesForStorage(messages []Message) []Message {
 	switch db.ArchiveContent() {
 	case config.ArchiveContentUsage:
 		return usageOnlyMessages(messages)
+	case config.ArchiveContentDialogue:
+		return dialogueMessages(messages)
 	case config.ArchiveContentTranscripts:
 		return transcriptMessages(messages)
 	default:
@@ -139,7 +144,7 @@ func (db *DB) subagentLinksForStorage(
 	links []ToolCallSubagentLink,
 ) []ToolCallSubagentLink {
 	switch db.ArchiveContent() {
-	case config.ArchiveContentUsage:
+	case config.ArchiveContentUsage, config.ArchiveContentDialogue:
 		return usageOnlySubagentLinks(links)
 	case config.ArchiveContentTranscripts:
 		return transcriptSubagentLinks(links)
@@ -305,7 +310,9 @@ func usageOnlyMessages(messages []Message) []Message {
 		message.ContentLength = 0
 		message.IsSystem = false
 		message.SourceType = ""
-		message.SourceSubtype = ""
+		if message.SourceSubtype != "metering_credit" {
+			message.SourceSubtype = ""
+		}
 		message.PromptSource = ""
 		message.SourceParentUUID = ""
 		message.IsSidechain = false
@@ -320,7 +327,7 @@ func usageOnlyMessageRequired(message Message) bool {
 		message.Model != "<synthetic>"
 	activityEligible := message.Role == "assistant" &&
 		message.Model != "<synthetic>"
-	return tokenEligible || activityEligible ||
+	return message.SourceSubtype == "metering_credit" || tokenEligible || activityEligible ||
 		usageOnlyMessageHasSubagentCall(message)
 }
 
@@ -475,6 +482,8 @@ func applyArchiveContentToCopiedSessionsTx(
 		// The copied content already matches the policy.
 	case config.ArchiveContentTranscripts:
 		err = dropCopiedToolContentTx(ctx, tx, tempIDsTable)
+	case config.ArchiveContentDialogue:
+		err = compactCopiedSessionsForDialogueTx(ctx, tx, tempIDsTable)
 	case config.ArchiveContentUsage:
 		err = compactCopiedSessionsForUsageTx(ctx, tx, tempIDsTable)
 	}
@@ -629,7 +638,8 @@ func compactCopiedSessionsForUsageTx(
 			DELETE FROM messages
 			WHERE session_id` + inCopied + `
 			  AND NOT (
-			    (length(token_usage) > 0 AND model != ''
+			    source_subtype = 'metering_credit'
+                OR (length(token_usage) > 0 AND model != ''
 			       AND model != '<synthetic>')
 			    OR (role = 'assistant' AND model != '<synthetic>')
 			    OR EXISTS (SELECT 1 FROM tool_calls tc
@@ -640,7 +650,7 @@ func compactCopiedSessionsForUsageTx(
 			    has_tool_use = EXISTS (SELECT 1 FROM tool_calls tc
 			                           WHERE tc.message_id = messages.id),
 			    content_length = 0, is_system = 0,
-			    source_type = '', source_subtype = '', prompt_source = '',
+			    source_type = '', source_subtype = CASE WHEN source_subtype = 'metering_credit' THEN source_subtype ELSE '' END, prompt_source = '',
 			    source_parent_uuid = '', is_sidechain = 0,
 			    is_compact_boundary = 0
 			WHERE session_id` + inCopied},

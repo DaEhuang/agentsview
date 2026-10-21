@@ -678,6 +678,8 @@ const (
 	// ArchiveContentTranscripts keeps message text, thinking text, titles,
 	// and tool call metadata while dropping tool inputs and tool results.
 	ArchiveContentTranscripts ArchiveContent = "transcripts"
+	// ArchiveContentDialogue retains user prompts, final replies, and numeric usage.
+	ArchiveContentDialogue ArchiveContent = "dialogue"
 	// ArchiveContentUsage keeps only the session and message rows needed for
 	// token and cost reporting.
 	ArchiveContentUsage ArchiveContent = "usage"
@@ -690,11 +692,11 @@ func ParseArchiveContent(value string) (ArchiveContent, error) {
 	switch policy {
 	case "":
 		return ArchiveContentFull, nil
-	case ArchiveContentFull, ArchiveContentTranscripts, ArchiveContentUsage:
+	case ArchiveContentFull, ArchiveContentTranscripts, ArchiveContentDialogue, ArchiveContentUsage:
 		return policy, nil
 	default:
 		return "", fmt.Errorf(
-			`archive_content must be "full", "transcripts", or "usage" (got %q)`,
+			`archive_content must be "full", "transcripts", "dialogue", or "usage" (got %q)`,
 			value,
 		)
 	}
@@ -703,7 +705,7 @@ func ParseArchiveContent(value string) (ArchiveContent, error) {
 // OmitsToolContent reports whether tool inputs and tool results are dropped
 // at the storage boundary.
 func (a ArchiveContent) OmitsToolContent() bool {
-	return a == ArchiveContentTranscripts || a == ArchiveContentUsage
+	return a == ArchiveContentTranscripts || a == ArchiveContentDialogue || a == ArchiveContentUsage
 }
 
 // UsageOnly reports whether the archive keeps only usage accounting rows.
@@ -802,6 +804,8 @@ type Config struct {
 	InstallationID string `json:"-" toml:"-"`
 	// LocalMachineName is the display label, defaulting to the system hostname.
 	LocalMachineName string `json:"-" toml:"local_machine_name"`
+	// Explicit local project probing authority; never rewrites stored machine IDs.
+	LocalProjectMachines []string `json:"-" toml:"local_project_machines"`
 
 	// AgentDirs maps each AgentType to its configured
 	// directories. Single-dir agents store a one-element
@@ -1561,6 +1565,7 @@ func (c *Config) applyConfigTOML(data string) error {
 	}
 	var file struct {
 		LocalMachineName               *string                `toml:"local_machine_name"`
+		LocalProjectMachines           []string               `toml:"local_project_machines"`
 		GithubToken                    string                 `toml:"github_token"`
 		CursorSecret                   string                 `toml:"cursor_secret"`
 		CursorAdminAPIKey              string                 `toml:"cursor_admin_api_key"`
@@ -1628,6 +1633,15 @@ func (c *Config) applyConfigTOML(data string) error {
 	if file.CursorSecret != "" {
 		c.CursorSecret = file.CursorSecret
 	}
+	if len(file.LocalProjectMachines) > 16 {
+		return errors.New("local_project_machines allows at most 16 identities")
+	}
+	for _, machine := range file.LocalProjectMachines {
+		if strings.TrimSpace(machine) == "" || len(machine) > 4096 || strings.ContainsRune(machine, 0) {
+			return errors.New("local_project_machines requires nonempty machine identities")
+		}
+	}
+	c.LocalProjectMachines = append([]string(nil), file.LocalProjectMachines...)
 	if file.LocalMachineName != nil {
 		name := strings.TrimSpace(*file.LocalMachineName)
 		if name == "" {

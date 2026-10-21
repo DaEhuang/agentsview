@@ -328,6 +328,7 @@ func runServe(ctx context.Context, cfg config.Config, opts serveOptions, restart
 			IncludeCwdPrefixes:      cfg.SyncIncludeCwdPrefixes,
 			ScanProtectedPaths:      cfg.ScanProtectedPaths,
 			Machine:                 cfg.InstallationID,
+			LocalProjectMachines:    cfg.LocalProjectMachines,
 			BlockedResultCategories: cfg.ResultContentBlockedCategories,
 			ArchiveContent:          cfg.ArchiveContent,
 			Emitter:                 emitter,
@@ -455,9 +456,10 @@ func runServe(ctx context.Context, cfg config.Config, opts serveOptions, restart
 	identityBackfillEngine := engine
 	if identityBackfillEngine == nil {
 		identityBackfillEngine = sync.NewEngine(ctx, database, sync.EngineConfig{
-			Machine:            cfg.InstallationID,
-			ScanProtectedPaths: cfg.ScanProtectedPaths,
-			ArchiveContent:     cfg.ArchiveContent,
+			Machine:              cfg.InstallationID,
+			LocalProjectMachines: cfg.LocalProjectMachines,
+			ScanProtectedPaths:   cfg.ScanProtectedPaths,
+			ArchiveContent:       cfg.ArchiveContent,
 		})
 	}
 	go idleTracker.Do(func() {
